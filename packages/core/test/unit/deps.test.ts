@@ -5,7 +5,7 @@ import { test, expect } from "bun:test"
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs"
 import { join } from "node:path"
 
-const coreSrc = join(import.meta.dir, "..", "src")
+const coreSrc = join(import.meta.dir, "..", "..", "src")
 const providersPrefix = "providers/"
 
 // Files under src, as paths relative to src, with the providers tree split out.

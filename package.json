@@ -12,11 +12,15 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "check": "bun run typecheck && bun run format:check && bun test",
-    "trace": "bun run scripts/trace.ts"
+    "trace": "bun run scripts/trace.ts",
+    "db:up": "supabase start",
+    "db:down": "supabase stop",
+    "db:status": "supabase status"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
     "@types/bun": "^1.4.3",
+    "supabase": "^2.121.0",
     "typescript": "^7.0.2"
   }
 }

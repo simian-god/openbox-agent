@@ -10,7 +10,12 @@
 import { test, expect } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { specRequirements, idsNamedInTests, trace, formatReport } from "../../../scripts/trace.ts"
+import {
+  specRequirements,
+  idsNamedInTests,
+  trace,
+  formatReport,
+} from "../../../../scripts/trace.ts"
 
 const spec = (...lines: string[]) => lines.join("\n")
 
@@ -106,7 +111,10 @@ test("trace: the report states the counts and lists what is missing", () => {
 })
 
 test("trace: the real Spec still parses, so a format change cannot go unnoticed", () => {
-  const markdown = readFileSync(join(import.meta.dir, "..", "..", "..", "docs", "Spec.md"), "utf8")
+  const markdown = readFileSync(
+    join(import.meta.dir, "..", "..", "..", "..", "docs", "Spec.md"),
+    "utf8",
+  )
   const requirements = specRequirements(markdown)
 
   // A floor, not an exact count: the Spec gains requirements over time.

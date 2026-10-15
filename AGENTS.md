@@ -46,4 +46,9 @@ Read only the parts your task needs, not every doc in full.
 - `bun test` - the test suite.
 - `bun run trace` - which Spec IDs have a test and which do not. Add `--covered` to list the proven ones, `--strict` to exit non zero on any gap. CI warns today and goes strict at M11.
 
-Database commands arrive with T0.4.
+Database, needing Docker:
+
+- `bun run db:up` - start the local Supabase stack. Postgres on 54322, the API on 54321, Studio on 54323.
+- `bun run db:down` - stop it. `bun run db:status` shows what is running.
+
+Integration tests use that database and reset it per file. With no database running they skip, so `bun test` stays green without Docker.

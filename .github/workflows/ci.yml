@@ -39,6 +39,30 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: bun run trace
 
+  # The same suite again, this time with a database, so the integration
+  # tests run instead of skipping. Linux only: the runner has Docker.
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+
+      - run: bun install --frozen-lockfile
+
+      - name: Start the local Supabase stack
+        run: bunx supabase start
+
+      - name: Tests
+        run: bun test
+
+      - name: Stop the stack
+        if: always()
+        run: bunx supabase stop
+
   # REL-2: no secret is ever committed. Runs over the full history.
   secrets:
     name: secret scan

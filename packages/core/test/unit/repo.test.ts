@@ -4,7 +4,7 @@ import { test, expect } from "bun:test"
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs"
 import { join } from "node:path"
 
-const root = join(import.meta.dir, "..", "..", "..")
+const root = join(import.meta.dir, "..", "..", "..", "..")
 const read = (p: string) => readFileSync(join(root, p), "utf8")
 
 // Source trees that may read the environment. Anything outside these is not
@@ -56,7 +56,7 @@ test("REL-2: .env.example lists every environment variable the source reads", ()
     /(?:process|Bun)\.env\[["']([A-Z][A-Z0-9_]*)["']\]/g,
   ]
   for (const file of sourceDirs.flatMap((d) => sourceFiles(d))) {
-    if (file === "packages/core/test/repo.test.ts") continue
+    if (file === "packages/core/test/unit/repo.test.ts") continue
     const text = readFileSync(join(root, file), "utf8")
     for (const pattern of patterns) {
       for (const match of text.matchAll(pattern)) {
