@@ -1,0 +1,25 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "openbox-agent-workspace",
+    },
+    "examples/demo-agent": {
+      "name": "demo-agent",
+      "version": "0.0.0",
+      "dependencies": {
+        "openbox-agent": "workspace:*",
+      },
+    },
+    "packages/core": {
+      "name": "openbox-agent",
+      "version": "0.0.0",
+    },
+  },
+  "packages": {
+    "demo-agent": ["demo-agent@workspace:examples/demo-agent"],
+
+    "openbox-agent": ["openbox-agent@workspace:packages/core"],
+  }
+}
