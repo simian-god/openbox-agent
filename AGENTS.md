@@ -44,5 +44,6 @@ Read only the parts your task needs, not every doc in full.
 - `bun run typecheck` - strict TypeScript, no emit.
 - `bun run format` - rewrite files with Biome. `bun run format:check` only reports.
 - `bun test` - the test suite.
+- `bun run trace` - which Spec IDs have a test and which do not. Add `--covered` to list the proven ones, `--strict` to exit non zero on any gap. CI warns today and goes strict at M11.
 
 Database commands arrive with T0.4.

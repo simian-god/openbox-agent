@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** T0.3
+**Next task:** T0.4
 
 ## M0. Foundations
 
@@ -12,7 +12,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 |---|---|---|---|---|
 | T0.1 | Workspace, MIT license, README stub, `.env.example` | done | 2026-10-15 | Bun workspace (core, skill, example), MIT, README stub, .env.example, repo tests for REL-1 and REL-2 in packages/core/test. |
 | T0.2 | Strict tsconfig, Biome as a formatter only (no lint rules), `bun test`, CI on Linux and… | done | 2026-10-15 | Strict tsconfig, Biome formatter only, bun run check, CI matrix on Linux and Windows plus gitleaks, DEP-1 source scan test. CI itself unverified until the first push. |
-| T0.3 | `scripts/trace.ts`: reads every Spec ID, finds tests that name it, prints the uncovered ones | todo | | |
+| T0.3 | `scripts/trace.ts`: reads every Spec ID, finds tests that name it, prints the uncovered ones | done | 2026-10-15 | 126 Spec IDs parsed, 3 covered (DEP-1, REL-1, REL-2), 123 uncovered. Warns in CI, `--strict` fails from M11. |
 | T0.4 | Supabase local stack, `bun run db:up`, an integration test helper that resets the database per… | todo | | |
 | M0 check | CI is green on an empty package, and the trace report lists all Spec IDs as uncovered. | todo | | |
 

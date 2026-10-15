@@ -33,6 +33,12 @@ jobs:
       - name: Tests
         run: bun test
 
+      # A warning until M11, when this gains --strict and starts failing the
+      # build on any Spec ID without a test.
+      - name: Spec ID coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: bun run trace
+
   # REL-2: no secret is ever committed. Runs over the full history.
   secrets:
     name: secret scan

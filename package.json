@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "check": "bun run typecheck && bun run format:check && bun test"
+    "check": "bun run typecheck && bun run format:check && bun test",
+    "trace": "bun run scripts/trace.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
