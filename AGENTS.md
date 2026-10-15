@@ -39,4 +39,10 @@ Read only the parts your task needs, not every doc in full.
 
 ## Commands
 
-Filled in during M0.
+- `bun install` - install the workspace.
+- `bun run check` - typecheck, format check and the full test suite. A task is done when this is green.
+- `bun run typecheck` - strict TypeScript, no emit.
+- `bun run format` - rewrite files with Biome. `bun run format:check` only reports.
+- `bun test` - the test suite.
+
+Database commands arrive with T0.4.
