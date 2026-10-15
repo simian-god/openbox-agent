@@ -10,7 +10,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 
 | Task | What | Status | Date | Note |
 |---|---|---|---|---|
-| T0.1 | Workspace, MIT license, README stub, `.env.example` | done | 2026-10-15 | Bun workspace (core, skill, example), MIT, README stub, .env.example, repo tests for REL-1 and REL-2. |
+| T0.1 | Workspace, MIT license, README stub, `.env.example` | done | 2026-10-15 | Bun workspace (core, skill, example), MIT, README stub, .env.example, repo tests for REL-1 and REL-2 in packages/core/test. |
 | T0.2 | Strict tsconfig, Biome as a formatter only (no lint rules), `bun test`, CI on Linux and… | todo | | |
 | T0.3 | `scripts/trace.ts`: reads every Spec ID, finds tests that name it, prints the uncovered ones | todo | | |
 | T0.4 | Supabase local stack, `bun run db:up`, an integration test helper that resets the database per… | todo | | |
