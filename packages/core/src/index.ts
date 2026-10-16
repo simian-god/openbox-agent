@@ -21,3 +21,24 @@ export {
   type RetrieverId,
   type EmbedderId,
 } from "./config/index.ts"
+
+export {
+  defineTool,
+  createToolRegistry,
+  brainDescription,
+  ToolError,
+  BUILTIN_TOOL_NAMES,
+  isBuiltinToolName,
+  RISK_LEVELS,
+  ROLES,
+  type Tool,
+  type ToolDefinition,
+  type ToolRegistry,
+  type ToolContext,
+  type ToolConditions,
+  type ToolExamples,
+  type BuiltinToolName,
+  type JSONSchema,
+  type Risk,
+  type Role,
+} from "./tools/index.ts"
