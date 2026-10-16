@@ -18,5 +18,8 @@
     "migrations",
     "README.md",
     "LICENSE"
-  ]
+  ],
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
 }

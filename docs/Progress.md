@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** T1.1
+**Next task:** T1.2
 
 ## M0. Foundations
 
@@ -20,7 +20,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 
 | Task | What | Status | Date | Note |
 |---|---|---|---|---|
-| T1.1 | `defineConfig` and validation, including the required spend cap, retention and notice | todo | | |
+| T1.1 | `defineConfig` and validation, including the required spend cap, retention and notice | done | 2026-10-16 | zod schema for section 19, strict objects, defaults filled in, every problem reported in one pass. CFG-2 enforced by rejecting credential shaped fields. CFG-1 tool rule waits for createAgent. |
 | T1.2 | `defineTool` and registration rules, zod to JSON schema, the description the brain sees | todo | | |
 | T1.3 | First core migrations (`ob_people`, `ob_inbox`, `ob_turns`, `ob_messages`, `ob_events`… | todo | | |
 | T1.4 | Store layer: every query scoped by `agent_id` in one place | todo | | |
