@@ -14,7 +14,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 | T0.2 | Strict tsconfig, Biome as a formatter only (no lint rules), `bun test`, CI on Linux and… | done | 2026-10-15 | Strict tsconfig, Biome formatter only, bun run check, CI matrix on Linux and Windows plus gitleaks, DEP-1 source scan test. CI itself unverified until the first push. |
 | T0.3 | `scripts/trace.ts`: reads every Spec ID, finds tests that name it, prints the uncovered ones | done | 2026-10-15 | 126 Spec IDs parsed, 3 covered (DEP-1, REL-1, REL-2), 123 uncovered. Warns in CI, `--strict` fails from M11. |
 | T0.4 | Supabase local stack, `bun run db:up`, an integration test helper that resets the database per… | done | 2026-10-15 | Supabase CLI pinned as a dev dependency, stack trimmed to Postgres, PostgREST and Studio. `bun run db:up`. Per file reset by truncate; integration tests skip with no database. CI gains an integration job. |
-| M0 check | CI is green on an empty package, and the trace report lists all Spec IDs as uncovered. | todo | | |
+| M0 check | CI is green on an empty package, and the trace report lists all Spec IDs as uncovered. | blocked | 2026-10-16 | Item 1 passes: all four CI jobs green on 81e7b0c. Item 2 is literally false: 122 of 126 uncovered, not all 126, because T0.1 to T0.4 wrote real tests for DEP-1, DATA-3, REL-1 and REL-2. Needs your call on whether to read that as a pass or reword the bar. |
 
 ## M1. Walking skeleton
 
