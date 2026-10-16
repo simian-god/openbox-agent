@@ -76,3 +76,30 @@ export {
   type MessageAuthor,
   type EventRow,
 } from "./store/index.ts"
+
+export {
+  providersFromConfig,
+  modelsFromConfig,
+  openRouterBrain,
+  toWireMessages,
+  readResponse,
+  ProviderError,
+  BrainError,
+  ENV_KEYS,
+  type Brain,
+  type BrainInput,
+  type BrainOutput,
+  type BrainMessage,
+  type BrainTool,
+  type BrainUsage,
+  type BuiltProviders,
+  type ProvidersOverride,
+  type Env,
+} from "./providers/index.ts"
+
+export {
+  scriptedBrain,
+  type ScriptedBrain,
+  type ScriptedStep,
+  type ScriptedBrainOptions,
+} from "./testing/scripted-brain.ts"

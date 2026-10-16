@@ -352,3 +352,4 @@ Every change to Spec made during the build goes here, with the date, the Spec ID
 | 2026-10-15 | DEP-1 | Enforced by a test instead of a lint rule; Biome used as a formatter only | Fewer moving parts; the requirement shows up in the traceability report |
 | 2026-10-15 | DATA-5, DATA-6, SKILL-9 | RLS on for agent tables too, policies only for readers the builder names; `openbox migrate` fails on any table without RLS | Builder always uses RLS; makes it impossible to forget |
 | 2026-10-16 | Plan M0 "Done when" | CI bar reworded: the trace report lists the Spec IDs with no test, rather than all of them | M0's tasks wrote real tests for DEP-1, DATA-3, REL-1 and REL-2, so the original wording could never be met without deleting work |
+| 2026-10-16 | BRAIN-1, section 4 | `BrainMessage` defined: person, agent, operator, notice, tool_call and tool_result | The Brain interface used the type without ever defining it, and every adapter needs its shape |

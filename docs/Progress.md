@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** T1.5
+**Next task:** T1.6
 
 ## M0. Foundations
 
@@ -24,7 +24,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 | T1.2 | `defineTool` and registration rules, zod to JSON schema, the description the brain sees | done | 2026-10-16 | defineTool with all TOOL-2 rules reported at once, zod to JSON schema verified against zod 4.6, TOOL-3 description, registry with name clash and role filtering. ToolContext is a placeholder until T1.6. |
 | T1.3 | First core migrations (`ob_people`, `ob_inbox`, `ob_turns`, `ob_messages`, `ob_events`… | done | 2026-10-16 | Six core tables plus ob_migrations, all with RLS on and no policies. `openbox migrate` applies core then agent migrations, refuses to finish if any table has RLS off, and refuses an edited migration. Bun 1.4.0 crashes on many connections and hangs on expect().rejects for sql queries, both worked around. |
 | T1.4 | Store layer: every query scoped by `agent_id` in one place | done | 2026-10-16 | One scoped helper is the only place that calls db.from, enforced by a test. agent_id is stamped on insert and never patchable. Proven against a fake client and against real PostgREST, including that the anon key sees nothing. |
-| T1.5 | `Brain` interface, scripted brain, OpenRouter brain with native tools, `providersFromConfig` | todo | | |
+| T1.5 | `Brain` interface, scripted brain, OpenRouter brain with native tools, `providersFromConfig` | done | 2026-10-16 | Brain interface plus BrainMessage, now defined in Spec section 4 (see decisions log). OpenRouter checked against its real docs and built on recorded responses; one opt-in live test calls the real API. Scripted brain for offline tests. providersFromConfig reads keys from the environment and lets passed in instances win. |
 | T1.6 | Turn v0: receive, create the person, one synchronous turn, step loop with read tools, the… | todo | | |
 | T1.7 | Events table and capture, version hashing, both wired from the start | todo | | |
 | T1.8 | Terminal channel and `openbox chat` | todo | | |

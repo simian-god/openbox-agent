@@ -134,6 +134,23 @@ interface Brain {
 
 This is the shape evals-agent's existing `wrapLlm` already captures.
 
+A `BrainMessage` is one entry in the history LOOP-7 describes: the messages
+with this person, then this turn's tool calls and their results.
+
+```ts
+type BrainMessage =
+  | { role: "person"; text: string; images?: { ref: string; mime: string }[] }
+  | { role: "agent"; text: string }
+  | { role: "operator"; text: string }
+  | { role: "notice"; text: string }
+  | { role: "tool_call"; id: string; name: string; input: unknown }
+  | { role: "tool_result"; id: string; name: string; result: unknown; error?: string }
+```
+
+`operator` and `notice` carry the author LOOP-7 lists, so a brain can tell a
+human's words from its own. Adapters map them onto whatever roles their API
+offers. `id` ties a result to the call that asked for it.
+
 **BRAIN-1.** Brains that ship at launch:
 
 | Brain | Kind | How it's called |
