@@ -55,6 +55,8 @@ export interface TurnRow {
 
 export interface InboxRow {
   id: string
+  /** Insert order, which is arrival order (LOOP-3). */
+  seq: number
   agent_id: string
   person_id: string
   channel_message_id: string
@@ -69,6 +71,8 @@ export interface InboxRow {
 
 export interface MessageRow {
   id: string
+  /** Insert order, which is the order the conversation happened in. */
+  seq: number
   agent_id: string
   person_id: string
   turn_id: string | null

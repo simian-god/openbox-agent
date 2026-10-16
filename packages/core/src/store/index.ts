@@ -14,6 +14,8 @@ export * from "./tables.ts"
 export class StoreError extends Error {
   readonly table: string
   override readonly cause: unknown
+  /** Postgres' SQLSTATE, when the database gave one. 23505 is a duplicate. */
+  readonly code: string | undefined
 
   constructor(table: string, operation: string, cause: unknown) {
     const detail =
@@ -24,6 +26,12 @@ export class StoreError extends Error {
     this.name = "StoreError"
     this.table = table
     this.cause = cause
+    this.code =
+      cause !== null &&
+      typeof cause === "object" &&
+      typeof (cause as { code?: unknown }).code === "string"
+        ? (cause as { code: string }).code
+        : undefined
   }
 }
 

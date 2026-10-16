@@ -60,7 +60,11 @@ describeDatabase("migrations", (sql) => {
     try {
       const names = collectMigrations({ agentMigrationsDir: dir }).map((m) => m.name)
 
-      expect(names).toEqual(["core/0001_core.sql", "agent/0001_menu.sql"])
+      // Every core migration, in order, then the agent's.
+      expect(names.at(0)).toBe("core/0001_core.sql")
+      expect(names.at(-1)).toBe("agent/0001_menu.sql")
+      expect(names.filter((name) => name.startsWith("agent/"))).toEqual(["agent/0001_menu.sql"])
+      expect(names.findIndex((name) => name.startsWith("agent/"))).toBe(names.length - 1)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

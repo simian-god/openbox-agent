@@ -1,0 +1,492 @@
+// Turn v0 end to end: a message arrives, a person is created, the brain
+// runs its steps, and a reply goes out through the sender.
+import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { z } from "zod"
+import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { migrate } from "../../src/migrate/index.ts"
+import { createAgent, type Agent, type Deps } from "../../src/runtime/index.ts"
+import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
+import { defineTool, type Tool } from "../../src/tools/index.ts"
+import {
+  scriptedBrain,
+  type ScriptedBrain,
+  type ScriptedStep,
+} from "../../src/testing/scripted-brain.ts"
+import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
+import { fixedClock } from "../../src/testing/clock.ts"
+
+const PROMPT = "You are the host at a restaurant."
+
+function config(over: Record<string, unknown> = {}): OpenboxConfig {
+  return defineConfig({
+    name: "restaurant",
+    mode: "development",
+    timezone: "Asia/Kolkata",
+    hours: { mon: [["11:00", "23:00"]] },
+    brain: { id: "openrouter", model: "test/model" },
+    decisionModel: { id: "jev" },
+    retriever: { id: "local" },
+    limits: { dailySpendUsd: 5 },
+    notice: "We store your messages.",
+    retentionDays: 365,
+    burstWindowMs: 0,
+    ...over,
+  })
+}
+
+/** A read tool that reports what it was given, so ctx can be inspected. */
+let lastCtx: Record<string, unknown> | undefined
+
+const checkAvailability = defineTool({
+  name: "check_availability",
+  description: "Checks whether a table is free.",
+  input: z.object({ date: z.string(), size: z.number().int().min(1) }),
+  risk: "read",
+  roles: ["end_user"],
+  conditions: {
+    callWhen: ["The person asks whether a table is free"],
+    dontCallWhen: ["The person is not asking about a booking"],
+  },
+  examples: { should: ["Any space on Friday?"], shouldNot: ["Hello"] },
+  handler: async (args, ctx) => {
+    lastCtx = {
+      personId: ctx.person.id,
+      role: ctx.person.role,
+      channel: ctx.person.channel,
+      channelUserId: ctx.person.channelUserId,
+      now: ctx.clock.now().toISOString(),
+      hasDb: typeof ctx.db.table === "function",
+      hasLog: typeof ctx.log === "function",
+    }
+    return { free: args.size <= 4 }
+  },
+})
+
+const explodingTool = defineTool({
+  name: "broken_tool",
+  description: "Always fails.",
+  input: z.object({}),
+  risk: "read",
+  roles: ["end_user"],
+  conditions: { callWhen: ["never, it is for tests"], dontCallWhen: ["always"] },
+  examples: { should: ["x"], shouldNot: ["y"] },
+  handler: async () => {
+    throw new Error("the kitchen is on fire")
+  },
+})
+
+const operatorOnly = defineTool({
+  name: "operator_report",
+  description: "An operator only report.",
+  input: z.object({}),
+  risk: "read",
+  roles: ["operator"],
+  conditions: { callWhen: ["an operator asks"], dontCallWhen: ["an end user asks"] },
+  examples: { should: ["report"], shouldNot: ["hello"] },
+  handler: async () => ({ ok: true }),
+})
+
+const bookTable = defineTool({
+  name: "book_table",
+  description: "Books a table.",
+  input: z.object({ size: z.number().int() }),
+  risk: "irreversible",
+  roles: ["end_user"],
+  conditions: { callWhen: ["a booking is agreed"], dontCallWhen: ["only asking"] },
+  confirmSummary: (args) => `Table for ${args.size}`,
+  examples: { should: ["book it"], shouldNot: ["just asking"] },
+  handler: async () => ({ booked: true }),
+})
+
+describeDatabase("a turn", (sql) => {
+  let sender: FakeSender
+  const clock = fixedClock("2026-10-19T06:00:00Z")
+
+  beforeAll(async () => {
+    await migrate({ sql: sql() })
+    await sql().unsafe("notify pgrst, 'reload schema'")
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+  })
+
+  beforeEach(async () => {
+    await resetDatabase(sql())
+    lastCtx = undefined
+  })
+
+  /** An agent wired to a scripted brain and a recording sender. */
+  function agentWith(
+    script: ScriptedStep[],
+    tools: Tool[] = [checkAvailability],
+    over: Record<string, unknown> = {},
+  ): { agent: Agent; brain: ScriptedBrain } {
+    const brain = scriptedBrain(script)
+    sender = fakeSender()
+    const deps: Deps = { brains: [brain], db: localSupabase(), sender, clock }
+    return { agent: createAgent({ config: config(over), deps, prompt: PROMPT, tools }), brain }
+  }
+
+  const hello = (over: Record<string, unknown> = {}) => ({
+    channel: "whatsapp",
+    channelUserId: "42",
+    channelMessageId: "msg-1",
+    text: "Any space on Monday?",
+    ...over,
+  })
+
+  test("ROLE-1: an unknown person is created as an end user", async () => {
+    const { agent } = agentWith([{ reply: "We open at 11." }])
+    await agent.receive(hello({ displayName: "Asha" }))
+
+    const person = await agent.store.people.find({ channel_user_id: "42" })
+    expect(person?.role).toBe("end_user")
+    expect(person?.channel).toBe("whatsapp")
+    expect(person?.display_name).toBe("Asha")
+  })
+
+  test("ROLE-1: a person who writes again is the same person, not a new one", async () => {
+    const { agent } = agentWith([{ reply: "one" }, { reply: "two" }])
+    await agent.receive(hello())
+    await agent.receive(hello({ channelMessageId: "msg-2" }))
+
+    expect(await agent.store.people.count()).toBe(1)
+  })
+
+  test("API-3: nothing in a message can set a role", async () => {
+    const { agent } = agentWith([{ reply: "hi" }])
+    // The glue has no way to pass a role, so a sender claiming one is
+    // simply ignored rather than trusted.
+    await agent.receive({ ...hello(), role: "operator" } as never)
+
+    const person = await agent.store.people.find({ channel_user_id: "42" })
+    expect(person?.role).toBe("end_user")
+  })
+
+  test("ROLE-1: an operator's role survives a message from them", async () => {
+    const { agent } = agentWith([{ reply: "hi" }])
+    await agent.receive(hello())
+    await agent.store.people.update({ channel_user_id: "42" }, { role: "operator" })
+
+    await agent.receive(hello({ channelMessageId: "msg-2" }))
+    const person = await agent.store.people.find({ channel_user_id: "42" })
+    expect(person?.role).toBe("operator")
+  })
+
+  test("LOOP-1: the same channel message id twice is a duplicate", async () => {
+    const { agent, brain } = agentWith([{ reply: "one" }, { reply: "two" }])
+
+    const first = await agent.receive(hello())
+    const second = await agent.receive(hello())
+
+    expect(first.duplicate).toBe(false)
+    expect(second.duplicate).toBe(true)
+    // Nothing else happened: no second turn, no second reply.
+    expect(brain.calls).toHaveLength(1)
+    expect(sender.sent).toHaveLength(1)
+    expect(await agent.store.inbox.count()).toBe(1)
+  })
+
+  test("LOOP-8: a reply ends the turn and goes out through the sender", async () => {
+    const { agent } = agentWith([{ reply: "We open at 11." }])
+    const result = await agent.receive(hello())
+
+    expect(result.turn?.outcome).toBe("replied")
+    expect(result.turn?.steps).toBe(1)
+    expect(sender.texts()).toEqual(["We open at 11."])
+    expect(sender.sent[0]?.channel).toBe("whatsapp")
+    expect(sender.sent[0]?.channelUserId).toBe("42")
+    expect(sender.sent[0]?.idempotencyKey).toBeTruthy()
+  })
+
+  test("LOOP-8: a read tool runs, and its result goes back to the brain", async () => {
+    const { agent, brain } = agentWith([
+      { tool: "check_availability", input: { date: "2026-10-19", size: 2 } },
+      { reply: "Yes, we have space." },
+    ])
+    const result = await agent.receive(hello())
+
+    expect(result.turn?.toolsRun).toEqual([{ name: "check_availability", ok: true }])
+    expect(result.turn?.steps).toBe(2)
+
+    // Step 10: the second call carries the call and its result.
+    const second = brain.calls[1]?.messages ?? []
+    expect(second.at(-2)).toMatchObject({ role: "tool_call", name: "check_availability" })
+    expect(second.at(-1)).toMatchObject({ role: "tool_result", result: { free: true } })
+  })
+
+  test("LOOP-8: a tool the brain was not given is refused, never run", async () => {
+    const { agent, brain } = agentWith([{ tool: "delete_everything" }, { reply: "Sorry." }])
+    const result = await agent.receive(hello())
+
+    expect(result.turn?.toolsRun).toEqual([])
+
+    const told = brain.calls[1]?.messages.at(-1) as { error?: string }
+    expect(told.error).toContain("no tool called delete_everything")
+    // It is told what it can call, so the next step can be right.
+    expect(told.error).toContain("check_availability")
+  })
+
+  test("LOOP-8: bad arguments go back as an error, and the tool never runs", async () => {
+    const { agent, brain } = agentWith([
+      { tool: "check_availability", input: { date: "2026-10-19", size: 0 } },
+      { reply: "How many people?" },
+    ])
+    const result = await agent.receive(hello())
+
+    expect(result.turn?.toolsRun).toEqual([])
+    const told = brain.calls[1]?.messages.at(-1) as { error?: string }
+    expect(told.error).toContain("not valid")
+    expect(told.error).toContain("size")
+  })
+
+  test("LOOP-8: a tool that throws is reported to the brain, not to the person", async () => {
+    const { agent, brain } = agentWith(
+      [{ tool: "broken_tool" }, { reply: "Let me check and come back." }],
+      [checkAvailability, explodingTool],
+    )
+    const result = await agent.receive(hello())
+
+    expect(result.turn?.toolsRun).toEqual([{ name: "broken_tool", ok: false }])
+    const told = brain.calls[1]?.messages.at(-1) as { error?: string }
+    expect(told.error).toContain("kitchen is on fire")
+    // The person gets the brain's words, never the exception.
+    expect(sender.texts()).toEqual(["Let me check and come back."])
+  })
+
+  test("TOOL-4: the handler is given the person, the clock, the tables and a log", async () => {
+    const { agent } = agentWith([
+      { tool: "check_availability", input: { date: "2026-10-19", size: 2 } },
+      { reply: "Yes." },
+    ])
+    await agent.receive(hello())
+
+    const person = await agent.store.people.find({ channel_user_id: "42" })
+    expect(lastCtx).toEqual({
+      personId: person?.id,
+      role: "end_user",
+      channel: "whatsapp",
+      channelUserId: "42",
+      // TIME-1: the injected clock, not the machine's.
+      now: "2026-10-19T06:00:00.000Z",
+      hasDb: true,
+      hasLog: true,
+    })
+  })
+
+  test("ROLE-3: a tool another role owns is never offered", async () => {
+    const { agent, brain } = agentWith([{ reply: "hi" }], [checkAvailability, operatorOnly])
+    await agent.receive(hello())
+
+    const offered = brain.calls[0]?.tools.map((tool) => tool.name) ?? []
+    expect(offered).toContain("check_availability")
+    expect(offered).not.toContain("operator_report")
+  })
+
+  test("LOOP-8: v0 offers read tools only, since the gate is not built", async () => {
+    const { agent, brain } = agentWith([{ reply: "hi" }], [checkAvailability, bookTable])
+    await agent.receive(hello())
+
+    const offered = brain.calls[0]?.tools.map((tool) => tool.name) ?? []
+    expect(offered).toEqual(["check_availability"])
+  })
+
+  test("LOOP-7: the brain gets the prompt, the runtime block and the message", async () => {
+    const { agent, brain } = agentWith([{ reply: "hi" }])
+    await agent.receive(hello())
+
+    const call = brain.calls[0]
+    expect(call?.system).toContain(PROMPT)
+    expect(call?.system).toContain("Monday")
+    expect(call?.system).toContain("Asia/Kolkata")
+    expect(call?.messages).toEqual([{ role: "person", text: "Any space on Monday?" }])
+  })
+
+  test("LOOP-7: an earlier turn's messages are the next turn's history", async () => {
+    const { agent, brain } = agentWith([{ reply: "We open at 11." }, { reply: "Yes." }])
+    await agent.receive(hello())
+    await agent.receive(hello({ channelMessageId: "msg-2", text: "Are you open now?" }))
+
+    expect(brain.calls[1]?.messages).toEqual([
+      { role: "person", text: "Any space on Monday?" },
+      { role: "agent", text: "We open at 11." },
+      { role: "person", text: "Are you open now?" },
+    ])
+  })
+
+  test("LOOP-7: history is capped at the configured number of messages", async () => {
+    const { agent, brain } = agentWith(
+      [{ reply: "a" }, { reply: "b" }, { reply: "c" }],
+      [checkAvailability],
+      { history: 2 },
+    )
+    await agent.receive(hello({ channelMessageId: "m1", text: "one" }))
+    await agent.receive(hello({ channelMessageId: "m2", text: "two" }))
+    await agent.receive(hello({ channelMessageId: "m3", text: "three" }))
+
+    // Two from history, plus the message being answered.
+    expect(brain.calls[2]?.messages).toHaveLength(3)
+  })
+
+  // LOOP-11 also wants the version (T1.7), the outbox (T2.3) and the lease
+  // (T2.2). Only the turn record itself is proven here.
+  test("the turn records its steps, cost, brains and outcome", async () => {
+    const { agent } = agentWith([
+      { tool: "check_availability", input: { date: "2026-10-19", size: 2 } },
+      { reply: "Yes." },
+    ])
+    await agent.receive(hello())
+
+    const turn = (await agent.store.turns.list())[0]
+    expect(turn?.steps).toBe(2)
+    expect(turn?.outcome).toBe("replied")
+    expect(turn?.brains).toEqual(["scripted", "scripted"])
+    expect(turn?.ended_at).not.toBeNull()
+    expect(turn?.latency_ms).not.toBeNull()
+  })
+
+  test("LOOP-8: the conversation is stored in both directions", async () => {
+    const { agent } = agentWith([{ reply: "We open at 11." }])
+    await agent.receive(hello())
+
+    const messages = await agent.store.messages.list({}, { orderBy: "seq" })
+    expect(messages.map((row) => [row.direction, row.author, row.text])).toEqual([
+      ["inbound", "person", "Any space on Monday?"],
+      ["outbound", "agent", "We open at 11."],
+    ])
+  })
+
+  test("LOOP-7: order holds even when two messages share an instant", async () => {
+    // The clock is frozen, so the question and the reply carry the same
+    // created_at. Order must come from insert order, not from the time.
+    const { agent, brain } = agentWith([{ reply: "We open at 11." }, { reply: "Yes." }])
+    await agent.receive(hello())
+    await agent.receive(hello({ channelMessageId: "msg-2", text: "Are you open now?" }))
+
+    const stored = await agent.store.messages.list({}, { orderBy: "seq" })
+    expect(new Set(stored.map((row) => row.created_at)).size).toBe(1)
+    expect(stored.map((row) => row.text)).toEqual([
+      "Any space on Monday?",
+      "We open at 11.",
+      "Are you open now?",
+      "Yes.",
+    ])
+
+    // And the brain sees that same order.
+    expect(brain.calls[1]?.messages).toEqual([
+      { role: "person", text: "Any space on Monday?" },
+      { role: "agent", text: "We open at 11." },
+      { role: "person", text: "Are you open now?" },
+    ])
+  })
+
+  test("LOOP-8: the inbox row is marked done and tied to its turn", async () => {
+    const { agent } = agentWith([{ reply: "hi" }])
+    const result = await agent.receive(hello())
+
+    const row = await agent.store.inbox.byId(result.inboxId)
+    expect(row?.status).toBe("done")
+    expect(row?.turn_id).not.toBeNull()
+  })
+
+  test("LOOP-8: a turn cannot run forever", async () => {
+    const { agent } = agentWith(
+      [{ tool: "check_availability", input: { date: "d", size: 1 } }],
+      [checkAvailability],
+      { maxSteps: 3 },
+    )
+    // The script repeats its last step, so the brain never replies.
+    const brain = scriptedBrain([{ tool: "check_availability", input: { date: "d", size: 1 } }], {
+      whenExhausted: "repeat-last",
+    })
+    sender = fakeSender()
+    const looping = createAgent({
+      config: config({ maxSteps: 3 }),
+      deps: { brains: [brain], db: localSupabase(), sender, clock },
+      prompt: PROMPT,
+      tools: [checkAvailability],
+    })
+
+    const result = await looping.receive(hello())
+    expect(result.turn?.outcome).toBe("step_cap")
+    expect(result.turn?.steps).toBe(3)
+    void agent
+  })
+
+  test("LOOP-8: when the brain says nothing, nothing is sent", async () => {
+    const { agent } = agentWith([
+      { output: { finishReason: "stop", usage: { inputTokens: 0, outputTokens: 0 } } },
+    ])
+    const result = await agent.receive(hello())
+
+    expect(result.turn?.outcome).toBe("no_reply")
+    expect(sender.sent).toEqual([])
+  })
+
+  // BRAIN-5 proper, including two malformed outputs in a row, is T5.5.
+  test("a failing brain hands over to the next one", async () => {
+    const failing = scriptedBrain([{ throws: "overloaded", retryable: true }], { id: "first" })
+    const working = scriptedBrain([{ reply: "Second brain here." }], { id: "second" })
+    sender = fakeSender()
+
+    const agent = createAgent({
+      config: config(),
+      deps: { brains: [failing, working], db: localSupabase(), sender, clock },
+      prompt: PROMPT,
+      tools: [checkAvailability],
+    })
+
+    const result = await agent.receive(hello())
+    expect(result.turn?.brainsUsed).toEqual(["second"])
+    expect(sender.texts()).toEqual(["Second brain here."])
+  })
+
+  test("when every brain fails the person is not told a lie", async () => {
+    const failing = scriptedBrain([{ throws: "down" }], { id: "only" })
+    sender = fakeSender()
+
+    const agent = createAgent({
+      config: config(),
+      deps: { brains: [failing], db: localSupabase(), sender, clock },
+      prompt: PROMPT,
+      tools: [],
+    })
+
+    const result = await agent.receive(hello())
+    expect(result.turn?.outcome).toBe("brains_failed")
+    expect(sender.sent).toEqual([])
+  })
+
+  test("DATA-1: a second agent on the same database sees none of this", async () => {
+    const { agent } = agentWith([{ reply: "hi" }])
+    await agent.receive(hello())
+
+    const other = createAgent({
+      config: config({ name: "dentist" }),
+      deps: {
+        brains: [scriptedBrain([{ reply: "hi" }])],
+        db: localSupabase(),
+        sender: fakeSender(),
+        clock,
+      },
+      prompt: PROMPT,
+      tools: [],
+    })
+
+    expect(await other.store.people.count()).toBe(0)
+    expect(await agent.store.people.count()).toBe(1)
+  })
+
+  test("CFG-1: an irreversible tool with no confirmSummary stops the agent starting", () => {
+    // defineTool refuses this, so the only way to reach createAgent's check
+    // is a tool built around it, as a hand written adapter might.
+    const unsafe = { ...bookTable, confirmSummary: undefined } as unknown as Tool
+
+    expect(() =>
+      createAgent({
+        config: config(),
+        deps: { brains: [scriptedBrain([])], db: localSupabase(), sender: fakeSender(), clock },
+        prompt: PROMPT,
+        tools: [unsafe],
+      }),
+    ).toThrow(/confirmSummary/)
+  })
+})

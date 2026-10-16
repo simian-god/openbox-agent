@@ -14,13 +14,36 @@ export const ROLES: readonly Role[] = ["end_user", "operator"]
 /** A brain can only call a name shaped like this. */
 const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/
 
+/** Who the handler is acting for. Read only: a tool cannot change a role. */
+export interface ToolPerson {
+  readonly id: string
+  readonly role: Role
+  readonly channel: string
+  readonly channelUserId: string
+  readonly displayName: string | null
+  readonly language: string | null
+}
+
 /**
- * TOOL-4: what a handler is given. Filled in at T1.6 when the turn exists.
- * The clock is here already, because TIME-1 forbids reading the system
- * clock and a handler needs some way to ask the time.
+ * TOOL-4: what a handler is given.
+ *
+ * `facts`, the time helpers in `ctx.time` and `sendFile` arrive with the
+ * features that own them, in M4 and M7. What is here already is enough to
+ * write a tool that reads the agent's own tables and answers.
  */
 export interface ToolContext {
+  /** TIME-1: nothing reads the system clock directly. */
   readonly clock: { now(): Date }
+  readonly person: ToolPerson
+  /**
+   * The agent's own tables, already scoped to this agent (DATA-1). Use
+   * `ctx.db.table("menu_items")`.
+   */
+  readonly db: {
+    table<T = Record<string, unknown>>(name: string): unknown
+  }
+  /** Goes to the turn's record, not to the person. */
+  readonly log: (message: string, detail?: Record<string, unknown>) => void
 }
 
 /** A JSON Schema object, as a brain receives it. */

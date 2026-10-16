@@ -103,3 +103,27 @@ export {
   type ScriptedStep,
   type ScriptedBrainOptions,
 } from "./testing/scripted-brain.ts"
+
+export {
+  createAgent,
+  runTurn,
+  buildSystem,
+  buildMessages,
+  buildRuntimeBlock,
+  partsInZone,
+  toBrainMessage,
+  type Agent,
+  type AgentOptions,
+  type Deps,
+  type ReceiveResult,
+  type TurnInput,
+  type TurnResult,
+  type Inbound,
+  type Outbound,
+  type Sender,
+  type SenderCapabilities,
+  type SendResult,
+} from "./runtime/index.ts"
+
+export { fixedClock, systemClock, type Clock, type FixedClock } from "./testing/clock.ts"
+export { fakeSender, type FakeSender, type FakeSenderOptions } from "./testing/fake-sender.ts"
