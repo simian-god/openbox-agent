@@ -4,7 +4,8 @@
     "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
-    "lineWidth": 100
+    "lineWidth": 100,
+    "lineEnding": "lf"
   },
   "javascript": {
     "formatter": {
@@ -14,8 +15,12 @@
       "arrowParentheses": "always"
     }
   },
-  "linter": { "enabled": false },
-  "assist": { "enabled": false },
+  "linter": {
+    "enabled": false
+  },
+  "assist": {
+    "enabled": false
+  },
   "files": {
     "includes": ["**", "!**/node_modules", "!**/dist", "!**/bun.lock"]
   },

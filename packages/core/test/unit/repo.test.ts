@@ -32,7 +32,12 @@ test("REL-1: the workspace holds the core package, the skill and the example age
 
   expect(JSON.parse(read("packages/core/package.json")).name).toBe("openbox-agent")
   expect(JSON.parse(read("examples/demo-agent/package.json")).name).toBe("demo-agent")
+
+  // Checked for content, not just existence: git does not track an empty
+  // directory, so an empty skill/ is there on this machine and missing from
+  // a fresh clone.
   expect(existsSync(join(root, "skill"))).toBe(true)
+  expect(readdirSync(join(root, "skill")).length).toBeGreaterThan(0)
 })
 
 test("REL-1: the repo is published under the MIT license", () => {

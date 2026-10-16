@@ -1,0 +1,5 @@
+# One line ending everywhere. CI runs on Windows as well as Linux, and a
+# stray CR fails the format check on one of them.
+* text=auto eol=lf
+bun.lock text eol=lf
+*.ps1 text eol=lf
