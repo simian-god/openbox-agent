@@ -42,3 +42,15 @@ export {
   type Risk,
   type Role,
 } from "./tools/index.ts"
+
+export {
+  migrate,
+  collectMigrations,
+  readMigrations,
+  tablesWithoutRls,
+  MigrateError,
+  CORE_MIGRATIONS_DIR,
+  type Migration,
+  type MigrateOptions,
+  type MigrateResult,
+} from "./migrate/index.ts"
