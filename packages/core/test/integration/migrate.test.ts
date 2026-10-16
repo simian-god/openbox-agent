@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { SQL } from "bun"
-import { describeDatabase } from "../support/db.ts"
+import { describeDatabase, dropAllTables } from "../support/db.ts"
 import { failure } from "../support/throws.ts"
 import {
   migrate,
@@ -25,9 +25,9 @@ function migrationsDir(files: Record<string, string>): string {
   return dir
 }
 
-/** Drops everything, so each test starts from an empty schema. */
+/** Drops every table, so each test starts from a bare schema. */
 async function emptySchema(sql: SQL): Promise<void> {
-  await sql.unsafe("drop schema public cascade; create schema public;")
+  await dropAllTables(sql)
 }
 
 const tableNames = async (sql: SQL): Promise<string[]> => {

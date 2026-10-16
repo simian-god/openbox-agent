@@ -54,3 +54,25 @@ export {
   type MigrateOptions,
   type MigrateResult,
 } from "./migrate/index.ts"
+
+export {
+  createStore,
+  StoreError,
+  CORE_TABLES,
+  type Store,
+  type TableStore,
+  type Where,
+  type CoreTable,
+  type CoreRows,
+  type Insert,
+  type PersonRow,
+  type PersonRole,
+  type VersionRow,
+  type TurnRow,
+  type InboxRow,
+  type InboxStatus,
+  type MessageRow,
+  type MessageDirection,
+  type MessageAuthor,
+  type EventRow,
+} from "./store/index.ts"

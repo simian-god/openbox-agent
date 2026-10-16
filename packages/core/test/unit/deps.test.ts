@@ -2,36 +2,14 @@
 // through injected providers. Nothing outside src/providers may call fetch
 // or build a client when the module loads.
 import { test, expect } from "bun:test"
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { code, tsFiles } from "../support/source.ts"
 
 const coreSrc = join(import.meta.dir, "..", "..", "src")
 const providersPrefix = "providers/"
 
-// Files under src, as paths relative to src, with the providers tree split out.
-function sourceFiles(dir = "", found: string[] = []): string[] {
-  const abs = join(coreSrc, dir)
-  if (!existsSync(abs)) return found
-  for (const entry of readdirSync(abs)) {
-    const rel = dir ? `${dir}/${entry}` : entry
-    if (statSync(join(coreSrc, rel)).isDirectory()) sourceFiles(rel, found)
-    else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) found.push(rel)
-  }
-  return found
-}
-
-const outsideProviders = () => sourceFiles().filter((f) => !f.startsWith(providersPrefix))
-
-// Strip comments and string literals so the word "fetch" in prose or in an
-// error message doesn't count as a call.
-function code(text: string): string {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ")
-    .replace(/`(?:\\.|[^`\\])*`/g, '""')
-    .replace(/"(?:\\.|[^"\\\n])*"/g, '""')
-    .replace(/'(?:\\.|[^'\\\n])*'/g, '""')
-}
+const outsideProviders = () => tsFiles(coreSrc).filter((f) => !f.startsWith(providersPrefix))
 
 test("DEP-1: nothing outside src/providers calls fetch", () => {
   const offenders: string[] = []
