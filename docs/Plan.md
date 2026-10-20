@@ -335,6 +335,7 @@ C1 (the second agent ships with zero core changes) can only be checked by buildi
 | Scope is large for one builder | High | Milestones each ship. M4 is a usable core in development and M9 is production ready, so later milestones can slip without blocking real agents. |
 | Prompt caching differs by provider | Medium | The static prompt always comes first and the runtime block after it (LOOP-7). Cache settings are added per brain adapter where the provider supports them. |
 | Live test costs | Low | Live tests are opt in and kept short. |
+| An agent needs far more throughput than one process gives | Medium | `workerConcurrency` is deliberately small, and scale comes from running more processes: the person lease makes that safe, since no two processes can ever hold the same person. Every query the worker runs is indexed and bounded, and nothing is held open across a turn. |
 
 ---
 
@@ -357,3 +358,4 @@ Every change to Spec made during the build goes here, with the date, the Spec ID
 | 2026-10-20 | DATA-3 | `ob_events` gains a `seq` sequence too, and DATA-3's example list names it | EVT-1 calls the table a full trace, and several events in one turn share an instant, so a timestamp cannot order them |
 | 2026-10-20 | LEARN-2 | A tool's `roles` join the version hash | Moving a tool between end users and operators changes what the agent will do for a given person, so it has to be a new version or a review can confuse the two |
 | 2026-10-20 | Section 3 | `inFlight()` and `settled()` added to the runtime API | `receive` now returns before its turn finishes, so a test, a terminal or a shutdown needs a way to wait for work already in flight. `stop()` is T2.2 and will wait on the same thing |
+| 2026-10-20 | Section 19 | `leaseSeconds`, `workerPollMs` and `workerConcurrency` added to config | LOOP-2 names a 60 second lease default with no config field for it, and the Spec never said how often a worker looks for work or how many people it may answer at once. All three are now settings rather than numbers buried in code |

@@ -163,6 +163,20 @@ export const configSchema = z
     burstWindowMs: z.number().int().min(0).default(3000),
     routingMinTools: z.number().int().min(0).default(5),
     maxSteps: z.number().int().positive().default(8),
+
+    // LOOP-2: how long a worker owns a person before the claim expires.
+    // Long enough that a slow turn never loses it, short enough that a
+    // process that dies mid turn frees the person again quickly.
+    leaseSeconds: z.number().int().positive().default(60),
+    // How often a worker looks in the database for waiting messages. A
+    // message received by this process is picked up at once, without
+    // waiting for the next look.
+    workerPollMs: z.number().int().positive().default(1000),
+    // How many different people one process answers at the same time. One
+    // person is always one turn at a time, whatever this says. Throughput
+    // past this comes from running more processes, not from raising it
+    // until the database gives out.
+    workerConcurrency: z.number().int().positive().default(4),
     limits: LIMITS,
     pricing: PRICING.default({}),
 

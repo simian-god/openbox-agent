@@ -4,10 +4,15 @@
 // no key or network is needed (TEST-3), and a fake io so no tty is needed.
 import { test, expect, beforeAll, beforeEach } from "bun:test"
 import { join } from "node:path"
-import { describe } from "bun:test"
+import { afterEach, describe } from "bun:test"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import { createAgent, type Deps } from "../../src/runtime/index.ts"
+import {
+  createAgent as buildAgent,
+  type Agent,
+  type AgentOptions,
+  type Deps,
+} from "../../src/runtime/index.ts"
 import { createStore } from "../../src/store/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import {
@@ -18,8 +23,22 @@ import {
 import { fixedClock } from "../../src/testing/clock.ts"
 import { terminalChannel, TERMINAL_CHANNEL } from "../../src/cli/terminal.ts"
 import { fakeIo, type FakeIo } from "../support/chat.ts"
-import { runChat } from "../../src/cli/chat.ts"
+import { chatConfig, runChat } from "../../src/cli/chat.ts"
 import { loadProject } from "../../src/cli/project.ts"
+
+// See the note in turn.test.ts: every agent is started and stopped here.
+const started: Agent[] = []
+
+function createAgent(options: AgentOptions): Agent {
+  const agent = buildAgent(options)
+  agent.start()
+  started.push(agent)
+  return agent
+}
+
+afterEach(async () => {
+  await Promise.all(started.splice(0).map((agent) => agent.stop()))
+})
 
 const DEMO = join(import.meta.dir, "..", "..", "..", "..", "examples", "demo-agent")
 
@@ -63,7 +82,7 @@ describeDatabase("openbox chat", (sql) => {
     const channel = terminalChannel({ io, sessionId: "s1" })
     const deps: Deps = { brains: [brain], db: localSupabase(), sender: channel.sender, clock }
     const agent = createAgent({
-      config: config(over),
+      config: chatConfig(config(over)),
       deps,
       prompt: "You are the host.",
       tools: [],
@@ -165,7 +184,7 @@ describeDatabase("openbox chat", (sql) => {
     const brain = scriptedBrain([{ reply: "Booked." }])
     const channel = terminalChannel({ io, sessionId: "s1" })
     const agent = createAgent({
-      config: config(),
+      config: chatConfig(config()),
       deps: { brains: [brain], db: localSupabase(), sender: channel.sender, clock },
       prompt: "You are the host.",
       tools: [],

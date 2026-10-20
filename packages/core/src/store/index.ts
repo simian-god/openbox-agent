@@ -54,6 +54,23 @@ export function isUniqueViolation(error: unknown): boolean {
 /** A plain equality filter, applied on top of the agent_id scope. */
 export type Where = Record<string, string | number | boolean | null>
 
+/**
+ * DATA-4: the rest of the expected state a conditional claim needs, on top
+ * of the equality filters in `Where`. One `UPDATE ... WHERE` through
+ * supabase-js filters, which is how a lease, a job, an outbox row or a
+ * pending action is taken without an RPC and without a race.
+ */
+export interface Compare {
+  lt?: Record<string, string | number> | undefined
+  lte?: Record<string, string | number> | undefined
+  gt?: Record<string, string | number> | undefined
+  gte?: Record<string, string | number> | undefined
+  neq?: Record<string, string | number | boolean | null> | undefined
+  is?: Record<string, boolean | null> | undefined
+  /** Exactly these rows, which is how a batch is updated in one trip. */
+  isIn?: Record<string, (string | number)[]> | undefined
+}
+
 export interface TableStore<Row> {
   /** Rows matching `where`, always within this agent. */
   list(
@@ -65,7 +82,12 @@ export interface TableStore<Row> {
   byId(id: string): Promise<Row | null>
   insert(row: Record<string, unknown>): Promise<Row>
   insertMany(rows: Record<string, unknown>[]): Promise<Row[]>
-  update(where: Where, patch: Record<string, unknown>): Promise<Row[]>
+  /**
+   * Updates the rows matching `where`, and `compare` when it is given, and
+   * returns what changed. With `compare` this is DATA-4's conditional
+   * claim: an empty result means the expected state did not hold.
+   */
+  update(where: Where, patch: Record<string, unknown>, compare?: Compare): Promise<Row[]>
   remove(where: Where): Promise<void>
   count(where?: Where): Promise<number>
 }
@@ -74,6 +96,7 @@ export interface Store {
   /** The agent every query is scoped to. */
   readonly agentId: string
   people: TableStore<CoreRows["ob_people"]>
+  leases: TableStore<CoreRows["ob_person_leases"]>
   versions: TableStore<CoreRows["ob_versions"]>
   turns: TableStore<CoreRows["ob_turns"]>
   inbox: TableStore<CoreRows["ob_inbox"]>
@@ -142,10 +165,35 @@ export function createStore(db: SupabaseClient, agentId: string): Store {
         return (data ?? []) as Row[]
       },
 
-      async update(where, patch) {
+      async update(where, patch, compare) {
         // agent_id is never patchable: a row cannot be moved between agents.
         const { agent_id: _ignored, ...safe } = patch
-        const query = applyWhere(base().update(safe).eq("agent_id", agentId), where)
+        let query = applyWhere(base().update(safe).eq("agent_id", agentId), where)
+
+        // DATA-4: the rest of the expected state. Postgres takes a row lock
+        // for the update, so of several callers reaching for the same row
+        // exactly one gets it back and the others get nothing.
+        for (const [column, value] of Object.entries(compare?.lt ?? {})) {
+          query = query.lt(column, value as never)
+        }
+        for (const [column, value] of Object.entries(compare?.lte ?? {})) {
+          query = query.lte(column, value as never)
+        }
+        for (const [column, value] of Object.entries(compare?.gt ?? {})) {
+          query = query.gt(column, value as never)
+        }
+        for (const [column, value] of Object.entries(compare?.gte ?? {})) {
+          query = query.gte(column, value as never)
+        }
+        for (const [column, value] of Object.entries(compare?.neq ?? {})) {
+          query = query.neq(column, value as never)
+        }
+        for (const [column, value] of Object.entries(compare?.is ?? {})) {
+          query = query.is(column, value as never)
+        }
+        for (const [column, values] of Object.entries(compare?.isIn ?? {})) {
+          query = query.in(column, values as never)
+        }
 
         const { data, error } = await query.select()
         if (error) throw new StoreError(name, "update", error)
@@ -175,6 +223,7 @@ export function createStore(db: SupabaseClient, agentId: string): Store {
   return {
     agentId,
     people: forTable("ob_people"),
+    leases: forTable("ob_person_leases"),
     versions: forTable("ob_versions"),
     turns: forTable("ob_turns"),
     inbox: forTable("ob_inbox"),

@@ -7,15 +7,37 @@
 //
 // Nothing here sleeps. A brain held on a gate makes "the turn is still
 // running" an exact statement rather than a race.
-import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import { createAgent, type Agent, type Deps } from "../../src/runtime/index.ts"
+import {
+  createAgent as buildAgent,
+  type Agent,
+  type AgentOptions,
+  type Deps,
+} from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { scriptedBrain } from "../../src/testing/scripted-brain.ts"
 import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
 import type { Brain, BrainOutput } from "../../src/providers/brains/types.ts"
+
+// LOOP-2: nothing is handled until a worker runs, and a worker left running
+// keeps its poll timer alive after the test. Every agent built here is
+// therefore started on the way in and stopped on the way out, by shadowing
+// the import rather than touching three dozen call sites.
+const started: Agent[] = []
+
+function createAgent(options: AgentOptions): Agent {
+  const agent = buildAgent(options)
+  agent.start()
+  started.push(agent)
+  return agent
+}
+
+afterEach(async () => {
+  await Promise.all(started.splice(0).map((agent) => agent.stop()))
+})
 
 const PROMPT = "You are the host at a restaurant."
 
@@ -76,6 +98,11 @@ describeDatabase("receive", (sql) => {
     sender = fakeSender()
     const deps: Deps = { brains, db: localSupabase(), sender, clock }
     return createAgent({ config: config(over), deps, prompt: PROMPT, tools: [] })
+  }
+
+  /** Waits for the worker to actually pick the work up, without guessing. */
+  async function untilBusy(agent: Agent, count: number): Promise<void> {
+    while (agent.inFlight() < count) await new Promise((resolve) => setTimeout(resolve, 5))
   }
 
   const hello = (over: Record<string, unknown> = {}) => ({
@@ -174,10 +201,15 @@ describeDatabase("receive", (sql) => {
     expect(sender.texts()).toEqual(["one", "two"])
   })
 
-  test("API-2: nothing is left running when it resolves", async () => {
+  test("API-2: the answer is out by the time it resolves", async () => {
     const agent = agentWith([scriptedBrain([{ reply: "hi" }])])
 
     await agent.receiveAndWait(hello())
+    // The turn is over and the reply has gone, which is what API-2
+    // promises. Handing the person's lease back happens just behind it, so
+    // `settled` is what waits for the worker to be idle as well.
+    expect(sender.texts()).toEqual(["hi"])
+    await agent.settled()
     expect(agent.inFlight()).toBe(0)
   })
 
@@ -293,6 +325,9 @@ describeDatabase("receive", (sql) => {
 
     expect(agent.inFlight()).toBe(0)
     await agent.receive(hello())
+    // The worker picks it up a moment after receive returns, which is the
+    // whole point of API-1.
+    await untilBusy(agent, 1)
     expect(agent.inFlight()).toBe(1)
 
     held.open()
@@ -306,6 +341,7 @@ describeDatabase("receive", (sql) => {
 
     await agent.receive(hello({ channelUserId: "1", channelMessageId: "a" }))
     await agent.receive(hello({ channelUserId: "2", channelMessageId: "b" }))
+    await untilBusy(agent, 2)
     expect(agent.inFlight()).toBe(2)
 
     held.open()

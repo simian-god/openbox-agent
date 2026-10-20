@@ -652,6 +652,9 @@ export default defineConfig({
   burstWindowMs: 3000,
   routingMinTools: 5,
   maxSteps: 8,
+  leaseSeconds: 60,                    // LOOP-2
+  workerPollMs: 1000,                  // how often a worker looks for waiting messages
+  workerConcurrency: 4,                // how many people one process answers at once
   limits: { messagesPerWindow: 20, windowMinutes: 10, dailySpendUsd: 5 },  // dailySpendUsd required
   pricing: { "model-id": { inputPerM: 0, outputPerM: 0 } },
 

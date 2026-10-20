@@ -1,10 +1,15 @@
 // Turn v0 end to end: a message arrives, a person is created, the brain
 // runs its steps, and a reply goes out through the sender.
-import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import { createAgent, type Agent, type Deps } from "../../src/runtime/index.ts"
+import {
+  createAgent as buildAgent,
+  type Agent,
+  type AgentOptions,
+  type Deps,
+} from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { defineTool, type Tool } from "../../src/tools/index.ts"
 import {
@@ -14,6 +19,23 @@ import {
 } from "../../src/testing/scripted-brain.ts"
 import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
+
+// LOOP-2: nothing is handled until a worker runs, and a worker left running
+// keeps its poll timer alive after the test. Every agent built here is
+// therefore started on the way in and stopped on the way out, by shadowing
+// the import rather than touching three dozen call sites.
+const started: Agent[] = []
+
+function createAgent(options: AgentOptions): Agent {
+  const agent = buildAgent(options)
+  agent.start()
+  started.push(agent)
+  return agent
+}
+
+afterEach(async () => {
+  await Promise.all(started.splice(0).map((agent) => agent.stop()))
+})
 
 const PROMPT = "You are the host at a restaurant."
 

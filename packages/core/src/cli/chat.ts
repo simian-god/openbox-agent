@@ -95,6 +95,14 @@ export async function runChat(options: ChatOptions = {}): Promise<number> {
     return 1
   }
 
-  await channel.run(agent)
+  // LOOP-2: nothing is handled until the worker runs. Chat is the worker
+  // as well as the channel, so it starts one and gives up its leases on
+  // the way out.
+  agent.start()
+  try {
+    await channel.run(agent)
+  } finally {
+    await agent.stop()
+  }
   return 0
 }

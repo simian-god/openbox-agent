@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** T2.2
+**Next task:** T2.3
 
 ## M0. Foundations
 
@@ -35,7 +35,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 | Task | What | Status | Date | Note |
 |---|---|---|---|---|
 | T2.1 | Duplicate drop on insert, `receive` returning in under 100 ms, `receiveAndWait` | done | 2026-10-20 | receive now writes the person and the inbox row and returns, with the turn running behind it; receiveAndWait waits for the turn and its sends. A turn can no longer reject, since nothing awaits it: a failure becomes a failed outcome on the turn, the inbox row and the trace, and goes to onTurnError. A retried webhook that waits lands on the turn the first delivery started. inFlight and settled added to the API, see the decisions log. The worker and leases are T2.2. |
-| T2.2 | Person leases, the worker, burst merge, and turns that follow on | todo | | |
+| T2.2 | Person leases, the worker, burst merge, and turns that follow on | done | 2026-10-20 | ob_person_leases plus a worker: receive only writes, the worker claims a person and runs their turns, and nothing happens until agent.start(). The claim is DATA-4's conditional update, so of several workers exactly one wins and more processes is the safe way to add throughput. Messages waiting together become one turn in arrival order, and one arriving mid turn gets the next turn under the same lease. agent.start and agent.stop. Three config fields added, see the decisions log. Found: a process killed mid turn leaves its rows merged forever, so nothing picks them up again. Needs a recovery sweep, not built. |
 | T2.3 | Outbox: states, retries with backoff, idempotency keys, the timed out send rule | todo | | |
 | T2.4 | Job loop: claim, run, retry, dedupe keys | todo | | |
 | T2.5 | Integration tests: the same webhook twice, three messages in a burst, two worker processes on… | todo | | |

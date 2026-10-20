@@ -16,6 +16,7 @@ import type { Brain } from "../providers/brains/types.ts"
 import {
   createStore,
   isUniqueViolation,
+  type InboxRow,
   type MessageRow,
   type PersonRow,
   type Store,
@@ -24,6 +25,8 @@ import { createToolRegistry, type Tool, type ToolRegistry } from "../tools/index
 import type { Clock } from "../testing/clock.ts"
 import { systemClock } from "../testing/clock.ts"
 import { createEvents, type EventFailure, type EventSink, type EventWriter } from "./events.ts"
+import { createLeases, FREE } from "./lease.ts"
+import { createWorker } from "./worker.ts"
 import type { Inbound, Sender } from "./sender.ts"
 import { runTurn, type TurnResult } from "./turn.ts"
 import { ensureVersionRow, versionHash } from "./version.ts"
@@ -50,6 +53,12 @@ export interface AgentOptions {
   /** Told when an event could not be recorded. A turn never fails for it. */
   onEventError?: ((failure: EventFailure) => void) | undefined
   /**
+   * Told when the worker itself went wrong, rather than a turn: a claim
+   * that failed, a lease lost mid turn, a database that refused a read.
+   * The worker carries on looking for work either way.
+   */
+  onWorkerError?: ((error: unknown) => void) | undefined
+  /**
    * Told when a turn ended in a way the core did not plan for. `receive`
    * has already returned by then, so this is the only place a glue can
    * learn about it as it happens.
@@ -73,7 +82,8 @@ export interface ReceiveAndWaitResult extends ReceiveResult {
 
 /** A turn that ended in a way the core did not plan for. */
 export interface TurnFailure {
-  inboxId: string
+  /** Every message the failed turn had taken. */
+  inboxIds: string[]
   personId: string
   turnId: string | undefined
   error: unknown
@@ -86,10 +96,21 @@ export interface Agent {
   readonly events: EventWriter
   /** LEARN-2: the hash of the prompt, tools, config and core version. */
   readonly versionHash: string
+  /** LOOP-2: how this process names itself on the leases it holds. */
+  readonly owner: string
   /** API-1: writes the message down and returns. The turn runs behind it. */
   receive(inbound: Inbound): Promise<ReceiveResult>
-  /** API-2: the same, then waits for the turn and its sends to finish. */
+  /**
+   * API-2: the same, then waits until the message has been handled.
+   *
+   * Needs this process to be running the worker, so `start()` comes first.
+   * A webhook that only hands messages over uses `receive`.
+   */
   receiveAndWait(inbound: Inbound): Promise<ReceiveAndWaitResult>
+  /** Starts the worker (LOOP-2). Nothing is handled here until it runs. */
+  start(): void
+  /** Stops it, finishing the turns in flight and giving up every lease. */
+  stop(): Promise<void>
   /** How many turns are running right now. */
   inFlight(): number
   /** Resolves once no turn is running. `stop()` in T2.2 builds on this. */
@@ -143,11 +164,15 @@ export function createAgent(options: AgentOptions): Agent {
     if (existing !== null) return existing
 
     try {
-      return await store.people.insert({
+      const created = await store.people.insert({
         channel: inbound.channel,
         channel_user_id: inbound.channelUserId,
         ...(inbound.displayName !== undefined ? { display_name: inbound.displayName } : {}),
       })
+      // A free lease, so claiming them later is the one conditional update
+      // DATA-4 asks for rather than an insert followed by one.
+      await store.leases.insert({ person_id: created.id, expires_at: FREE }).catch(() => {})
+      return created
     } catch (error) {
       // Two messages from a new person at once: one insert wins, and the
       // other reads the row the winner wrote.
@@ -162,31 +187,86 @@ export function createAgent(options: AgentOptions): Agent {
   }
 
   /**
-   * The turns running right now, by the inbox row that started each one.
+   * Callers of `receiveAndWait`, by the inbox row they are waiting on.
    *
-   * A turn promise never rejects: `runOneTurn` turns a failure into a
-   * result. That matters here, because nothing awaits these promises on
-   * the `receive` path, and an unhandled rejection would take the process
-   * down with the webhook still waiting.
+   * The worker resolves these as each batch finishes. Several can wait on
+   * one row, because a retried webhook is a second caller for the same
+   * message.
    */
-  const running = new Map<string, Promise<TurnResult>>()
+  const waiting = new Map<string, ((result: TurnResult | undefined) => void)[]>()
 
   /**
-   * The synchronous half of both entry points: the person, the inbox row,
-   * and the turn started but not awaited.
+   * The messages this process is handling right now.
+   *
+   * It is what tells the watcher in `waitForHandled` apart from the real
+   * case it exists for. While a message is in here, this process will
+   * answer with the turn itself, so the watcher must keep its hands off
+   * however finished the row looks.
    */
-  async function start(inbound: Inbound): Promise<{
-    inboxId: string
-    duplicate: boolean
-    turn?: Promise<TurnResult> | undefined
-  }> {
+  const mine = new Set<string>()
+
+  function settleWaiters(inboxIds: string[], result: TurnResult | undefined): void {
+    for (const id of inboxIds) {
+      for (const resolve of waiting.get(id) ?? []) resolve(result)
+      waiting.delete(id)
+    }
+  }
+
+  /**
+   * Waits for a message to be handled.
+   *
+   * The local worker resolves this directly. The poll behind it is for the
+   * case where another process claimed the person first: then there is no
+   * `TurnResult` to hand back, only the fact that the row is finished.
+   */
+  async function waitForHandled(inboxId: string): Promise<TurnResult | undefined> {
+    const locally = new Promise<TurnResult | undefined>((resolve) => {
+      waiting.set(inboxId, [...(waiting.get(inboxId) ?? []), resolve])
+    })
+
+    const elsewhere = (async () => {
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        if (mine.has(inboxId)) continue
+        const row = await store.inbox.byId(inboxId)
+        if (row === null || row.status === "done" || row.status === "failed") return undefined
+      }
+    })()
+
+    return Promise.race([locally, elsewhere])
+  }
+
+  /** LOOP-2: this process, as the lease records it. */
+  const owner = `${config.name}:${Math.random().toString(36).slice(2, 10)}`
+
+  const leases = createLeases({
+    store,
+    clock,
+    owner,
+    seconds: config.leaseSeconds,
+  })
+
+  const worker = createWorker({
+    config,
+    store,
+    leases,
+    clock,
+    events,
+    runTurn: runOneTurn,
+    ...(options.onWorkerError !== undefined ? { onError: options.onWorkerError } : {}),
+  })
+
+  /**
+   * LOOP-1: writes the message down. The person and the inbox row are the
+   * only things a caller waits for.
+   */
+  async function write(inbound: Inbound): Promise<ReceiveResult> {
     const person = await findOrCreatePerson(inbound)
     const receivedAt = inbound.receivedAt ?? clock.now()
 
-    // LOOP-1: the same channel message id twice is a duplicate, and the
-    // unique constraint is what decides, not a prior read. Two deliveries
-    // at once therefore cannot both start a turn.
-    let inboxId: string
+    // The same channel message id twice is a duplicate, and the unique
+    // constraint is what decides, not a prior read. Two deliveries at once
+    // therefore cannot both become work.
     try {
       const row = await store.inbox.insert({
         person_id: person.id,
@@ -196,30 +276,30 @@ export function createAgent(options: AgentOptions): Agent {
         ...(inbound.action !== undefined ? { action: inbound.action } : {}),
         received_at: receivedAt.toISOString(),
       })
-      inboxId = row.id
+      // The worker looks now rather than on its next poll, so this
+      // process answers as fast as it did when the turn ran inline.
+      worker.nudge()
+      return { inboxId: row.id, duplicate: false }
     } catch (error) {
       if (!isUniqueViolation(error)) throw error
       const existing = await store.inbox.find({
         person_id: person.id,
         channel_message_id: inbound.channelMessageId,
       })
-      const existingId = existing?.id ?? ""
       await events.about({ personId: person.id }).record("duplicate_dropped", {
         channel: inbound.channel,
         channelMessageId: inbound.channelMessageId,
         inboxId: existing?.id ?? null,
       })
-      // A retried webhook waits on the turn the first delivery started,
-      // when that turn is still running.
-      return { inboxId: existingId, duplicate: true, turn: running.get(existingId) }
+      return { inboxId: existing?.id ?? "", duplicate: true }
     }
+  }
 
-    const turn = runOneTurn(person, inbound, inboxId, receivedAt).finally(() => {
-      running.delete(inboxId)
-    })
-    running.set(inboxId, turn)
-
-    return { inboxId, duplicate: false, turn }
+  /** Rows waiting that a turn could take right now (LOOP-3). */
+  async function readyCount(): Promise<number> {
+    const rows = await store.inbox.list({ status: "pending" }, { orderBy: "seq", limit: 200 })
+    const cutoff = clock.now().getTime() - config.burstWindowMs
+    return rows.filter((row) => new Date(row.received_at).getTime() <= cutoff).length
   }
 
   return {
@@ -228,56 +308,96 @@ export function createAgent(options: AgentOptions): Agent {
     tools,
     events,
     versionHash: hash,
+    owner,
 
-    async receive(inbound: Inbound): Promise<ReceiveResult> {
-      const { inboxId, duplicate } = await start(inbound)
-      return { inboxId, duplicate }
-    },
+    receive: write,
 
     async receiveAndWait(inbound: Inbound): Promise<ReceiveAndWaitResult> {
-      const { inboxId, duplicate, turn } = await start(inbound)
-      if (turn === undefined) return { inboxId, duplicate }
-      return { inboxId, duplicate, turn: await turn }
+      if (!worker.running) {
+        throw new Error(
+          "receiveAndWait needs this process to be handling turns. Call agent.start() first, or use receive() if another process runs the worker.",
+        )
+      }
+
+      const { inboxId, duplicate } = await write(inbound)
+      if (inboxId === "") return { inboxId, duplicate }
+
+      const turn = await waitForHandled(inboxId)
+      return { inboxId, duplicate, ...(turn !== undefined ? { turn } : {}) }
     },
 
-    inFlight: () => running.size,
+    start(): void {
+      worker.start()
+    },
+
+    async stop(): Promise<void> {
+      await worker.stop()
+    },
+
+    inFlight: () => worker.busy(),
 
     async settled(): Promise<void> {
-      // A turn can start another, so this waits until there is nothing
-      // left rather than just draining what was there when it was called.
-      while (running.size > 0) await Promise.all([...running.values()])
+      // Not just "no turn running": a message nudged a moment ago may not
+      // have been claimed yet. This waits until there is nothing running
+      // and nothing left that a turn could take.
+      for (;;) {
+        await worker.drain()
+        if (worker.busy() === 0 && (await readyCount()) === 0) return
+        worker.nudge()
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
     },
   }
 
   /**
-   * One turn, which never rejects.
+   * One turn over one person's waiting messages, which never rejects.
    *
-   * Nothing awaits this on the `receive` path, so a throw here would be an
+   * Nothing awaits this but the worker, so a throw here would be an
    * unhandled rejection rather than a visible error. A failure becomes a
-   * `failed` outcome instead: recorded on the turn, on the inbox row and
-   * in the trace, and handed to `onTurnError`.
+   * `failed` outcome instead: recorded on the turn, on the inbox rows and
+   * in the trace, handed to `onTurnError`, and handed back to anyone
+   * waiting in `receiveAndWait`.
    */
-  async function runOneTurn(
-    person: PersonRow,
-    inbound: Inbound,
-    inboxId: string,
-    receivedAt: Date,
-  ): Promise<TurnResult> {
+  async function runOneTurn(person: PersonRow, batch: InboxRow[]): Promise<TurnResult> {
     const startedAt = clock.now()
     const where: { turnId?: string | undefined } = {}
+    const inboxIds = batch.map((row) => row.id)
+    for (const id of inboxIds) mine.add(id)
 
     try {
-      return await attemptTurn(person, inbound, inboxId, receivedAt, startedAt, where)
-    } catch (error) {
-      return await turnFailed({ person, inboxId, turnId: where.turnId, startedAt, error })
+      let result: TurnResult
+      let handled: "done" | "failed" = "done"
+      try {
+        result = await attemptTurn(person, batch, startedAt, where)
+      } catch (error) {
+        handled = "failed"
+        result = await turnFailed({ person, batch, turnId: where.turnId, startedAt, error })
+      }
+
+      try {
+        // Marked before anyone waiting is answered, so a caller that goes
+        // straight on to read the row sees what happened to it. Not `done`
+        // on a failure: a message that was never answered has to stay
+        // findable.
+        await store.inbox.update(
+          { person_id: person.id },
+          { status: handled, ...(where.turnId !== undefined ? { turn_id: where.turnId } : {}) },
+          { isIn: { id: inboxIds } },
+        )
+      } catch {
+        // Best effort, like everything else on the failure path.
+      }
+
+      settleWaiters(inboxIds, result)
+      return result
+    } finally {
+      for (const id of inboxIds) mine.delete(id)
     }
   }
 
   async function attemptTurn(
     person: PersonRow,
-    inbound: Inbound,
-    inboxId: string,
-    receivedAt: Date,
+    batch: InboxRow[],
     startedAt: Date,
     where: { turnId?: string | undefined },
   ): Promise<TurnResult> {
@@ -289,34 +409,47 @@ export function createAgent(options: AgentOptions): Agent {
       started_at: startedAt.toISOString(),
     })
     where.turnId = turnRow.id
+    const inboxIds = batch.map((row) => row.id)
+
+    // LOOP-3: exactly the rows this turn took, and no others. A row that
+    // arrived a moment ago is still `pending`, so it waits for the next
+    // turn (LOOP-4) instead of being swallowed without the brain seeing it.
+    await store.inbox.update(
+      { person_id: person.id },
+      { status: "merged", turn_id: turnRow.id },
+      { isIn: { id: inboxIds } },
+    )
 
     const turnEvents = events.about({ personId: person.id, turnId: turnRow.id })
     await turnEvents.record("turn_started", {
-      channel: inbound.channel,
-      inboxId,
+      channel: person.channel,
+      inboxIds,
+      messages: batch.length,
       versionId: versionRowId,
-      hasMedia: inbound.media !== undefined,
-      hasAction: inbound.action !== undefined,
+      hasMedia: batch.some((row) => row.media !== null),
+      hasAction: batch.some((row) => row.action !== null),
     })
 
     // LOOP-7 wants the history *then* the current batch, so history is read
-    // before this message joins it. Otherwise the brain sees it twice.
+    // before these messages join it. Otherwise the brain sees them twice.
     const history = (await store.messages.list(
       { person_id: person.id },
       // By insert order, so a reply can never sort before its question.
       { orderBy: "seq", ascending: false, limit: config.history },
     )) as MessageRow[]
 
-    const text = inbound.text ?? ""
-    await store.messages.insert({
-      person_id: person.id,
-      turn_id: turnRow.id,
-      direction: "inbound",
-      author: "person",
-      text,
-      channel: inbound.channel,
-      created_at: receivedAt.toISOString(),
-    })
+    const texts = batch.map((row) => row.text ?? "")
+    await store.messages.insertMany(
+      batch.map((row) => ({
+        person_id: person.id,
+        turn_id: turnRow.id,
+        direction: "inbound",
+        author: "person",
+        text: row.text ?? "",
+        channel: person.channel,
+        created_at: row.received_at,
+      })),
+    )
 
     const result = await runTurn({
       config,
@@ -327,8 +460,8 @@ export function createAgent(options: AgentOptions): Agent {
       tools,
       clock,
       person,
-      // The batch is one message in v0. LOOP-3's burst merge is T2.2.
-      batch: [text],
+      // LOOP-3: the whole burst, in arrival order.
+      batch: texts,
       prompt,
       turnId: turnRow.id,
       events: turnEvents,
@@ -351,8 +484,6 @@ export function createAgent(options: AgentOptions): Agent {
         ended_at: clock.now().toISOString(),
       },
     )
-    await store.inbox.update({ id: inboxId }, { status: "done", turn_id: turnRow.id })
-
     await turnEvents.record("turn_ended", {
       outcome: result.outcome,
       steps: result.steps,
@@ -361,6 +492,7 @@ export function createAgent(options: AgentOptions): Agent {
       brains: result.brainsUsed,
       replied: result.reply !== undefined,
       toolsRun: result.toolsRun.length,
+      messages: batch.length,
     })
 
     return result
@@ -370,22 +502,23 @@ export function createAgent(options: AgentOptions): Agent {
    * Records a turn that failed, as far as the database still lets us.
    *
    * Every write here is best effort: whatever broke the turn may well be
-   * the database itself, and this must still return a result for
-   * `receiveAndWait` to hand back.
+   * the database itself, and this must still return a result for the
+   * worker and for anyone waiting.
    */
   async function turnFailed(failure: {
     person: PersonRow
-    inboxId: string
+    batch: InboxRow[]
     turnId: string | undefined
     startedAt: Date
     error: unknown
   }): Promise<TurnResult> {
-    const { person, inboxId, turnId, startedAt, error } = failure
+    const { person, batch, turnId, startedAt, error } = failure
     const message = error instanceof Error ? error.message : String(error)
     const latencyMs = clock.now().getTime() - startedAt.getTime()
+    const inboxIds = batch.map((row) => row.id)
 
     try {
-      options.onTurnError?.({ inboxId, personId: person.id, turnId, error })
+      options.onTurnError?.({ inboxIds, personId: person.id, turnId, error })
     } catch {
       // A broken handler is not worth losing the rest of the record over.
     }
@@ -397,9 +530,6 @@ export function createAgent(options: AgentOptions): Agent {
           { outcome: "failed", latency_ms: latencyMs, ended_at: clock.now().toISOString() },
         )
       }
-      // Not `done`: the message was never answered, so a sweep has to be
-      // able to find it again.
-      await store.inbox.update({ id: inboxId }, { status: "failed", turn_id: turnId ?? null })
     } catch {
       // Nothing left to do about it here.
     }

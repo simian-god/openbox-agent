@@ -2,17 +2,39 @@
 //
 // Events and versions are built in from the start rather than bolted on at
 // the end, so every later feature records itself as it lands.
-import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import { createAgent, type Agent, type Deps } from "../../src/runtime/index.ts"
+import {
+  createAgent as buildAgent,
+  type Agent,
+  type AgentOptions,
+  type Deps,
+} from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { defineTool, type Tool } from "../../src/tools/index.ts"
 import { scriptedBrain, type ScriptedStep } from "../../src/testing/scripted-brain.ts"
 import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
 import type { Brain } from "../../src/providers/brains/types.ts"
+
+// LOOP-2: nothing is handled until a worker runs, and a worker left running
+// keeps its poll timer alive after the test. Every agent built here is
+// therefore started on the way in and stopped on the way out, by shadowing
+// the import rather than touching three dozen call sites.
+const started: Agent[] = []
+
+function createAgent(options: AgentOptions): Agent {
+  const agent = buildAgent(options)
+  agent.start()
+  started.push(agent)
+  return agent
+}
+
+afterEach(async () => {
+  await Promise.all(started.splice(0).map((agent) => agent.stop()))
+})
 
 const PROMPT = "You are the host at a restaurant."
 
@@ -316,6 +338,10 @@ describeDatabase("events and versions", (sql) => {
   test("LEARN-2: a restart with the same agent reuses the version row", async () => {
     const first = agentWith([{ reply: "one" }])
     await first.receiveAndWait(hello())
+    // Stopped first, the way a restart really goes. Two live workers on
+    // one agent name would both reach for the person, and whichever won
+    // would decide which version the turn ran under.
+    await first.stop()
 
     const second = agentWith([{ reply: "two" }])
     await second.receiveAndWait(hello({ channelMessageId: "msg-2" }))
@@ -327,6 +353,10 @@ describeDatabase("events and versions", (sql) => {
   test("LEARN-2: a changed prompt is a second version row", async () => {
     const first = agentWith([{ reply: "one" }])
     await first.receiveAndWait(hello())
+
+    // The old deployment stops before the new one starts, so the second
+    // turn can only have run under the new prompt.
+    await first.stop()
 
     const changed = agentWith([{ reply: "two" }], [checkAvailability], {
       prompt: "You are the host at a dentist.",

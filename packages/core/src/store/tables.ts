@@ -3,6 +3,7 @@
 
 export const CORE_TABLES = [
   "ob_people",
+  "ob_person_leases",
   "ob_versions",
   "ob_turns",
   "ob_inbox",
@@ -30,6 +31,18 @@ export interface PersonRow {
   notice_shown_at: string | null
   created_at: string
   updated_at: string
+}
+
+/** LOOP-2: who is handling a person, and until when. */
+export interface LeaseRow {
+  id: string
+  agent_id: string
+  person_id: string
+  /** Which process holds it. Null means it has never been claimed. */
+  owner: string | null
+  /** In the past means free. The epoch is how a fresh row starts. */
+  expires_at: string
+  created_at: string
 }
 
 export interface VersionRow {
@@ -100,6 +113,7 @@ export interface EventRow {
 /** Maps a table name to its row type. */
 export interface CoreRows {
   ob_people: PersonRow
+  ob_person_leases: LeaseRow
   ob_versions: VersionRow
   ob_turns: TurnRow
   ob_inbox: InboxRow
