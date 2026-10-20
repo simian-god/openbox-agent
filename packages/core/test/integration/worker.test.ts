@@ -34,11 +34,24 @@ function config(over: Record<string, unknown> = {}): OpenboxConfig {
   })
 }
 
+/**
+ * A promise someone else decides when to resolve.
+ *
+ * Every gate is registered, and `afterEach` opens them all before stopping
+ * anything. Without that, one failed assertion leaves its brain blocked
+ * for ever, `stop()` waits for it, the cleanup hook times out, and the
+ * agent keeps running with its own sender for the rest of the suite,
+ * quietly doing other files' work. That is a cascade worth making
+ * impossible rather than remembering not to cause.
+ */
+const gates: (() => void)[] = []
+
 function gate(): { open: () => void; opened: Promise<void> } {
   let open: () => void = () => {}
   const opened = new Promise<void>((resolve) => {
     open = resolve
   })
+  gates.push(open)
   return { open, opened }
 }
 
@@ -71,6 +84,9 @@ describeDatabase("the worker", (sql) => {
   // Every agent that was started has to be stopped, or its poll timer keeps
   // the test runner alive.
   afterEach(async () => {
+    // Gates first: a brain still waiting on one would keep `stop()` here
+    // for ever.
+    for (const open of gates.splice(0)) open()
     await Promise.all(started.splice(0).map((agent) => agent.stop()))
   })
 
@@ -97,6 +113,21 @@ describeDatabase("the worker", (sql) => {
    * moment is when the row stops being pending. Tests about what lands in
    * the *next* turn have to wait for it.
    */
+  /**
+   * Waits until the lease has actually been claimed.
+   *
+   * `inFlight()` goes up when the pump picks a person, which is before
+   * `handle()` has taken their lease. Reading the lease on the strength of
+   * `inFlight()` alone is a race that only shows up on a slow machine.
+   */
+  async function untilClaimed(agent: Agent): Promise<{ owner: string | null; expires_at: string }> {
+    for (;;) {
+      const lease = await agent.store.leases.find({})
+      if (lease !== null && lease.owner !== null) return lease
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+  }
+
   async function untilTaken(agent: Agent, inboxId: string): Promise<void> {
     for (;;) {
       const row = await agent.store.inbox.byId(inboxId)
@@ -154,12 +185,10 @@ describeDatabase("the worker", (sql) => {
     const agent = agentWith([gatedBrain(held.opened)])
 
     await agent.receive(hello())
-    // Wait for the claim to land, without guessing how long that takes.
-    while (agent.inFlight() === 0) await new Promise((r) => setTimeout(r, 5))
 
-    const lease = await agent.store.leases.find({})
-    expect(lease?.owner).toBe(agent.owner)
-    expect(new Date(lease?.expires_at ?? 0).getTime()).toBeGreaterThan(Date.now())
+    const lease = await untilClaimed(agent)
+    expect(lease.owner).toBe(agent.owner)
+    expect(new Date(lease.expires_at).getTime()).toBeGreaterThan(Date.now())
 
     held.open()
     await agent.settled()
@@ -174,7 +203,7 @@ describeDatabase("the worker", (sql) => {
     const first = agentWith([gatedBrain(held.opened, "from the first")])
 
     await first.receive(hello())
-    while (first.inFlight() === 0) await new Promise((r) => setTimeout(r, 5))
+    await untilClaimed(first)
 
     // A second process, on the same database, with work apparently waiting.
     const secondSender = fakeSender()
@@ -436,6 +465,11 @@ describeDatabase("the worker", (sql) => {
       await agent.receive(hello({ channelUserId: id, channelMessageId: `m-${id}` }))
     }
     while (agent.inFlight() < 4) await new Promise((r) => setTimeout(r, 5))
+    // Same race as above: picked is not yet claimed, so wait for the
+    // claims rather than reading them the instant the slots fill.
+    while ((await agent.store.leases.count({ owner: agent.owner })) < 4) {
+      await new Promise((r) => setTimeout(r, 5))
+    }
 
     // Four people, four turns, all waiting on the same brain at once.
     expect(agent.inFlight()).toBe(4)
@@ -468,7 +502,7 @@ describeDatabase("the worker", (sql) => {
     const agent = agentWith([gatedBrain(held.opened)])
 
     await agent.receive(hello())
-    while (agent.inFlight() === 0) await new Promise((r) => setTimeout(r, 5))
+    await untilClaimed(agent)
 
     held.open()
     await agent.stop()

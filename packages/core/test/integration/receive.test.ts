@@ -36,6 +36,9 @@ function createAgent(options: AgentOptions): Agent {
 }
 
 afterEach(async () => {
+  // Gates first: a brain still waiting on one would keep `stop()` here
+  // for ever.
+  for (const open of gates.splice(0)) open()
   await Promise.all(started.splice(0).map((agent) => agent.stop()))
 })
 
@@ -58,12 +61,24 @@ function config(over: Record<string, unknown> = {}): OpenboxConfig {
   })
 }
 
-/** A promise someone else decides when to resolve. */
+/**
+ * A promise someone else decides when to resolve.
+ *
+ * Every gate is registered, and `afterEach` opens them all before stopping
+ * anything. Without that, one failed assertion leaves its brain blocked
+ * for ever, `stop()` waits for it, the cleanup hook times out, and the
+ * agent keeps running with its own sender for the rest of the suite,
+ * quietly doing other files' work. That is a cascade worth making
+ * impossible rather than remembering not to cause.
+ */
+const gates: (() => void)[] = []
+
 function gate(): { open: () => void; opened: Promise<void> } {
   let open: () => void = () => {}
   const opened = new Promise<void>((resolve) => {
     open = resolve
   })
+  gates.push(open)
   return { open, opened }
 }
 
