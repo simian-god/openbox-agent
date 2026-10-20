@@ -26,6 +26,7 @@ import type { Clock } from "../testing/clock.ts"
 import { systemClock } from "../testing/clock.ts"
 import { createEvents, type EventFailure, type EventSink, type EventWriter } from "./events.ts"
 import { createLeases, FREE } from "./lease.ts"
+import { createOutbox, type Outbox } from "./outbox.ts"
 import { createWorker } from "./worker.ts"
 import type { Inbound, Sender } from "./sender.ts"
 import { runTurn, type TurnResult } from "./turn.ts"
@@ -98,6 +99,8 @@ export interface Agent {
   readonly versionHash: string
   /** LOOP-2: how this process names itself on the leases it holds. */
   readonly owner: string
+  /** LOOP-11: where replies go before they go out. */
+  readonly outbox: Outbox
   /** API-1: writes the message down and returns. The turn runs behind it. */
   receive(inbound: Inbound): Promise<ReceiveResult>
   /**
@@ -246,6 +249,15 @@ export function createAgent(options: AgentOptions): Agent {
     seconds: config.leaseSeconds,
   })
 
+  const outbox = createOutbox({
+    config,
+    store,
+    clock,
+    sender: deps.sender,
+    events,
+    ...(options.onWorkerError !== undefined ? { onError: options.onWorkerError } : {}),
+  })
+
   const worker = createWorker({
     config,
     store,
@@ -295,6 +307,13 @@ export function createAgent(options: AgentOptions): Agent {
     }
   }
 
+  /** Messages queued that the outbox could send right now. */
+  async function dueCount(): Promise<number> {
+    const rows = await store.outbox.list({ status: "queued" }, { orderBy: "seq", limit: 200 })
+    const now = clock.now().getTime()
+    return rows.filter((row) => new Date(row.not_before).getTime() <= now).length
+  }
+
   /** Rows waiting that a turn could take right now (LOOP-3). */
   async function readyCount(): Promise<number> {
     const rows = await store.inbox.list({ status: "pending" }, { orderBy: "seq", limit: 200 })
@@ -309,6 +328,7 @@ export function createAgent(options: AgentOptions): Agent {
     events,
     versionHash: hash,
     owner,
+    outbox,
 
     receive: write,
 
@@ -323,15 +343,28 @@ export function createAgent(options: AgentOptions): Agent {
       if (inboxId === "") return { inboxId, duplicate }
 
       const turn = await waitForHandled(inboxId)
+
+      // API-2: not resolved until everything the turn sent has reached a
+      // final state. Waiting here rather than inside the turn keeps a
+      // person's slot free: a channel that is refusing for thirty seconds
+      // would otherwise hold the worker, and `stop()` behind it. Order is
+      // not at risk, because the outbox sends one person's messages one at
+      // a time in the order they were queued.
+      if (turn?.turnId !== undefined) await outbox.settle(turn.turnId)
+
       return { inboxId, duplicate, ...(turn !== undefined ? { turn } : {}) }
     },
 
     start(): void {
       worker.start()
+      outbox.pump.start()
     },
 
     async stop(): Promise<void> {
+      // The outbox stops last, so a reply a turn just decided on still
+      // goes out rather than being left queued.
       await worker.stop()
+      await outbox.pump.stop()
     },
 
     inFlight: () => worker.busy(),
@@ -342,8 +375,15 @@ export function createAgent(options: AgentOptions): Agent {
       // and nothing left that a turn could take.
       for (;;) {
         await worker.drain()
-        if (worker.busy() === 0 && (await readyCount()) === 0) return
+        await outbox.pump.drain()
+        const quiet =
+          worker.busy() === 0 &&
+          outbox.pump.busy() === 0 &&
+          (await readyCount()) === 0 &&
+          (await dueCount()) === 0
+        if (quiet) return
         worker.nudge()
+        outbox.pump.nudge()
         await new Promise((resolve) => setTimeout(resolve, 10))
       }
     },
@@ -495,7 +535,7 @@ export function createAgent(options: AgentOptions): Agent {
       messages: batch.length,
     })
 
-    return result
+    return { ...result, turnId: turnRow.id }
   }
 
   /**
@@ -539,6 +579,7 @@ export function createAgent(options: AgentOptions): Agent {
       .record("turn_ended", { outcome: "failed", latencyMs, replied: false, error: message })
 
     return {
+      ...(turnId !== undefined ? { turnId } : {}),
       steps: 0,
       costUsd: 0,
       brainsUsed: [],
@@ -548,13 +589,17 @@ export function createAgent(options: AgentOptions): Agent {
     }
   }
 
-  /** The reply goes out, and is stored whatever the channel does with it. */
+  /** LOOP-11: the reply goes to the outbox, and is stored either way. */
   async function deliver(person: PersonRow, turnId: string, text: string): Promise<void> {
-    // The outbox, with its retries and states, is T2.3. v0 sends directly.
-    await deps.sender.send({
+    await outbox.queue({
+      personId: person.id,
+      turnId,
+      kind: "reply",
       channel: person.channel,
       channelUserId: person.channel_user_id,
       text,
+      // The same turn can only ever produce one reply, so this key makes
+      // a retried turn harmless.
       idempotencyKey: `${turnId}:reply`,
     })
 

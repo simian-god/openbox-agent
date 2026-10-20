@@ -8,6 +8,7 @@ export const CORE_TABLES = [
   "ob_turns",
   "ob_inbox",
   "ob_messages",
+  "ob_outbox",
   "ob_events",
 ] as const
 
@@ -17,6 +18,9 @@ export type PersonRole = "end_user" | "operator"
 export type InboxStatus = "pending" | "merged" | "done" | "failed"
 export type MessageDirection = "inbound" | "outbound"
 export type MessageAuthor = "person" | "agent" | "operator" | "notice"
+export type OutboxKind = "reply" | "proactive" | "operator_alert" | "confirm"
+/** `unknown` is not a kind of failure: the send threw, so nobody knows. */
+export type OutboxStatus = "queued" | "sending" | "sent" | "failed" | "unknown"
 
 export interface PersonRow {
   id: string
@@ -98,6 +102,30 @@ export interface MessageRow {
   created_at: string
 }
 
+/** LOOP-11: one outgoing message, written down before it is sent. */
+export interface OutboxRow {
+  id: string
+  /** Insert order, which is the order a person must receive things in. */
+  seq: number
+  agent_id: string
+  person_id: string
+  turn_id: string | null
+  kind: OutboxKind
+  channel: string
+  channel_user_id: string
+  /** The Outbound minus the address: text, buttons, template, file. */
+  payload: Record<string, unknown>
+  status: OutboxStatus
+  attempts: number
+  idempotency_key: string
+  not_before: string
+  urgent: boolean
+  channel_message_id: string | null
+  error: string | null
+  last_attempt_at: string | null
+  created_at: string
+}
+
 export interface EventRow {
   id: string
   /** Insert order, which is the order the trace happened in (EVT-1). */
@@ -118,6 +146,7 @@ export interface CoreRows {
   ob_turns: TurnRow
   ob_inbox: InboxRow
   ob_messages: MessageRow
+  ob_outbox: OutboxRow
   ob_events: EventRow
 }
 

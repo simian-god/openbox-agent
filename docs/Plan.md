@@ -155,7 +155,7 @@ Each task lists the Spec IDs it implements. **Done when** is the bar for closing
 | T2.1 | Duplicate drop on insert, `receive` returning in under 100 ms, `receiveAndWait` | LOOP-1, API-1, API-2 |
 | T2.2 | Person leases, the worker, burst merge, and turns that follow on | LOOP-2, LOOP-3, LOOP-4, DATA-4 |
 | T2.3 | Outbox: states, retries with backoff, idempotency keys, the timed out send rule | Sender contract, LOOP-11 |
-| T2.4 | Job loop: claim, run, retry, dedupe keys | DATA-4, PRO-1 |
+| T2.4 | Job loop: claim, run, retry, dedupe keys, and a recovery sweep for turns a dead process left behind | DATA-4, PRO-1 |
 | T2.5 | Integration tests: the same webhook twice, three messages in a burst, two worker processes on one database, a timed out send | C13 |
 | T2.6 | **Gate:** run a minimal agent under evals-agent's harness and confirm DATA-4's conditional updates work in its SQLite world. If they don't, extend evals-agent's fake client before going further | TEST-2, Spec 23 |
 
@@ -359,3 +359,5 @@ Every change to Spec made during the build goes here, with the date, the Spec ID
 | 2026-10-20 | LEARN-2 | A tool's `roles` join the version hash | Moving a tool between end users and operators changes what the agent will do for a given person, so it has to be a new version or a review can confuse the two |
 | 2026-10-20 | Section 3 | `inFlight()` and `settled()` added to the runtime API | `receive` now returns before its turn finishes, so a test, a terminal or a shutdown needs a way to wait for work already in flight. `stop()` is T2.2 and will wait on the same thing |
 | 2026-10-20 | Section 19 | `leaseSeconds`, `workerPollMs` and `workerConcurrency` added to config | LOOP-2 names a 60 second lease default with no config field for it, and the Spec never said how often a worker looks for work or how many people it may answer at once. All three are now settings rather than numbers buried in code |
+| 2026-10-20 | Section 4 | SEND-1 to SEND-4 added: what the outbox does with each send outcome, why a thrown send is `unknown` and not retried, the retry schedule, and per person ordering | The Sender contract described the three outcomes but nothing said what to do with them. The `unknown` status and the `idempotentSends` capability both existed with no rule tying them together |
+| 2026-10-20 | Section 19 | `sendAttempts` and `sendBackoffMs` added to config | "Retries with backoff" was in the Plan's task list and in no requirement, so there was no number anywhere |

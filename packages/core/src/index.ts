@@ -78,6 +78,9 @@ export {
   type MessageRow,
   type MessageDirection,
   type MessageAuthor,
+  type OutboxRow,
+  type OutboxKind,
+  type OutboxStatus,
   type EventRow,
 } from "./store/index.ts"
 
@@ -113,6 +116,15 @@ export {
 export {
   createAgent,
   runTurn,
+  createOutbox,
+  toOutbound,
+  backoffMs,
+  createPump,
+  type Outbox,
+  type OutboxOptions,
+  type Queued,
+  type Pump,
+  type PumpOptions,
   createLeases,
   createWorker,
   FREE,

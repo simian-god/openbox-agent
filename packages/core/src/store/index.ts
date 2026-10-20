@@ -101,6 +101,7 @@ export interface Store {
   turns: TableStore<CoreRows["ob_turns"]>
   inbox: TableStore<CoreRows["ob_inbox"]>
   messages: TableStore<CoreRows["ob_messages"]>
+  outbox: TableStore<CoreRows["ob_outbox"]>
   events: TableStore<CoreRows["ob_events"]>
   /** For a table with no typed accessor yet. Still scoped. */
   table<T = Record<string, unknown>>(name: string): TableStore<T>
@@ -228,6 +229,7 @@ export function createStore(db: SupabaseClient, agentId: string): Store {
     turns: forTable("ob_turns"),
     inbox: forTable("ob_inbox"),
     messages: forTable("ob_messages"),
+    outbox: forTable("ob_outbox"),
     events: forTable("ob_events"),
     table: <T = Record<string, unknown>>(name: string) => scoped<T>(name),
   }

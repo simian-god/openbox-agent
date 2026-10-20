@@ -232,6 +232,24 @@ interface Sender {
     | { status: "rejected"; retryable: boolean; error: string }
   >                               // a thrown timeout means the outcome is unknown
 }
+```
+
+**SEND-1.** The outbox acts on the three outcomes like this:
+
+| What `send` did | Outbox row | Tried again |
+|---|---|---|
+| `sent` | `sent`, with the channel's message id | no |
+| `rejected`, `retryable: true` | `queued`, `not_before` pushed out by the backoff | up to `sendAttempts`, then `failed` |
+| `rejected`, `retryable: false` | `failed`, recorded as `send_failed` | no |
+| threw | `unknown`, recorded as `send_unknown` | only when the channel declares `idempotentSends` |
+
+**SEND-2.** A thrown send is `unknown`, not `failed`. The request went out and no answer came back, so the message may well have arrived, and sending it again would say it twice. Saying something twice to a person is worse than not knowing whether it landed. `idempotentSends` is the only thing that changes this: on such a channel a repeat cannot be seen by the person, so it is tried again.
+
+**SEND-3.** Retries are `sendAttempts` *(5 default)* with the wait doubling from `sendBackoffMs` *(1000 default)*, jittered, which is about thirty seconds in all. A very late reply is often worse than none in a conversation, because the person has already asked someone else.
+
+**SEND-4.** A person receives messages in the order they were queued. One person's outbox is sent one message at a time; different people are sent at once.
+
+```ts
 
 type Outbound = {
   channel: string; channelUserId: string
@@ -655,6 +673,8 @@ export default defineConfig({
   leaseSeconds: 60,                    // LOOP-2
   workerPollMs: 1000,                  // how often a worker looks for waiting messages
   workerConcurrency: 4,                // how many people one process answers at once
+  sendAttempts: 5,                     // SEND-3
+  sendBackoffMs: 1000,                 // SEND-3
   limits: { messagesPerWindow: 20, windowMinutes: 10, dailySpendUsd: 5 },  // dailySpendUsd required
   pricing: { "model-id": { inputPerM: 0, outputPerM: 0 } },
 

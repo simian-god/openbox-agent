@@ -23,6 +23,7 @@ import type { InboxRow, PersonRow, Store } from "../store/index.ts"
 import type { Clock } from "../testing/clock.ts"
 import type { EventWriter } from "./events.ts"
 import type { Leases } from "./lease.ts"
+import { createPump, type Pump } from "./pump.ts"
 import type { TurnResult } from "./turn.ts"
 
 export interface WorkerOptions {
@@ -37,39 +38,11 @@ export interface WorkerOptions {
   onError?: ((error: unknown) => void) | undefined
 }
 
-export interface Worker {
-  /** Begins looking for work. Calling it twice changes nothing. */
-  start(): void
-  /** Stops looking, waits for turns in flight, and gives up every lease. */
-  stop(): Promise<void>
-  /** Look now rather than on the next poll. Never throws. */
-  nudge(): void
-  /** Waits for the turns in flight, without stopping the poll. */
-  drain(): Promise<void>
-  /** How many people this worker is handling right now. */
-  busy(): number
-  readonly running: boolean
-}
+/** The inbox worker is a pump over people (see pump.ts). */
+export type Worker = Pump
 
 export function createWorker(options: WorkerOptions): Worker {
   const { config, store, leases, clock, events, runTurn, onError } = options
-
-  /** The people being handled right now, by id. */
-  const active = new Map<string, Promise<void>>()
-  let running = false
-  let timer: ReturnType<typeof setTimeout> | undefined
-  /** Set while a sweep is in progress, so two never overlap. */
-  let sweeping = false
-  /** True when a nudge arrived during a sweep, so one more is owed. */
-  let again = false
-
-  const report = (error: unknown): void => {
-    try {
-      onError?.(error)
-    } catch {
-      // A broken handler must not stop the worker looking for work.
-    }
-  }
 
   /**
    * LOOP-3: a person is ready when the burst window has passed since their
@@ -96,20 +69,24 @@ export function createWorker(options: WorkerOptions): Worker {
   /**
    * The people worth trying, oldest waiting message first.
    *
-   * Bounded twice over: by how many rows it reads, and by how many free
-   * slots there are. It reads more candidates than slots so that a worker
-   * losing races to other workers still finds somebody to handle.
+   * Bounded by how many rows it reads as well as by how many free slots
+   * there are. It offers more people than slots so a worker losing races
+   * to other workers still finds somebody to handle.
    */
   async function candidates(slots: number): Promise<string[]> {
     const rows = await store.inbox.list({ status: "pending" }, { orderBy: "seq", limit: slots * 8 })
 
     const seen = new Set<string>()
     for (const row of rows) {
-      if (active.has(row.person_id)) continue
       seen.add(row.person_id)
       if (seen.size >= slots * 2) break
     }
-    return [...seen]
+
+    const out: string[] = []
+    for (const personId of seen) {
+      if (await ready(personId)) out.push(personId)
+    }
+    return out
   }
 
   /**
@@ -166,85 +143,21 @@ export function createWorker(options: WorkerOptions): Worker {
     }
   }
 
-  /** One pass: find people, take as many as there are free slots for. */
-  async function sweep(): Promise<void> {
-    if (sweeping) {
-      again = true
-      return
-    }
-    sweeping = true
-
+  function report(error: unknown): void {
     try {
-      do {
-        again = false
-        const slots = config.workerConcurrency - active.size
-        if (slots <= 0) return
-
-        for (const personId of await candidates(slots)) {
-          if (active.size >= config.workerConcurrency) break
-          if (active.has(personId)) continue
-          if (!(await ready(personId))) continue
-
-          const work = handle(personId)
-            .catch(report)
-            .finally(() => {
-              active.delete(personId)
-              // A person who finished frees a slot, and there may be more
-              // waiting, so look again rather than wait for the poll.
-              if (running) nudge()
-            })
-          active.set(personId, work)
-        }
-      } while (again)
-    } catch (error) {
-      report(error)
-    } finally {
-      sweeping = false
+      onError?.(error)
+    } catch {
+      // A broken handler must not stop the worker looking for work.
     }
   }
 
-  function schedule(): void {
-    if (!running) return
-    timer = setTimeout(() => {
-      void sweep().finally(schedule)
-    }, config.workerPollMs)
-  }
-
-  function nudge(): void {
-    if (!running) return
-    void sweep()
-  }
-
-  return {
-    get running() {
-      return running
-    },
-
-    start(): void {
-      if (running) return
-      running = true
-      // Look straight away, so a message already waiting is not held for
-      // one poll interval before anything happens.
-      void sweep()
-      schedule()
-    },
-
-    async stop(): Promise<void> {
-      running = false
-      if (timer !== undefined) clearTimeout(timer)
-      timer = undefined
-
-      // Turns in flight finish. Their leases are released as each one ends,
-      // which is what hands the people straight back.
-      while (active.size > 0) await Promise.all([...active.values()])
-    },
-
-    nudge,
-
-    async drain(): Promise<void> {
-      while (active.size > 0) await Promise.all([...active.values()])
-    },
-
-    busy: () => active.size,
-  }
+  return createPump<string>({
+    pollMs: config.workerPollMs,
+    concurrency: config.workerConcurrency,
+    candidates,
+    // One person is one turn at a time, here as well as across processes.
+    key: (personId) => personId,
+    handle,
+    ...(onError !== undefined ? { onError } : {}),
+  })
 }

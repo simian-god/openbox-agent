@@ -38,6 +38,8 @@ export interface TurnInput {
 }
 
 export interface TurnResult {
+  /** The turn row this was, so a caller can find what it sent (API-2). */
+  turnId?: string | undefined
   /** What the agent decided to say, if anything. */
   reply?: string | undefined
   steps: number

@@ -177,6 +177,15 @@ export const configSchema = z
     // past this comes from running more processes, not from raising it
     // until the database gives out.
     workerConcurrency: z.number().int().positive().default(4),
+
+    // How hard the outbox tries before it gives up on a message. Five
+    // attempts with the wait doubling from a second is about thirty
+    // seconds in all. Long enough to ride out a blip, short enough that a
+    // reply is never embarrassingly late: in a conversation a very late
+    // answer is often worse than none, because the person has already
+    // asked someone else.
+    sendAttempts: z.number().int().positive().default(5),
+    sendBackoffMs: z.number().int().positive().default(1000),
     limits: LIMITS,
     pricing: PRICING.default({}),
 
