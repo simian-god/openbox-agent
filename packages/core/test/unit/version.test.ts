@@ -98,6 +98,14 @@ describe("LEARN-2: what the hash covers", () => {
     )
   })
 
+  test("LEARN-2: moving a tool to another role is a new version", () => {
+    // Who may call a tool decides what the agent will do for a given
+    // person, so it has to be part of the version (see the decisions log).
+    expect(versionHash({ ...base(), tools: [tool({ roles: ["operator"] })] })).not.toBe(
+      versionHash(base()),
+    )
+  })
+
   test("LEARN-2: a changed config is a new version", () => {
     expect(versionHash({ ...base(), config: config({ maxSteps: 4 }) })).not.toBe(
       versionHash(base()),
@@ -159,11 +167,14 @@ describe("LEARN-2: what the hash ignores", () => {
     expect(versionHash({ ...base(), tools: [changed] })).toBe(versionHash(base()))
   })
 
-  test("LEARN-2: the roles a tool carries are not part of the version", () => {
-    // Also not in LEARN-2's list. Worth knowing: moving a tool between
-    // roles changes what each person can reach but not the version ID.
-    const changed = tool({ roles: ["operator"] })
-    expect(versionHash({ ...base(), tools: [changed] })).toBe(versionHash(base()))
+  test("LEARN-2: writing a tool's roles in another order is the same version", () => {
+    // A role is either allowed or not, so the order they are listed in
+    // says nothing about the agent.
+    const changed = tool({ roles: ["operator", "end_user"] })
+    const same = tool({ roles: ["end_user", "operator"] })
+    expect(versionHash({ ...base(), tools: [changed] })).toBe(
+      versionHash({ ...base(), tools: [same] }),
+    )
   })
 })
 
@@ -183,6 +194,7 @@ describe("LEARN-2: the fingerprint", () => {
         },
         inputSchema: tool().inputSchema,
         risk: "read",
+        roles: ["end_user"],
       },
     ])
     expect((print.config as { name: string }).name).toBe("restaurant")

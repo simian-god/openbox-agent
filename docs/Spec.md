@@ -587,7 +587,7 @@ agent.trigger({ personId, event: "order_ready", data: { ... }, urgent? })
 | `confirmation_rejected` | CONF-4 rejected a confirm. |
 | `operator` | An operator used `flag`. |
 
-**LEARN-2.** Every turn stores its version ID: a hash of `prompt.md`, every tool's name, description, conditions, schema and risk, the config without secrets, and the core package version.
+**LEARN-2.** Every turn stores its version ID: a hash of `prompt.md`, every tool's name, description, conditions, schema, risk and roles, the config without secrets, and the core package version.
 
 **LEARN-3.** Every Monday at 09:00 *(default)* in the agent's timezone, a digest goes to the builder's channel (set in config): flag counts by kind compared with the week before, spend, median latency, and the five worst conversations ranked by number of flags.
 

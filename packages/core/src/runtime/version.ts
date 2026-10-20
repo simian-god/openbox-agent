@@ -5,13 +5,13 @@
 // and the core package version. Two turns with the same hash ran the same
 // agent, which is what makes a review of past conversations mean anything.
 //
-// What is hashed is exactly LEARN-2's list. A tool's `roles` and `examples`
-// are deliberately not in it, so moving a tool between roles or rewording
-// an example does not start a new version.
+// What is hashed is exactly LEARN-2's list. A tool's `examples` are
+// deliberately not in it: they feed routing and `openbox tune`, not what
+// the agent does, so rewording one does not start a new version.
 import { createHash } from "node:crypto"
 import { withoutSecrets } from "../config/secrets.ts"
 import type { OpenboxConfig } from "../config/index.ts"
-import type { JSONSchema, Risk, Tool, ToolConditions } from "../tools/index.ts"
+import type { JSONSchema, Risk, Role, Tool, ToolConditions } from "../tools/index.ts"
 import type { TableStore, VersionRow } from "../store/index.ts"
 import type { Clock } from "../testing/clock.ts"
 import { isUniqueViolation } from "../store/index.ts"
@@ -33,6 +33,8 @@ export interface ToolFingerprint {
   conditions: ToolConditions
   inputSchema: JSONSchema
   risk: Risk
+  /** Sorted, since a role is either allowed or not: the order says nothing. */
+  roles: Role[]
 }
 
 export interface VersionFingerprint {
@@ -55,6 +57,7 @@ export function versionFingerprint(input: VersionInput): VersionFingerprint {
       },
       inputSchema: tool.inputSchema,
       risk: tool.risk,
+      roles: [...tool.roles].sort(),
     }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
 
