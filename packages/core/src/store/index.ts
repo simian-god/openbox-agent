@@ -39,16 +39,41 @@ export class StoreError extends Error {
 export const UNIQUE_VIOLATION = "23505"
 
 /**
+ * What a database says when a row already existed, in the words of the two
+ * engines the core is ever run on.
+ *
+ * Postgres: `duplicate key value violates unique constraint "..."`.
+ * SQLite:   `UNIQUE constraint failed: ob_inbox.agent_id, ...`.
+ */
+const UNIQUE_TEXT = /duplicate key value|unique constraint/i
+
+/**
  * True when the database refused a write because the row already existed.
  *
- * This is how the core tells a duplicate apart from a real failure, so it
- * reads the code off the wrapper or off whatever the wrapper carried,
- * depending on who threw.
+ * This decides whether the core sees a duplicate or a failure, and a
+ * surprising amount rests on it: dropping a webhook delivered twice
+ * (LOOP-1), one reply per question (SEND-1), one reminder per dedupe key
+ * (PRO-1), and two processes meeting the same new person.
+ *
+ * SQLSTATE 23505 is the answer when there is one. There is not always one:
+ * evals-agent's SQLite world reports every database error under a single
+ * code of its own, so a core that knew only the number would treat every
+ * duplicate as a crash the moment it ran under the harness. So the words
+ * are read too. Checked on the error and on whatever it wrapped, since
+ * either may be the one carrying them.
  */
 export function isUniqueViolation(error: unknown): boolean {
-  if (error instanceof StoreError) return error.code === UNIQUE_VIOLATION
-  if (error === null || typeof error !== "object") return false
-  return (error as { code?: unknown }).code === UNIQUE_VIOLATION
+  const causes = [error, (error as { cause?: unknown } | null)?.cause]
+
+  for (const at of causes) {
+    if (at === null || at === undefined || typeof at !== "object") continue
+    const carrier = at as { code?: unknown; message?: unknown; details?: unknown }
+    if (carrier.code === UNIQUE_VIOLATION) return true
+    if (UNIQUE_TEXT.test(`${String(carrier.message ?? "")} ${String(carrier.details ?? "")}`)) {
+      return true
+    }
+  }
+  return false
 }
 
 /** A plain equality filter, applied on top of the agent_id scope. */
