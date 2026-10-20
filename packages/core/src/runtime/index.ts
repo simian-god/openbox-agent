@@ -1,4 +1,6 @@
 export * from "./sender.ts"
+export * from "./events.ts"
+export * from "./version.ts"
 export * from "./context.ts"
 export * from "./turn.ts"
 export * from "./agent.ts"

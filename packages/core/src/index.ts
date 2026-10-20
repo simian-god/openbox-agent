@@ -58,6 +58,8 @@ export {
 export {
   createStore,
   StoreError,
+  isUniqueViolation,
+  UNIQUE_VIOLATION,
   CORE_TABLES,
   type Store,
   type TableStore,
@@ -107,6 +109,24 @@ export {
 export {
   createAgent,
   runTurn,
+  createEvents,
+  noEvents,
+  EVENT_NAMES,
+  versionHash,
+  versionFingerprint,
+  stableStringify,
+  ensureVersionRow,
+  type EventName,
+  type EventSink,
+  type EventScope,
+  type EventWriter,
+  type EventFailure,
+  type EventStore,
+  type EventsOptions,
+  type VersionInput,
+  type VersionFingerprint,
+  type ToolFingerprint,
+  type VersionStore,
   buildSystem,
   buildMessages,
   buildRuntimeBlock,
@@ -125,5 +145,6 @@ export {
   type SendResult,
 } from "./runtime/index.ts"
 
+export { CORE_VERSION } from "./version.ts"
 export { fixedClock, systemClock, type Clock, type FixedClock } from "./testing/clock.ts"
 export { fakeSender, type FakeSender, type FakeSenderOptions } from "./testing/fake-sender.ts"

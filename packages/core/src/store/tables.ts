@@ -87,6 +87,8 @@ export interface MessageRow {
 
 export interface EventRow {
   id: string
+  /** Insert order, which is the order the trace happened in (EVT-1). */
+  seq: number
   agent_id: string
   name: string
   props: Record<string, unknown>

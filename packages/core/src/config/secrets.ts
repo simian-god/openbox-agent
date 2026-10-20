@@ -35,6 +35,27 @@ function looksLikeASecret(name: string): boolean {
 }
 
 /**
+ * The same value with every credential shaped field removed.
+ *
+ * CFG-2 keeps credentials out of config in the first place, so nothing
+ * should ever be dropped here. It is the second line of defence for the
+ * places a config is copied into: the version hash (LEARN-2) and, later,
+ * a person's export (PRIV-4).
+ */
+export function withoutSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutSecrets)
+  if (value === null || typeof value !== "object") return value
+
+  const out: Record<string, unknown> = {}
+  for (const [name, child] of Object.entries(value)) {
+    const isContainer = child !== null && typeof child === "object"
+    if (!isContainer && looksLikeASecret(name)) continue
+    out[name] = withoutSecrets(child)
+  }
+  return out
+}
+
+/**
  * Every path in the config that names a credential. The value is never
  * included: this message may be printed, logged or pasted into a chat.
  */

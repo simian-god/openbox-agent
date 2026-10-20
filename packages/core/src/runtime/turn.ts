@@ -13,6 +13,7 @@ import type { Tool, ToolRegistry, ToolContext } from "../tools/index.ts"
 import type { Clock } from "../testing/clock.ts"
 import { buildMessages, buildRuntimeBlock, buildSystem } from "./context.ts"
 import type { MessageRow } from "../store/index.ts"
+import { noEvents, type EventWriter } from "./events.ts"
 
 export interface TurnInput {
   config: OpenboxConfig
@@ -32,6 +33,8 @@ export interface TurnInput {
   batch: string[]
   prompt: string
   turnId: string
+  /** EVT-1: where each step records what it did. Defaults to recording nothing. */
+  events?: EventWriter | undefined
 }
 
 export interface TurnResult {
@@ -59,6 +62,7 @@ function unknownToolResult(name: string, offered: Tool[]): string {
 export async function runTurn(input: TurnInput): Promise<TurnResult> {
   const { config, history, store, brains, models, tools, clock, person, batch, prompt, turnId } =
     input
+  const events = input.events ?? noEvents()
 
   // LOOP-7, then LOOP-8 step 10: this turn's own calls and results are
   // appended as the loop goes, and become the input to the next step.
@@ -82,6 +86,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     let answered = false
     let output: Awaited<ReturnType<Brain["complete"]>> | undefined
     let lastError: unknown
+    const brainsFailed: string[] = []
 
     for (const [index, brain] of brains.entries()) {
       try {
@@ -97,9 +102,17 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         })
         brainsUsed.push(brain.id)
         answered = true
+        if (index > 0) {
+          await events.record("fallback_used", {
+            brain: brain.id,
+            failed: [...brainsFailed],
+            step: steps,
+          })
+        }
         break
       } catch (error) {
         lastError = error
+        brainsFailed.push(brain.id)
         if (!(error instanceof BrainError)) throw error
       }
     }
@@ -127,6 +140,11 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     // Step 5: a name that was not offered is rejected, never executed.
     const tool = offered.find((candidate) => candidate.name === call.name)
     if (tool === undefined) {
+      await events.record("unknown_tool", {
+        tool: call.name,
+        offered: offered.map((candidate) => candidate.name),
+        step: steps,
+      })
       messages.push({
         role: "tool_result",
         id: call.id,
@@ -140,15 +158,23 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     // Step 6: arguments are checked before the handler sees them.
     const parsed = tool.safeParse(call.input)
     if (!parsed.success) {
-      messages.push({
-        role: "tool_result",
-        id: call.id,
-        name: call.name,
-        result: null,
-        error: `Those arguments are not valid for ${call.name}: ${parsed.error.issues
-          .map((issue) => `${issue.path.join(".") || "(root)"} ${issue.message}`)
-          .join("; ")}`,
+      const error = `Those arguments are not valid for ${call.name}: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".") || "(root)"} ${issue.message}`)
+        .join("; ")}`
+
+      // EVT-2 has no name of its own for this. `ran: false` says the
+      // handler never saw the call, so the trace cannot be misread as a
+      // tool that failed while running.
+      await events.record("tool_ran", {
+        tool: tool.name,
+        risk: tool.risk,
+        step: steps,
+        ok: false,
+        ran: false,
+        error,
       })
+
+      messages.push({ role: "tool_result", id: call.id, name: call.name, result: null, error })
       continue
     }
 
@@ -167,19 +193,38 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       log: () => {},
     }
 
+    const ranAt = clock.now().getTime()
     try {
       const result = await tool.handler(parsed.data, ctx)
       toolsRun.push({ name: tool.name, ok: true })
+      await events.record("tool_ran", {
+        tool: tool.name,
+        risk: tool.risk,
+        step: steps,
+        ok: true,
+        ran: true,
+        durationMs: clock.now().getTime() - ranAt,
+      })
       messages.push({ role: "tool_result", id: call.id, name: tool.name, result })
     } catch (error) {
       // LOOP-10: a thrown error goes back to the brain as an error result.
+      const message = error instanceof Error ? error.message : String(error)
       toolsRun.push({ name: tool.name, ok: false })
+      await events.record("tool_ran", {
+        tool: tool.name,
+        risk: tool.risk,
+        step: steps,
+        ok: false,
+        ran: true,
+        durationMs: clock.now().getTime() - ranAt,
+        error: message,
+      })
       messages.push({
         role: "tool_result",
         id: call.id,
         name: tool.name,
         result: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       })
     }
   }

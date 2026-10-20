@@ -35,6 +35,22 @@ export class StoreError extends Error {
   }
 }
 
+/** Postgres' code for a unique constraint violation. */
+export const UNIQUE_VIOLATION = "23505"
+
+/**
+ * True when the database refused a write because the row already existed.
+ *
+ * This is how the core tells a duplicate apart from a real failure, so it
+ * reads the code off the wrapper or off whatever the wrapper carried,
+ * depending on who threw.
+ */
+export function isUniqueViolation(error: unknown): boolean {
+  if (error instanceof StoreError) return error.code === UNIQUE_VIOLATION
+  if (error === null || typeof error !== "object") return false
+  return (error as { code?: unknown }).code === UNIQUE_VIOLATION
+}
+
 /** A plain equality filter, applied on top of the agent_id scope. */
 export type Where = Record<string, string | number | boolean | null>
 

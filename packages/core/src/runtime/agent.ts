@@ -9,7 +9,7 @@ import type { OpenboxConfig } from "../config/index.ts"
 import type { Brain } from "../providers/brains/types.ts"
 import {
   createStore,
-  StoreError,
+  isUniqueViolation,
   type MessageRow,
   type PersonRow,
   type Store,
@@ -17,8 +17,10 @@ import {
 import { createToolRegistry, type Tool, type ToolRegistry } from "../tools/index.ts"
 import type { Clock } from "../testing/clock.ts"
 import { systemClock } from "../testing/clock.ts"
+import { createEvents, type EventFailure, type EventSink, type EventWriter } from "./events.ts"
 import type { Inbound, Sender } from "./sender.ts"
 import { runTurn, type TurnResult } from "./turn.ts"
+import { ensureVersionRow, versionHash } from "./version.ts"
 
 export interface Deps {
   /** The first is the primary, the rest are fallbacks in order. */
@@ -26,9 +28,11 @@ export interface Deps {
   db: SupabaseClient
   sender: Sender
   clock?: Clock | undefined
-  // decisionModel, transcriber, retriever and events join Deps as the
-  // features that need them land, in M3, M7, M8 and T1.7. They are left
-  // out rather than stubbed, so nothing can quietly depend on a fake.
+  /** EVT-1: told about every event, alongside the agent's own table. */
+  events?: EventSink | undefined
+  // decisionModel, transcriber and retriever join Deps as the features
+  // that need them land, in M3, M7 and M8. They are left out rather than
+  // stubbed, so nothing can quietly depend on a fake.
 }
 
 export interface AgentOptions {
@@ -37,6 +41,8 @@ export interface AgentOptions {
   /** The static system prompt, prompt.md in a real agent (SKILL-8). */
   prompt: string
   tools?: Tool[]
+  /** Told when an event could not be recorded. A turn never fails for it. */
+  onEventError?: ((failure: EventFailure) => void) | undefined
 }
 
 export interface ReceiveResult {
@@ -50,18 +56,10 @@ export interface Agent {
   readonly config: OpenboxConfig
   readonly store: Store
   readonly tools: ToolRegistry
+  readonly events: EventWriter
+  /** LEARN-2: the hash of the prompt, tools, config and core version. */
+  readonly versionHash: string
   receive(inbound: Inbound): Promise<ReceiveResult>
-}
-
-/** Postgres' code for a unique constraint violation. */
-const UNIQUE_VIOLATION = "23505"
-
-function isDuplicate(error: unknown): boolean {
-  // The store wraps the database's error, so the code sits on the wrapper
-  // or on what it wrapped, depending on who threw.
-  if (error instanceof StoreError) return error.code === UNIQUE_VIOLATION
-  if (error === null || typeof error !== "object") return false
-  return (error as { code?: unknown }).code === UNIQUE_VIOLATION
 }
 
 export function createAgent(options: AgentOptions): Agent {
@@ -69,6 +67,12 @@ export function createAgent(options: AgentOptions): Agent {
   const clock = deps.clock ?? systemClock
   const store = createStore(deps.db, config.name)
   const tools = createToolRegistry(options.tools ?? [])
+  const events = createEvents({
+    store,
+    clock,
+    sink: deps.events,
+    onError: options.onEventError,
+  })
 
   // CFG-1's last rule needs the tools, which config alone cannot see.
   const problems = options.tools
@@ -79,6 +83,19 @@ export function createAgent(options: AgentOptions): Agent {
   }
 
   const models = [config.brain, ...config.brain.fallbacks].map((entry) => entry.model)
+
+  // LEARN-2: the version is fixed the moment the agent is built, since
+  // everything it covers is. The row it needs is written on the first turn,
+  // and its id kept, so later turns cost no extra query.
+  const hash = versionHash({ prompt, tools: tools.all(), config })
+  let versionId: string | undefined
+
+  async function version(): Promise<string> {
+    if (versionId !== undefined) return versionId
+    const row = await ensureVersionRow({ store, hash, clock })
+    versionId = row.id
+    return versionId
+  }
 
   /**
    * ROLE-1: an unknown (channel, channel_user_id) becomes a person with
@@ -100,7 +117,7 @@ export function createAgent(options: AgentOptions): Agent {
     } catch (error) {
       // Two messages from a new person at once: one insert wins, and the
       // other reads the row the winner wrote.
-      if (!isDuplicate(error)) throw error
+      if (!isUniqueViolation(error)) throw error
       const found = await store.people.find({
         channel: inbound.channel,
         channel_user_id: inbound.channelUserId,
@@ -114,6 +131,8 @@ export function createAgent(options: AgentOptions): Agent {
     config,
     store,
     tools,
+    events,
+    versionHash: hash,
 
     async receive(inbound: Inbound): Promise<ReceiveResult> {
       const person = await findOrCreatePerson(inbound)
@@ -133,10 +152,15 @@ export function createAgent(options: AgentOptions): Agent {
         })
         inboxId = row.id
       } catch (error) {
-        if (!isDuplicate(error)) throw error
+        if (!isUniqueViolation(error)) throw error
         const existing = await store.inbox.find({
           person_id: person.id,
           channel_message_id: inbound.channelMessageId,
+        })
+        await events.about({ personId: person.id }).record("duplicate_dropped", {
+          channel: inbound.channel,
+          channelMessageId: inbound.channelMessageId,
+          inboxId: existing?.id ?? null,
         })
         return { inboxId: existing?.id ?? "", duplicate: true }
       }
@@ -153,9 +177,21 @@ export function createAgent(options: AgentOptions): Agent {
     receivedAt: Date,
   ): Promise<TurnResult> {
     const startedAt = clock.now()
+    const versionRowId = await version()
     const turnRow = await store.turns.insert({
       person_id: person.id,
+      // LEARN-2: every turn stores the version it ran under.
+      version_id: versionRowId,
       started_at: startedAt.toISOString(),
+    })
+
+    const turnEvents = events.about({ personId: person.id, turnId: turnRow.id })
+    await turnEvents.record("turn_started", {
+      channel: inbound.channel,
+      inboxId,
+      versionId: versionRowId,
+      hasMedia: inbound.media !== undefined,
+      hasAction: inbound.action !== undefined,
     })
 
     // LOOP-7 wants the history *then* the current batch, so history is read
@@ -190,6 +226,7 @@ export function createAgent(options: AgentOptions): Agent {
       batch: [text],
       prompt,
       turnId: turnRow.id,
+      events: turnEvents,
     })
 
     if (result.reply !== undefined) {
@@ -197,18 +234,29 @@ export function createAgent(options: AgentOptions): Agent {
     }
 
     // LOOP-11: the turn records what it did.
+    const latencyMs = clock.now().getTime() - startedAt.getTime()
     await store.turns.update(
       { id: turnRow.id },
       {
         brains: result.brainsUsed,
         steps: result.steps,
         cost_usd: result.costUsd,
-        latency_ms: clock.now().getTime() - startedAt.getTime(),
+        latency_ms: latencyMs,
         outcome: result.outcome,
         ended_at: clock.now().toISOString(),
       },
     )
     await store.inbox.update({ id: inboxId }, { status: "done", turn_id: turnRow.id })
+
+    await turnEvents.record("turn_ended", {
+      outcome: result.outcome,
+      steps: result.steps,
+      costUsd: result.costUsd,
+      latencyMs,
+      brains: result.brainsUsed,
+      replied: result.reply !== undefined,
+      toolsRun: result.toolsRun.length,
+    })
 
     return result
   }

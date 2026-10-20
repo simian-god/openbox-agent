@@ -270,7 +270,7 @@ type Outbound = {
 | `events` | The full trace of section 18. |
 | `erasure_log` | Hashed person reference, when, by whom. Nothing else. |
 
-**DATA-3.** The schema uses plain Postgres DDL: tables, primary and foreign keys, unique constraints, check constraints, indexes and sequences. A sequence is how `ob_messages` and `ob_inbox` keep the order things happened in, which a timestamp cannot do once two rows share an instant. No triggers, stored functions or extensions. pgvector tables live in a separate, optional migration used only by the pgvector retriever.
+**DATA-3.** The schema uses plain Postgres DDL: tables, primary and foreign keys, unique constraints, check constraints, indexes and sequences. A sequence is how the tables that record a run of things, `ob_messages`, `ob_inbox` and `ob_events`, keep the order those things happened in, which a timestamp cannot do once two rows share an instant. No triggers, stored functions or extensions. pgvector tables live in a separate, optional migration used only by the pgvector retriever.
 
 **DATA-5.** RLS is switched on for every table, core and agent. On Supabase, a table without RLS can be read and written by anyone holding the project's public anon key, which often ships inside a frontend. Core tables get no policies, so only the service key the agent runs with can reach them. Agent tables get no policies either, unless the builder says something else reads them (a website showing the menu, say), in which case the skill writes a policy for exactly that. Core behavior never depends on RLS, so the eval world, which ignores it, behaves the same.
 
