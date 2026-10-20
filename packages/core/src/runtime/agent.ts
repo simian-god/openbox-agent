@@ -120,7 +120,15 @@ export interface Agent {
   stop(): Promise<void>
   /** How many turns are running right now. */
   inFlight(): number
-  /** Resolves once no turn is running. `stop()` in T2.2 builds on this. */
+  /**
+   * Resolves once there is no work left that could run right now.
+   *
+   * "Right now" is the catch: a message still inside its burst window
+   * (LOOP-3) is waiting rather than ready, so this returns while it sits
+   * there. A caller that wants that message answered has to let the window
+   * pass first. The alternative, waiting for anything pending at all,
+   * never returns under a frozen clock.
+   */
   settled(): Promise<void>
 }
 

@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** T2.5
+**Next task:** T2.6
 
 ## M0. Foundations
 
@@ -38,7 +38,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 | T2.2 | Person leases, the worker, burst merge, and turns that follow on | done | 2026-10-20 | ob_person_leases plus a worker: receive only writes, the worker claims a person and runs their turns, and nothing happens until agent.start(). The claim is DATA-4's conditional update, so of several workers exactly one wins and more processes is the safe way to add throughput. Messages waiting together become one turn in arrival order, and one arriving mid turn gets the next turn under the same lease. agent.start and agent.stop. Three config fields added, see the decisions log. Found: a process killed mid turn leaves its rows merged forever, so nothing picks them up again. Needs a recovery sweep, not built. |
 | T2.3 | Outbox: states, retries with backoff, idempotency keys, the timed out send rule | done | 2026-10-20 | ob_outbox with the five DATA-2 states. A reply is written down before it is sent, so it can be retried or seen to have failed. The Spec described the three send outcomes but said nothing about what to do with them, so SEND-1 to SEND-4 now do: a thrown send is unknown and not retried unless the channel is idempotent, five attempts doubling from a second, and one person's messages go out one at a time in order. receiveAndWait waits for the sends, bounded. The three workers now share one pump. CI caught a test race the local machine hid: reading a lease before the claim landed, which then left a gated brain blocked, hung stop(), and let that agent do four other tests' work. Gates are now always opened on cleanup, so one failure stays local. |
 | T2.4 | Job loop: claim, run, retry, dedupe keys, and a recovery sweep for turns a dead process left behind | done | 2026-10-20 | ob_jobs plus the loop, as the third user of the shared pump: claimed by conditional update, run under a lease, taken over when that lease expires, retried with backoff, deduped by key (PRO-1). The recovery sweep hands back messages a dead process left mid turn, which was the last way a message could be lost. A reply is now keyed by the messages it answers, not by the turn, so a recovered message cannot be answered twice. JOB-1 to JOB-4 added to the Spec. Two defaults still open for the builder, see the questions. |
-| T2.5 | Integration tests: the same webhook twice, three messages in a burst, two worker processes on… | todo | | |
+| T2.5 | Integration tests: the same webhook twice, three messages in a burst, two worker processes on… | done | 2026-10-20 | A suite for C13's four claims as a whole, not a piece at a time. The one that needed it: two processes on one database, eight people messaging twice, with a watcher proving nobody was ever inside two turns at once and that both processes really competed. Also found that settled() waits for work that is ready, so a message inside its burst window is not waited for; documented. C13's "flagged" half needs the flags table, which is M9. |
 | T2.6 | Gate: run a minimal agent under evals-agent's harness and confirm DATA-4's conditional updates… | todo | | |
 | M2 check | C13's tests pass against Postgres and under the evals-agent harness. | todo | | |
 
