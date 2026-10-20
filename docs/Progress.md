@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** M1 check
+**Next task:** T2.1
 
 ## M0. Foundations
 
@@ -28,7 +28,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 | T1.6 | Turn v0: receive, create the person, one synchronous turn, step loop with read tools, the… | done | 2026-10-16 | createAgent and receive, person created as end_user, duplicates dropped, LOOP-8 steps 3 to 10 for read tools, unknown tool and bad arguments returned to the brain, reply through the sender. Found that conversation order rested on a timestamp, so migration 0002 adds a seq column; Spec DATA-3 updated, see decisions log. |
 | T1.7 | Events table and capture, version hashing, both wired from the start | done | 2026-10-20 | EVT-2's names are held to the Spec's own table by a test. Turns, duplicates, tool runs, unknown tools and brain fallbacks all record themselves, to ob_events and to deps.events.capture, and a failure to record never costs the person an answer. LEARN-2 version hash wired in, so every turn carries the version it ran under. ob_events gains a seq and a tool's roles join the hash, both in the decisions log. |
 | T1.8 | Terminal channel and `openbox chat` | done | 2026-10-20 | Terminal channel with a Sender, printed buttons tapped back by number, and chat commands on a colon so an operator's / commands still reach the agent. `openbox chat` builds the agent from the standard layout in the folder it is run in. A hand written one tool demo agent to chat with, replaced at T11.1. Found and fixed a deadlock: the executable was in the import circle the agent project pulls in, so chat hung with no output. A subprocess test now covers the real command. |
-| M1 check | `openbox chat` against a one tool agent answers through OpenRouter, every turn writes events and a version, and TOOL-2, ROLE-1 and LOOP-8 step 5 have passing tests. | todo | | |
+| M1 check | `openbox chat` against a one tool agent answers through OpenRouter, every turn writes events and a version, and TOOL-2, ROLE-1 and LOOP-8 step 5 have passing tests. | done | 2026-10-20 | All three pass. Live turns through OpenRouter at about 0.025 cents each, every turn carrying a version and its events, TOOL-2 20 tests, ROLE-1 4, LOOP-8 step 5 2. The live run caught a real fault the suite could not: the demo tool accepted a raw date, so the model did its own date arithmetic and reported Friday's hours as Sunday's. The tool now takes a closed list of days and does the arithmetic itself. |
 
 ## M2. Reliability engine
 

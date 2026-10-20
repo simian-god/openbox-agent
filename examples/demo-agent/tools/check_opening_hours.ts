@@ -4,6 +4,14 @@
 // which is the point: a date is a fact a tool looks up, never something a
 // brain works out. The time helpers in `ctx.time` arrive in M4, so this
 // does its own small lookup from the config.
+//
+// The input is a closed list on purpose. An earlier version also took a
+// date like 2026-10-23, and a model asked about Sunday worked the date out
+// itself, got Friday, and reported Friday's hours as Sunday's. prompt.md
+// forbade exactly that and the model did it anyway. A tool that cannot be
+// handed a date cannot be handed a wrong one, so the day arithmetic lives
+// here. The cost is that only this coming week can be asked about, which
+// is what a weekday name can mean.
 import { defineTool, partsInZone } from "openbox-agent"
 import { z } from "zod"
 import config from "../agent.config.ts"
@@ -11,25 +19,34 @@ import config from "../agent.config.ts"
 const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const
 type Day = (typeof DAYS)[number]
 
+/** Every day the tool can be asked about. Nothing else parses. */
+export const ASKABLE = [
+  "today",
+  "tomorrow",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+] as const
+
 /** The date the brain asked about, as a calendar date in the agent's zone. */
-function resolveDate(asked: string, now: Date): string | undefined {
-  const word = asked.trim().toLowerCase()
+export function resolveDate(asked: (typeof ASKABLE)[number], now: Date): string {
+  const at = (ahead: number) =>
+    partsInZone(new Date(now.getTime() + ahead * 86_400_000), config.timezone).date
 
-  if (word === "today") return partsInZone(now, config.timezone).date
-  if (word === "tomorrow") {
-    return partsInZone(new Date(now.getTime() + 86_400_000), config.timezone).date
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(word)) return word
+  if (asked === "today") return at(0)
+  if (asked === "tomorrow") return at(1)
 
-  // A weekday name means the next time that day comes round, today included.
-  const wanted = DAYS.indexOf(word.slice(0, 3) as Day)
-  if (wanted === -1) return undefined
-
+  // A weekday means the next time that day comes round, today included.
+  const wanted = asked.slice(0, 3) as Day
   for (let ahead = 0; ahead < 7; ahead++) {
-    const at = new Date(now.getTime() + ahead * 86_400_000)
-    if (dayOf(at) === DAYS[wanted]) return partsInZone(at, config.timezone).date
+    if (dayOf(new Date(now.getTime() + ahead * 86_400_000)) === wanted) return at(ahead)
   }
-  return undefined
+  // Unreachable: seven days always contain every weekday.
+  return at(0)
 }
 
 function dayOf(at: Date): Day {
@@ -48,9 +65,10 @@ export default defineTool({
 
   input: z.object({
     day: z
-      .string()
-      .min(1)
-      .describe('the day to look up: "today", "tomorrow", a weekday like "friday", or 2026-10-23'),
+      .enum(ASKABLE)
+      .describe(
+        'which day to look up. Say "today", "tomorrow", or the weekday the person means. Never work out a date yourself: pass the weekday and this tool finds the date.',
+      ),
   }),
 
   risk: "read",
@@ -61,7 +79,7 @@ export default defineTool({
       "The person asks whether the restaurant is open",
       "The person asks what time it opens or closes",
       "The person asks whether a particular day or time works",
-      "The person asks about a holiday or a specific date",
+      "The person asks about a day this coming week",
     ],
     dontCallWhen: [
       "The person is not asking about opening times at all",
@@ -75,7 +93,7 @@ export default defineTool({
       "what time do you close on Friday?",
       "are you open on Sunday evening?",
       "do you open at 11 tomorrow?",
-      "are you shut for Diwali?",
+      "are you open on Monday lunchtime?",
     ],
     shouldNot: [
       "do you have paneer tikka?",
@@ -88,9 +106,6 @@ export default defineTool({
 
   handler: async (args, ctx) => {
     const date = resolveDate(args.day, ctx.clock.now())
-    if (date === undefined) {
-      return { known: false, why: `${args.day} is not a day I can look up` }
-    }
 
     const exception = config.hours.exceptions?.find((entry) => entry.date === date)
     if (exception?.closed === true) {
