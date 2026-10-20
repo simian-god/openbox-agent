@@ -9,6 +9,7 @@ export const CORE_TABLES = [
   "ob_inbox",
   "ob_messages",
   "ob_outbox",
+  "ob_jobs",
   "ob_events",
 ] as const
 
@@ -21,6 +22,7 @@ export type MessageAuthor = "person" | "agent" | "operator" | "notice"
 export type OutboxKind = "reply" | "proactive" | "operator_alert" | "confirm"
 /** `unknown` is not a kind of failure: the send threw, so nobody knows. */
 export type OutboxStatus = "queued" | "sending" | "sent" | "failed" | "unknown"
+export type JobStatus = "queued" | "running" | "done" | "failed"
 
 export interface PersonRow {
   id: string
@@ -126,6 +128,25 @@ export interface OutboxRow {
   created_at: string
 }
 
+/** Anything the agent does at a time rather than in answer to a message. */
+export interface JobRow {
+  id: string
+  seq: number
+  agent_id: string
+  kind: string
+  payload: Record<string, unknown>
+  status: JobStatus
+  run_at: string
+  attempts: number
+  /** Null when the job needs no key. Unique per agent when it has one. */
+  dedupe_key: string | null
+  lease_owner: string | null
+  lease_expires_at: string | null
+  error: string | null
+  last_run_at: string | null
+  created_at: string
+}
+
 export interface EventRow {
   id: string
   /** Insert order, which is the order the trace happened in (EVT-1). */
@@ -147,6 +168,7 @@ export interface CoreRows {
   ob_inbox: InboxRow
   ob_messages: MessageRow
   ob_outbox: OutboxRow
+  ob_jobs: JobRow
   ob_events: EventRow
 }
 

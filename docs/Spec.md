@@ -524,6 +524,14 @@ agent.trigger({ personId, event: "order_ready", data: { ... }, urgent? })
 
 **PRO-1.** Scheduled messages are jobs, so they survive restarts. `dedupeKey` makes scheduling the same reminder twice a no op.
 
+**JOB-1.** A job is claimed by one conditional update (DATA-4) and runs under a lease, the same way a person is. A job a process claimed and never finished is taken over once that lease expires, by a second conditional update rather than an OR.
+
+**JOB-2.** A job that throws is tried again, the wait doubling from `jobBackoffMs` *(5000 default)*, up to `jobAttempts` *(5 default)*, then `failed`. A job of a kind with no registered handler fails at once, since waiting cannot make a handler appear. Jobs are more patient than sends: nobody is waiting at the other end of a retention sweep.
+
+**JOB-3.** The job loop also hands back messages a turn took and never finished with. A process killed mid turn leaves them `merged`, and nothing else looks at those: a second worker takes the person over when the lease expires, but only looks for messages still `pending`. They are handed back once that person's lease has been expired for `recoverAfterSeconds` *(60 default)*, which is the margin for a process that stalled rather than died.
+
+**JOB-4.** A reply's idempotency key is derived from the messages it answers, not from the turn. A recovered message is answered by a different turn, so a key based on the turn would let both replies out and answer the person twice.
+
 **PRO-2.** A proactive message is either fixed (`text` or `template`) or composed: the brain runs a turn with a system note describing the event, using the same tools and gates.
 
 **PRO-3.** Before sending, the outbox checks these in order:
@@ -675,6 +683,9 @@ export default defineConfig({
   workerConcurrency: 4,                // how many people one process answers at once
   sendAttempts: 5,                     // SEND-3
   sendBackoffMs: 1000,                 // SEND-3
+  jobAttempts: 5,                      // JOB-2
+  jobBackoffMs: 5000,                  // JOB-2
+  recoverAfterSeconds: 60,             // JOB-3
   limits: { messagesPerWindow: 20, windowMinutes: 10, dailySpendUsd: 5 },  // dailySpendUsd required
   pricing: { "model-id": { inputPerM: 0, outputPerM: 0 } },
 

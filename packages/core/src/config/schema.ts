@@ -186,6 +186,18 @@ export const configSchema = z
     // asked someone else.
     sendAttempts: z.number().int().positive().default(5),
     sendBackoffMs: z.number().int().positive().default(1000),
+
+    // A job that throws is tried again, the wait doubling, up to this many
+    // times. A job is not a conversation: nobody is waiting on the other
+    // end of a retention sweep, so it can afford to be patient where a
+    // reply cannot.
+    jobAttempts: z.number().int().positive().default(5),
+    jobBackoffMs: z.number().int().positive().default(5000),
+    // How long after a person's lease has expired before another process
+    // takes their half finished turn back. The lease expiring already
+    // means renewal stopped for a full lease, so this is the margin on top
+    // of that, for a process that was merely stalled rather than dead.
+    recoverAfterSeconds: z.number().int().min(0).default(60),
     limits: LIMITS,
     pricing: PRICING.default({}),
 

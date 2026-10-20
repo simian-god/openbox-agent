@@ -81,6 +81,8 @@ export {
   type OutboxRow,
   type OutboxKind,
   type OutboxStatus,
+  type JobRow,
+  type JobStatus,
   type EventRow,
 } from "./store/index.ts"
 
@@ -116,6 +118,12 @@ export {
 export {
   createAgent,
   runTurn,
+  createJobs,
+  replyKey,
+  type Jobs,
+  type JobsOptions,
+  type JobRequest,
+  type JobHandler,
   createOutbox,
   toOutbound,
   backoffMs,

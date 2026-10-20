@@ -10,6 +10,7 @@
 // The turn still runs in this process. T2.2 moves it behind a person lease
 // and a worker, so a turn survives the process that received the message.
 // Until then `settled()` is how a caller waits for work already in flight.
+import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { OpenboxConfig } from "../config/index.ts"
 import type { Brain } from "../providers/brains/types.ts"
@@ -26,6 +27,7 @@ import type { Clock } from "../testing/clock.ts"
 import { systemClock } from "../testing/clock.ts"
 import { createEvents, type EventFailure, type EventSink, type EventWriter } from "./events.ts"
 import { createLeases, FREE } from "./lease.ts"
+import { createJobs, type Jobs } from "./jobs.ts"
 import { createOutbox, type Outbox } from "./outbox.ts"
 import { createWorker } from "./worker.ts"
 import type { Inbound, Sender } from "./sender.ts"
@@ -101,6 +103,8 @@ export interface Agent {
   readonly owner: string
   /** LOOP-11: where replies go before they go out. */
   readonly outbox: Outbox
+  /** The job loop, and the sweep that recovers abandoned turns. */
+  readonly jobs: Jobs
   /** API-1: writes the message down and returns. The turn runs behind it. */
   receive(inbound: Inbound): Promise<ReceiveResult>
   /**
@@ -118,6 +122,12 @@ export interface Agent {
   inFlight(): number
   /** Resolves once no turn is running. `stop()` in T2.2 builds on this. */
   settled(): Promise<void>
+}
+
+/** One reply per set of messages answered, however many turns it takes. */
+export function replyKey(inboxIds: string[]): string {
+  const of = [...inboxIds].sort().join(",")
+  return `reply:${createHash("sha256").update(of).digest("hex").slice(0, 32)}`
 }
 
 export function createAgent(options: AgentOptions): Agent {
@@ -258,6 +268,15 @@ export function createAgent(options: AgentOptions): Agent {
     ...(options.onWorkerError !== undefined ? { onError: options.onWorkerError } : {}),
   })
 
+  const jobs = createJobs({
+    config,
+    store,
+    clock,
+    events,
+    owner,
+    ...(options.onWorkerError !== undefined ? { onError: options.onWorkerError } : {}),
+  })
+
   const worker = createWorker({
     config,
     store,
@@ -329,6 +348,7 @@ export function createAgent(options: AgentOptions): Agent {
     versionHash: hash,
     owner,
     outbox,
+    jobs,
 
     receive: write,
 
@@ -358,11 +378,13 @@ export function createAgent(options: AgentOptions): Agent {
     start(): void {
       worker.start()
       outbox.pump.start()
+      jobs.pump.start()
     },
 
     async stop(): Promise<void> {
       // The outbox stops last, so a reply a turn just decided on still
       // goes out rather than being left queued.
+      await jobs.pump.stop()
       await worker.stop()
       await outbox.pump.stop()
     },
@@ -376,9 +398,11 @@ export function createAgent(options: AgentOptions): Agent {
       for (;;) {
         await worker.drain()
         await outbox.pump.drain()
+        await jobs.pump.drain()
         const quiet =
           worker.busy() === 0 &&
           outbox.pump.busy() === 0 &&
+          jobs.pump.busy() === 0 &&
           (await readyCount()) === 0 &&
           (await dueCount()) === 0
         if (quiet) return
@@ -508,7 +532,7 @@ export function createAgent(options: AgentOptions): Agent {
     })
 
     if (result.reply !== undefined) {
-      await deliver(person, turnRow.id, result.reply)
+      await deliver(person, turnRow.id, inboxIds, result.reply)
     }
 
     // LOOP-11: the turn records what it did.
@@ -590,7 +614,12 @@ export function createAgent(options: AgentOptions): Agent {
   }
 
   /** LOOP-11: the reply goes to the outbox, and is stored either way. */
-  async function deliver(person: PersonRow, turnId: string, text: string): Promise<void> {
+  async function deliver(
+    person: PersonRow,
+    turnId: string,
+    inboxIds: string[],
+    text: string,
+  ): Promise<void> {
     await outbox.queue({
       personId: person.id,
       turnId,
@@ -598,9 +627,15 @@ export function createAgent(options: AgentOptions): Agent {
       channel: person.channel,
       channelUserId: person.channel_user_id,
       text,
-      // The same turn can only ever produce one reply, so this key makes
-      // a retried turn harmless.
-      idempotencyKey: `${turnId}:reply`,
+      // Keyed by the messages being answered, not by the turn.
+      //
+      // A turn abandoned by a dying process has its messages handed back
+      // by the recovery sweep, and the turn that then answers them is a
+      // different turn. Keyed by turn id, both replies would go out and
+      // the person would be answered twice. Keyed by what is being
+      // answered, the outbox keeps the first and drops the second, which
+      // is the right number of answers to one question.
+      idempotencyKey: replyKey(inboxIds),
     })
 
     await store.messages.insert({
