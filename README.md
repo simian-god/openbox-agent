@@ -8,8 +8,8 @@ message handling, routing, gating risky actions, confirmation, handover to a
 human, scheduled messages, spend caps and personal data rules. You bring the
 tools and the channel.
 
-Status: early. Nothing here works yet. See `docs/Progress.md` for where the
-build has got to.
+Status: early. You can talk to an agent from a terminal, and that is about
+it. See `docs/Progress.md` for where the build has got to.
 
 ## Layout
 
@@ -17,7 +17,7 @@ build has got to.
 |---|---|
 | `packages/core` | the npm package `openbox-agent` |
 | `skill/` | the `/openboxagent` skill for Claude Code and Codex |
-| `examples/demo-agent` | a two tool agent, built by the skill |
+| `examples/demo-agent` | a one tool agent, rebuilt by the skill at M11 |
 | `install/` | installers that link the skill into `~/.claude` and `~/.codex` |
 | `docs/` | Intent, Spec, Plan and Progress |
 
@@ -27,7 +27,9 @@ Bun. A Supabase project, or Docker for the local stack.
 
 ## Quickstart
 
-Written at M11, once there is something to start.
+Written at M11, once there is something to start. Until then,
+`examples/demo-agent/README.md` shows how to talk to the demo agent with
+`openbox chat`.
 
 ## Environment
 

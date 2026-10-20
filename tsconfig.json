@@ -24,7 +24,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
 
-    "noEmit": true
+    "noEmit": true,
+
+    "paths": {
+      "openbox-agent": ["./packages/core/src/index.ts"]
+    }
   },
   "include": ["packages/**/*.ts", "examples/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["node_modules", "**/dist"]

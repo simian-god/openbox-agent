@@ -82,6 +82,8 @@ export {
 export {
   providersFromConfig,
   modelsFromConfig,
+  supabaseFromEnv,
+  DB_ENV_KEYS,
   openRouterBrain,
   toWireMessages,
   readResponse,
@@ -144,6 +146,28 @@ export {
   type SenderCapabilities,
   type SendResult,
 } from "./runtime/index.ts"
+
+export {
+  runChat,
+  chatConfig,
+  loadProject,
+  ProjectError,
+  PROJECT_FILES,
+  terminalChannel,
+  readLine,
+  formatOutbound,
+  stdio,
+  TERMINAL_CHANNEL,
+  LOCAL_USER,
+  type ChatOptions,
+  type ChatIo,
+  type ChatInput,
+  type ChatButton,
+  type TerminalChannel,
+  type TerminalChannelOptions,
+  type LoadProjectOptions,
+  type LoadedProject,
+} from "./cli/public.ts"
 
 export { CORE_VERSION } from "./version.ts"
 export { fixedClock, systemClock, type Clock, type FixedClock } from "./testing/clock.ts"

@@ -2,17 +2,34 @@
 // The `openbox` command. Four subcommands by the end; `migrate` is the
 // first. Hand written argument parsing, since four commands need no
 // framework.
+//
+// Nothing imports this file: it is the executable, and each command lives
+// in its own module. `chat` loads the agent project, which imports
+// openbox-agent, which re exports from cli/public.ts rather than from
+// here. Both parts matter. With this file in that circle, and a top level
+// `await` below, loading the project waits on an executable that is
+// waiting on the project, and the command hangs with no output at all.
 import { join } from "node:path"
 import { migrate, MigrateError } from "../migrate/index.ts"
+import { runChat } from "./chat.ts"
 
 const USAGE = `openbox - tools for an openbox-agent project
 
 Usage:
   openbox migrate [options]    apply the core migrations, then the agent's
+  openbox chat [options]       talk to the agent in this folder
 
 Options for migrate:
   --database-url <url>   Postgres connection. Defaults to DATABASE_URL
   --migrations <dir>     the agent's migrations. Defaults to db/migrations
+
+Options for chat:
+  --dir <dir>            the agent project. Defaults to this folder
+  --config <file>        defaults to agent.config.ts
+  --prompt <file>        defaults to prompt.md
+  --tools <dir>          defaults to tools
+  --as <id>              who is typing. Defaults to "local"
+
   --help                 show this
 `
 
@@ -85,6 +102,14 @@ export async function run(argv: string[]): Promise<number> {
   switch (command) {
     case "migrate":
       return runMigrate(flags)
+    case "chat":
+      return runChat({
+        ...(flags.has("dir") ? { dir: flags.get("dir") } : {}),
+        ...(flags.has("config") ? { config: flags.get("config") } : {}),
+        ...(flags.has("prompt") ? { prompt: flags.get("prompt") } : {}),
+        ...(flags.has("tools") ? { tools: flags.get("tools") } : {}),
+        ...(flags.has("as") ? { as: flags.get("as") } : {}),
+      })
     default:
       console.error(`Unknown command: ${command}\n`)
       console.log(USAGE)
@@ -93,5 +118,12 @@ export async function run(argv: string[]): Promise<number> {
 }
 
 if (import.meta.main) {
-  process.exit(await run(process.argv.slice(2)))
+  // No top level `await`: see the note at the top of this file.
+  run(process.argv.slice(2)).then(
+    (code) => process.exit(code),
+    (error: unknown) => {
+      console.error(error instanceof Error ? error.message : String(error))
+      process.exit(1)
+    },
+  )
 }

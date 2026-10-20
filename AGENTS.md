@@ -52,3 +52,7 @@ Database, needing Docker:
 - `bun run db:down` - stop it. `bun run db:status` shows what is running.
 
 Integration tests use that database and reset it per file. With no database running they skip, so `bun test` stays green without Docker.
+
+Talking to the demo agent, which needs the database and an OpenRouter key:
+
+- `bun packages/core/src/cli/index.ts chat --dir examples/demo-agent` - the terminal channel. `examples/demo-agent/README.md` has the environment it needs. Inside chat, `:help` lists its commands.
