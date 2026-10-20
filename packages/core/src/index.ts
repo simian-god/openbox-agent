@@ -138,6 +138,8 @@ export {
   type AgentOptions,
   type Deps,
   type ReceiveResult,
+  type ReceiveAndWaitResult,
+  type TurnFailure,
   type TurnInput,
   type TurnResult,
   type Inbound,

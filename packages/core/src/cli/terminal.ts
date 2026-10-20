@@ -178,7 +178,7 @@ export function terminalChannel(options: TerminalChannelOptions): TerminalChanne
         }
 
         received++
-        await agent.receive({
+        await agent.receiveAndWait({
           channel: TERMINAL_CHANNEL,
           channelUserId,
           channelMessageId: `${sessionId}-in-${received}`,

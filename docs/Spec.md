@@ -64,6 +64,9 @@ agent.stop()                           // finishes in flight work, releases leas
 agent.receive(inbound)                 // writes to the inbox, returns at once: { inboxId, duplicate }
 agent.receiveAndWait(inbound)          // same, then waits until the resulting turn and its sends finish
 
+agent.inFlight()                       // how many turns this process is running
+agent.settled()                        // resolves once none are. stop() waits on the same thing
+
 agent.schedule(message)                // a proactive message at a time (section 12)
 agent.trigger(event)                   // a proactive message from an outside event (section 12)
 

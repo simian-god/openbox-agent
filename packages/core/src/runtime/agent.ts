@@ -1,9 +1,15 @@
-// createAgent and receive (Spec section 3).
+// createAgent, receive and receiveAndWait (Spec section 3).
 //
-// Turn v0 runs the turn inside `receive`. T2.1 and T2.2 split that into an
-// inbox and a worker, where `receive` returns at once (API-1) and the turn
-// happens behind it. The shape here is chosen so that split does not
-// change what a caller sees.
+// API-1: `receive` writes the message down and returns. Finding the person
+// and inserting the inbox row are the only things it waits for, so a
+// webhook can acknowledge in milliseconds however long the brain takes.
+//
+// API-2: `receiveAndWait` is for a caller that wants the answer, not just
+// the acknowledgement: a test, an evals adapter, or a terminal.
+//
+// The turn still runs in this process. T2.2 moves it behind a person lease
+// and a worker, so a turn survives the process that received the message.
+// Until then `settled()` is how a caller waits for work already in flight.
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { OpenboxConfig } from "../config/index.ts"
 import type { Brain } from "../providers/brains/types.ts"
@@ -43,13 +49,34 @@ export interface AgentOptions {
   tools?: Tool[]
   /** Told when an event could not be recorded. A turn never fails for it. */
   onEventError?: ((failure: EventFailure) => void) | undefined
+  /**
+   * Told when a turn ended in a way the core did not plan for. `receive`
+   * has already returned by then, so this is the only place a glue can
+   * learn about it as it happens.
+   */
+  onTurnError?: ((failure: TurnFailure) => void) | undefined
 }
 
 export interface ReceiveResult {
   inboxId: string
   duplicate: boolean
-  /** Absent when the message was a duplicate, so no turn ran. */
+}
+
+export interface ReceiveAndWaitResult extends ReceiveResult {
+  /**
+   * The turn this message was handled by. Absent when the message was a
+   * duplicate of one whose turn has already finished, so there was nothing
+   * left to wait for.
+   */
   turn?: TurnResult | undefined
+}
+
+/** A turn that ended in a way the core did not plan for. */
+export interface TurnFailure {
+  inboxId: string
+  personId: string
+  turnId: string | undefined
+  error: unknown
 }
 
 export interface Agent {
@@ -59,7 +86,14 @@ export interface Agent {
   readonly events: EventWriter
   /** LEARN-2: the hash of the prompt, tools, config and core version. */
   readonly versionHash: string
+  /** API-1: writes the message down and returns. The turn runs behind it. */
   receive(inbound: Inbound): Promise<ReceiveResult>
+  /** API-2: the same, then waits for the turn and its sends to finish. */
+  receiveAndWait(inbound: Inbound): Promise<ReceiveAndWaitResult>
+  /** How many turns are running right now. */
+  inFlight(): number
+  /** Resolves once no turn is running. `stop()` in T2.2 builds on this. */
+  settled(): Promise<void>
 }
 
 export function createAgent(options: AgentOptions): Agent {
@@ -127,6 +161,67 @@ export function createAgent(options: AgentOptions): Agent {
     }
   }
 
+  /**
+   * The turns running right now, by the inbox row that started each one.
+   *
+   * A turn promise never rejects: `runOneTurn` turns a failure into a
+   * result. That matters here, because nothing awaits these promises on
+   * the `receive` path, and an unhandled rejection would take the process
+   * down with the webhook still waiting.
+   */
+  const running = new Map<string, Promise<TurnResult>>()
+
+  /**
+   * The synchronous half of both entry points: the person, the inbox row,
+   * and the turn started but not awaited.
+   */
+  async function start(inbound: Inbound): Promise<{
+    inboxId: string
+    duplicate: boolean
+    turn?: Promise<TurnResult> | undefined
+  }> {
+    const person = await findOrCreatePerson(inbound)
+    const receivedAt = inbound.receivedAt ?? clock.now()
+
+    // LOOP-1: the same channel message id twice is a duplicate, and the
+    // unique constraint is what decides, not a prior read. Two deliveries
+    // at once therefore cannot both start a turn.
+    let inboxId: string
+    try {
+      const row = await store.inbox.insert({
+        person_id: person.id,
+        channel_message_id: inbound.channelMessageId,
+        ...(inbound.text !== undefined ? { text: inbound.text } : {}),
+        ...(inbound.media !== undefined ? { media: inbound.media } : {}),
+        ...(inbound.action !== undefined ? { action: inbound.action } : {}),
+        received_at: receivedAt.toISOString(),
+      })
+      inboxId = row.id
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error
+      const existing = await store.inbox.find({
+        person_id: person.id,
+        channel_message_id: inbound.channelMessageId,
+      })
+      const existingId = existing?.id ?? ""
+      await events.about({ personId: person.id }).record("duplicate_dropped", {
+        channel: inbound.channel,
+        channelMessageId: inbound.channelMessageId,
+        inboxId: existing?.id ?? null,
+      })
+      // A retried webhook waits on the turn the first delivery started,
+      // when that turn is still running.
+      return { inboxId: existingId, duplicate: true, turn: running.get(existingId) }
+    }
+
+    const turn = runOneTurn(person, inbound, inboxId, receivedAt).finally(() => {
+      running.delete(inboxId)
+    })
+    running.set(inboxId, turn)
+
+    return { inboxId, duplicate: false, turn }
+  }
+
   return {
     config,
     store,
@@ -135,41 +230,33 @@ export function createAgent(options: AgentOptions): Agent {
     versionHash: hash,
 
     async receive(inbound: Inbound): Promise<ReceiveResult> {
-      const person = await findOrCreatePerson(inbound)
-      const receivedAt = inbound.receivedAt ?? clock.now()
+      const { inboxId, duplicate } = await start(inbound)
+      return { inboxId, duplicate }
+    },
 
-      // LOOP-1: the same channel message id twice is a duplicate, and
-      // the unique constraint is what decides, not a prior read.
-      let inboxId: string
-      try {
-        const row = await store.inbox.insert({
-          person_id: person.id,
-          channel_message_id: inbound.channelMessageId,
-          ...(inbound.text !== undefined ? { text: inbound.text } : {}),
-          ...(inbound.media !== undefined ? { media: inbound.media } : {}),
-          ...(inbound.action !== undefined ? { action: inbound.action } : {}),
-          received_at: receivedAt.toISOString(),
-        })
-        inboxId = row.id
-      } catch (error) {
-        if (!isUniqueViolation(error)) throw error
-        const existing = await store.inbox.find({
-          person_id: person.id,
-          channel_message_id: inbound.channelMessageId,
-        })
-        await events.about({ personId: person.id }).record("duplicate_dropped", {
-          channel: inbound.channel,
-          channelMessageId: inbound.channelMessageId,
-          inboxId: existing?.id ?? null,
-        })
-        return { inboxId: existing?.id ?? "", duplicate: true }
-      }
+    async receiveAndWait(inbound: Inbound): Promise<ReceiveAndWaitResult> {
+      const { inboxId, duplicate, turn } = await start(inbound)
+      if (turn === undefined) return { inboxId, duplicate }
+      return { inboxId, duplicate, turn: await turn }
+    },
 
-      const turn = await runOneTurn(person, inbound, inboxId, receivedAt)
-      return { inboxId, duplicate: false, turn }
+    inFlight: () => running.size,
+
+    async settled(): Promise<void> {
+      // A turn can start another, so this waits until there is nothing
+      // left rather than just draining what was there when it was called.
+      while (running.size > 0) await Promise.all([...running.values()])
     },
   }
 
+  /**
+   * One turn, which never rejects.
+   *
+   * Nothing awaits this on the `receive` path, so a throw here would be an
+   * unhandled rejection rather than a visible error. A failure becomes a
+   * `failed` outcome instead: recorded on the turn, on the inbox row and
+   * in the trace, and handed to `onTurnError`.
+   */
   async function runOneTurn(
     person: PersonRow,
     inbound: Inbound,
@@ -177,6 +264,23 @@ export function createAgent(options: AgentOptions): Agent {
     receivedAt: Date,
   ): Promise<TurnResult> {
     const startedAt = clock.now()
+    const where: { turnId?: string | undefined } = {}
+
+    try {
+      return await attemptTurn(person, inbound, inboxId, receivedAt, startedAt, where)
+    } catch (error) {
+      return await turnFailed({ person, inboxId, turnId: where.turnId, startedAt, error })
+    }
+  }
+
+  async function attemptTurn(
+    person: PersonRow,
+    inbound: Inbound,
+    inboxId: string,
+    receivedAt: Date,
+    startedAt: Date,
+    where: { turnId?: string | undefined },
+  ): Promise<TurnResult> {
     const versionRowId = await version()
     const turnRow = await store.turns.insert({
       person_id: person.id,
@@ -184,6 +288,7 @@ export function createAgent(options: AgentOptions): Agent {
       version_id: versionRowId,
       started_at: startedAt.toISOString(),
     })
+    where.turnId = turnRow.id
 
     const turnEvents = events.about({ personId: person.id, turnId: turnRow.id })
     await turnEvents.record("turn_started", {
@@ -259,6 +364,58 @@ export function createAgent(options: AgentOptions): Agent {
     })
 
     return result
+  }
+
+  /**
+   * Records a turn that failed, as far as the database still lets us.
+   *
+   * Every write here is best effort: whatever broke the turn may well be
+   * the database itself, and this must still return a result for
+   * `receiveAndWait` to hand back.
+   */
+  async function turnFailed(failure: {
+    person: PersonRow
+    inboxId: string
+    turnId: string | undefined
+    startedAt: Date
+    error: unknown
+  }): Promise<TurnResult> {
+    const { person, inboxId, turnId, startedAt, error } = failure
+    const message = error instanceof Error ? error.message : String(error)
+    const latencyMs = clock.now().getTime() - startedAt.getTime()
+
+    try {
+      options.onTurnError?.({ inboxId, personId: person.id, turnId, error })
+    } catch {
+      // A broken handler is not worth losing the rest of the record over.
+    }
+
+    try {
+      if (turnId !== undefined) {
+        await store.turns.update(
+          { id: turnId },
+          { outcome: "failed", latency_ms: latencyMs, ended_at: clock.now().toISOString() },
+        )
+      }
+      // Not `done`: the message was never answered, so a sweep has to be
+      // able to find it again.
+      await store.inbox.update({ id: inboxId }, { status: "failed", turn_id: turnId ?? null })
+    } catch {
+      // Nothing left to do about it here.
+    }
+
+    await events
+      .about({ personId: person.id, ...(turnId !== undefined ? { turnId } : {}) })
+      .record("turn_ended", { outcome: "failed", latencyMs, replied: false, error: message })
+
+    return {
+      steps: 0,
+      costUsd: 0,
+      brainsUsed: [],
+      toolsRun: [],
+      outcome: "failed",
+      error: message,
+    }
   }
 
   /** The reply goes out, and is stored whatever the channel does with it. */

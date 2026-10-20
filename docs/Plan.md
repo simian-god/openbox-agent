@@ -169,7 +169,7 @@ Each task lists the Spec IDs it implements. **Done when** is the bar for closing
 | T3.2 | Jev adapter, through TypeSafe and through OpenRouter, with recorded contract tests | DM-1 |
 | T3.3 | Check the OpenAI Decisions API's real shape, then build its adapter | DM-1, Spec 23 |
 | T3.4 | Routing: options, exposure rules, every step, fallback on failure, more than 255 options, built in tools skipping routing | ROUTE-1 to ROUTE-5, DM-3, BUILTIN-1 |
-| T3.5 | Risk levels, the gate, bands per tool, failing closed, the decisions table, `gate_block` and `low_confidence` flags | GATE-1 to GATE-5, LEARN-1 (part) |
+| T3.5 | Risk levels, the gate, bands per tool, failing closed, the `tool_runs` and decisions tables, `gate_block` and `low_confidence` flags | GATE-1 to GATE-5, DATA-2 (`tool_runs`), LEARN-1 (part) |
 | T3.6 | `openbox tune` v1: accuracy and thresholds from `examples/routing.jsonl` | ROUTE-4, LEARN-5 |
 | T3.7 | Measurement script for C8: one labeled set run with and without routing, reporting accuracy, median latency and cost | C8 |
 
@@ -356,3 +356,4 @@ Every change to Spec made during the build goes here, with the date, the Spec ID
 | 2026-10-16 | DATA-2, DATA-3 | `ob_messages` and `ob_inbox` gain a `seq` sequence, and DATA-3 now allows sequences | Conversation order rested on `created_at`, so two rows in the same instant could put a reply before its question |
 | 2026-10-20 | DATA-3 | `ob_events` gains a `seq` sequence too, and DATA-3's example list names it | EVT-1 calls the table a full trace, and several events in one turn share an instant, so a timestamp cannot order them |
 | 2026-10-20 | LEARN-2 | A tool's `roles` join the version hash | Moving a tool between end users and operators changes what the agent will do for a given person, so it has to be a new version or a review can confuse the two |
+| 2026-10-20 | Section 3 | `inFlight()` and `settled()` added to the runtime API | `receive` now returns before its turn finishes, so a test, a terminal or a shutdown needs a way to wait for work already in flight. `stop()` is T2.2 and will wait on the same thing |

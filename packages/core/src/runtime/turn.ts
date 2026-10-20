@@ -45,7 +45,14 @@ export interface TurnResult {
   /** Which brain answered each step, in order (BRAIN-5, DEP-3). */
   brainsUsed: string[]
   toolsRun: { name: string; ok: boolean }[]
-  outcome: "replied" | "no_reply" | "step_cap" | "brains_failed"
+  /**
+   * `failed` is not produced here. `createAgent` uses it for a turn that
+   * ended in a way the core did not plan for, so a caller of
+   * `receiveAndWait` gets a result rather than a rejection.
+   */
+  outcome: "replied" | "no_reply" | "step_cap" | "brains_failed" | "failed"
+  /** Set only when the outcome is `failed`. */
+  error?: string | undefined
 }
 
 /** LOOP-8 step 5: the brain called something it was not offered. */

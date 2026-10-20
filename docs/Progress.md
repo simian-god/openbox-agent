@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** T2.1
+**Next task:** T2.2
 
 ## M0. Foundations
 
@@ -34,7 +34,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 
 | Task | What | Status | Date | Note |
 |---|---|---|---|---|
-| T2.1 | Duplicate drop on insert, `receive` returning in under 100 ms, `receiveAndWait` | todo | | |
+| T2.1 | Duplicate drop on insert, `receive` returning in under 100 ms, `receiveAndWait` | done | 2026-10-20 | receive now writes the person and the inbox row and returns, with the turn running behind it; receiveAndWait waits for the turn and its sends. A turn can no longer reject, since nothing awaits it: a failure becomes a failed outcome on the turn, the inbox row and the trace, and goes to onTurnError. A retried webhook that waits lands on the turn the first delivery started. inFlight and settled added to the API, see the decisions log. The worker and leases are T2.2. |
 | T2.2 | Person leases, the worker, burst merge, and turns that follow on | todo | | |
 | T2.3 | Outbox: states, retries with backoff, idempotency keys, the timed out send rule | todo | | |
 | T2.4 | Job loop: claim, run, retry, dedupe keys | todo | | |
@@ -50,7 +50,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 | T3.2 | Jev adapter, through TypeSafe and through OpenRouter, with recorded contract tests | todo | | |
 | T3.3 | Check the OpenAI Decisions API's real shape, then build its adapter | todo | | |
 | T3.4 | Routing: options, exposure rules, every step, fallback on failure, more than 255 options… | todo | | |
-| T3.5 | Risk levels, the gate, bands per tool, failing closed, the decisions table, `gate_block` and… | todo | | |
+| T3.5 | Risk levels, the gate, bands per tool, failing closed, the `tool_runs` and decisions tables, `gate_block`… | todo | | |
 | T3.6 | `openbox tune` v1: accuracy and thresholds from `examples/routing.jsonl` | todo | | |
 | T3.7 | Measurement script for C8: one labeled set run with and without routing, reporting accuracy… | todo | | |
 | M3 check | C3, C7 and C8 can be measured on the demo agent, and a decision model outage test proves GATE-4. | todo | | |

@@ -116,14 +116,14 @@ describeDatabase("events and versions", (sql) => {
 
   test("EVT-1: a turn writes turn_started and turn_ended", async () => {
     const agent = agentWith([{ reply: "We open at 11." }])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     expect(await trace(agent)).toEqual(["turn_started", "turn_ended"])
   })
 
   test("EVT-1: every event is tied to the person and the turn it belongs to", async () => {
     const agent = agentWith([{ reply: "We open at 11." }])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const person = await agent.store.people.find({ channel_user_id: "42" })
     const turn = (await agent.store.turns.list())[0]
@@ -138,7 +138,7 @@ describeDatabase("events and versions", (sql) => {
 
   test("EVT-1: turn_ended carries the outcome, steps, cost and latency", async () => {
     const agent = agentWith([{ reply: "We open at 11." }])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const ended = (await agent.store.events.list({ name: "turn_ended" }))[0]
     expect(ended?.props).toMatchObject({
@@ -153,7 +153,7 @@ describeDatabase("events and versions", (sql) => {
 
   test("EVT-1: turn_ended is written even when every brain fails", async () => {
     const agent = agentWith([], [], { brains: [scriptedBrain([{ throws: "down" }], { id: "x" })] })
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const ended = (await agent.store.events.list({ name: "turn_ended" }))[0]
     expect(ended?.props).toMatchObject({ outcome: "brains_failed", replied: false })
@@ -164,7 +164,7 @@ describeDatabase("events and versions", (sql) => {
       { tool: "check_availability", input: { date: "2026-10-19", size: 2 } },
       { reply: "Yes." },
     ])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     expect(await trace(agent)).toEqual(["turn_started", "tool_ran", "turn_ended"])
     const ran = (await agent.store.events.list({ name: "tool_ran" }))[0]
@@ -173,7 +173,7 @@ describeDatabase("events and versions", (sql) => {
 
   test("EVT-1: tool_ran records a tool that threw, with its message", async () => {
     const agent = agentWith([{ tool: "broken_tool" }, { reply: "Let me check." }], [explodingTool])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const ran = (await agent.store.events.list({ name: "tool_ran" }))[0]
     expect(ran?.props).toMatchObject({ tool: "broken_tool", ok: false, ran: true })
@@ -185,7 +185,7 @@ describeDatabase("events and versions", (sql) => {
       { tool: "check_availability", input: { date: "2026-10-19", size: 0 } },
       { reply: "How many people?" },
     ])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const ran = (await agent.store.events.list({ name: "tool_ran" }))[0]
     expect(ran?.props).toMatchObject({ tool: "check_availability", ok: false, ran: false })
@@ -193,7 +193,7 @@ describeDatabase("events and versions", (sql) => {
 
   test("EVT-2: unknown_tool is recorded when the brain calls what it was not offered", async () => {
     const agent = agentWith([{ tool: "delete_everything" }, { reply: "Sorry." }])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     expect(await trace(agent)).toEqual(["turn_started", "unknown_tool", "turn_ended"])
     const row = (await agent.store.events.list({ name: "unknown_tool" }))[0]
@@ -203,8 +203,8 @@ describeDatabase("events and versions", (sql) => {
 
   test("EVT-2: duplicate_dropped is recorded, and no turn is", async () => {
     const agent = agentWith([{ reply: "one" }, { reply: "two" }])
-    await agent.receive(hello())
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
+    await agent.receiveAndWait(hello())
 
     expect(await trace(agent)).toEqual([
       "turn_started",
@@ -224,7 +224,7 @@ describeDatabase("events and versions", (sql) => {
         scriptedBrain([{ reply: "Second brain here." }], { id: "second" }),
       ],
     })
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     expect(await trace(agent)).toEqual(["turn_started", "fallback_used", "turn_ended"])
     const row = (await agent.store.events.list({ name: "fallback_used" }))[0]
@@ -234,7 +234,7 @@ describeDatabase("events and versions", (sql) => {
 
   test("EVT-1: the primary brain answering records no fallback", async () => {
     const agent = agentWith([{ reply: "hi" }])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     expect(await trace(agent)).not.toContain("fallback_used")
   })
@@ -244,7 +244,7 @@ describeDatabase("events and versions", (sql) => {
       { tool: "check_availability", input: { date: "2026-10-19", size: 2 } },
       { reply: "Yes." },
     ])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     expect(captured.map(([name]) => name)).toEqual(await trace(agent))
     expect(captured.find(([name]) => name === "tool_ran")?.[1]).toMatchObject({
@@ -259,7 +259,7 @@ describeDatabase("events and versions", (sql) => {
       { tool: "check_availability", input: { date: "2026-10-19", size: 2 } },
       { reply: "Yes." },
     ])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     expect(await trace(agent)).toEqual(["turn_started", "tool_ran", "turn_ended"])
   })
@@ -281,7 +281,7 @@ describeDatabase("events and versions", (sql) => {
       tools: [checkAvailability],
     })
 
-    const result = await agent.receive(hello())
+    const result = await agent.receiveAndWait(hello())
 
     expect(result.turn?.outcome).toBe("replied")
     expect(sender.texts()).toEqual(["We open at 11."])
@@ -291,7 +291,7 @@ describeDatabase("events and versions", (sql) => {
 
   test("LEARN-2: the turn records the version it ran under", async () => {
     const agent = agentWith([{ reply: "hi" }])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const turn = (await agent.store.turns.list())[0]
     const version = (await agent.store.versions.list())[0]
@@ -303,8 +303,8 @@ describeDatabase("events and versions", (sql) => {
 
   test("LEARN-2: a second turn reuses the same version row", async () => {
     const agent = agentWith([{ reply: "one" }, { reply: "two" }])
-    await agent.receive(hello())
-    await agent.receive(hello({ channelMessageId: "msg-2" }))
+    await agent.receiveAndWait(hello())
+    await agent.receiveAndWait(hello({ channelMessageId: "msg-2" }))
 
     expect(await agent.store.versions.count()).toBe(1)
     const versionId = (await agent.store.versions.list())[0]?.id ?? null
@@ -315,10 +315,10 @@ describeDatabase("events and versions", (sql) => {
 
   test("LEARN-2: a restart with the same agent reuses the version row", async () => {
     const first = agentWith([{ reply: "one" }])
-    await first.receive(hello())
+    await first.receiveAndWait(hello())
 
     const second = agentWith([{ reply: "two" }])
-    await second.receive(hello({ channelMessageId: "msg-2" }))
+    await second.receiveAndWait(hello({ channelMessageId: "msg-2" }))
 
     expect(second.versionHash).toBe(first.versionHash)
     expect(await second.store.versions.count()).toBe(1)
@@ -326,12 +326,12 @@ describeDatabase("events and versions", (sql) => {
 
   test("LEARN-2: a changed prompt is a second version row", async () => {
     const first = agentWith([{ reply: "one" }])
-    await first.receive(hello())
+    await first.receiveAndWait(hello())
 
     const changed = agentWith([{ reply: "two" }], [checkAvailability], {
       prompt: "You are the host at a dentist.",
     })
-    await changed.receive(hello({ channelMessageId: "msg-2" }))
+    await changed.receiveAndWait(hello({ channelMessageId: "msg-2" }))
 
     expect(changed.versionHash).not.toBe(first.versionHash)
     expect(await changed.store.versions.count()).toBe(2)
@@ -345,7 +345,7 @@ describeDatabase("events and versions", (sql) => {
 
   test("DATA-1: another agent on the same database sees none of these events", async () => {
     const agent = agentWith([{ reply: "hi" }])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const other = createAgent({
       config: config({ name: "dentist" }),

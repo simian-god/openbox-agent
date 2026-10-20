@@ -135,7 +135,7 @@ describeDatabase("a turn", (sql) => {
 
   test("ROLE-1: an unknown person is created as an end user", async () => {
     const { agent } = agentWith([{ reply: "We open at 11." }])
-    await agent.receive(hello({ displayName: "Asha" }))
+    await agent.receiveAndWait(hello({ displayName: "Asha" }))
 
     const person = await agent.store.people.find({ channel_user_id: "42" })
     expect(person?.role).toBe("end_user")
@@ -145,8 +145,8 @@ describeDatabase("a turn", (sql) => {
 
   test("ROLE-1: a person who writes again is the same person, not a new one", async () => {
     const { agent } = agentWith([{ reply: "one" }, { reply: "two" }])
-    await agent.receive(hello())
-    await agent.receive(hello({ channelMessageId: "msg-2" }))
+    await agent.receiveAndWait(hello())
+    await agent.receiveAndWait(hello({ channelMessageId: "msg-2" }))
 
     expect(await agent.store.people.count()).toBe(1)
   })
@@ -155,7 +155,7 @@ describeDatabase("a turn", (sql) => {
     const { agent } = agentWith([{ reply: "hi" }])
     // The glue has no way to pass a role, so a sender claiming one is
     // simply ignored rather than trusted.
-    await agent.receive({ ...hello(), role: "operator" } as never)
+    await agent.receiveAndWait({ ...hello(), role: "operator" } as never)
 
     const person = await agent.store.people.find({ channel_user_id: "42" })
     expect(person?.role).toBe("end_user")
@@ -163,10 +163,10 @@ describeDatabase("a turn", (sql) => {
 
   test("ROLE-1: an operator's role survives a message from them", async () => {
     const { agent } = agentWith([{ reply: "hi" }])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
     await agent.store.people.update({ channel_user_id: "42" }, { role: "operator" })
 
-    await agent.receive(hello({ channelMessageId: "msg-2" }))
+    await agent.receiveAndWait(hello({ channelMessageId: "msg-2" }))
     const person = await agent.store.people.find({ channel_user_id: "42" })
     expect(person?.role).toBe("operator")
   })
@@ -174,8 +174,8 @@ describeDatabase("a turn", (sql) => {
   test("LOOP-1: the same channel message id twice is a duplicate", async () => {
     const { agent, brain } = agentWith([{ reply: "one" }, { reply: "two" }])
 
-    const first = await agent.receive(hello())
-    const second = await agent.receive(hello())
+    const first = await agent.receiveAndWait(hello())
+    const second = await agent.receiveAndWait(hello())
 
     expect(first.duplicate).toBe(false)
     expect(second.duplicate).toBe(true)
@@ -187,7 +187,7 @@ describeDatabase("a turn", (sql) => {
 
   test("LOOP-8: a reply ends the turn and goes out through the sender", async () => {
     const { agent } = agentWith([{ reply: "We open at 11." }])
-    const result = await agent.receive(hello())
+    const result = await agent.receiveAndWait(hello())
 
     expect(result.turn?.outcome).toBe("replied")
     expect(result.turn?.steps).toBe(1)
@@ -202,7 +202,7 @@ describeDatabase("a turn", (sql) => {
       { tool: "check_availability", input: { date: "2026-10-19", size: 2 } },
       { reply: "Yes, we have space." },
     ])
-    const result = await agent.receive(hello())
+    const result = await agent.receiveAndWait(hello())
 
     expect(result.turn?.toolsRun).toEqual([{ name: "check_availability", ok: true }])
     expect(result.turn?.steps).toBe(2)
@@ -215,7 +215,7 @@ describeDatabase("a turn", (sql) => {
 
   test("LOOP-8: a tool the brain was not given is refused, never run", async () => {
     const { agent, brain } = agentWith([{ tool: "delete_everything" }, { reply: "Sorry." }])
-    const result = await agent.receive(hello())
+    const result = await agent.receiveAndWait(hello())
 
     expect(result.turn?.toolsRun).toEqual([])
 
@@ -230,7 +230,7 @@ describeDatabase("a turn", (sql) => {
       { tool: "check_availability", input: { date: "2026-10-19", size: 0 } },
       { reply: "How many people?" },
     ])
-    const result = await agent.receive(hello())
+    const result = await agent.receiveAndWait(hello())
 
     expect(result.turn?.toolsRun).toEqual([])
     const told = brain.calls[1]?.messages.at(-1) as { error?: string }
@@ -243,7 +243,7 @@ describeDatabase("a turn", (sql) => {
       [{ tool: "broken_tool" }, { reply: "Let me check and come back." }],
       [checkAvailability, explodingTool],
     )
-    const result = await agent.receive(hello())
+    const result = await agent.receiveAndWait(hello())
 
     expect(result.turn?.toolsRun).toEqual([{ name: "broken_tool", ok: false }])
     const told = brain.calls[1]?.messages.at(-1) as { error?: string }
@@ -257,7 +257,7 @@ describeDatabase("a turn", (sql) => {
       { tool: "check_availability", input: { date: "2026-10-19", size: 2 } },
       { reply: "Yes." },
     ])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const person = await agent.store.people.find({ channel_user_id: "42" })
     expect(lastCtx).toEqual({
@@ -274,7 +274,7 @@ describeDatabase("a turn", (sql) => {
 
   test("ROLE-3: a tool another role owns is never offered", async () => {
     const { agent, brain } = agentWith([{ reply: "hi" }], [checkAvailability, operatorOnly])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const offered = brain.calls[0]?.tools.map((tool) => tool.name) ?? []
     expect(offered).toContain("check_availability")
@@ -283,7 +283,7 @@ describeDatabase("a turn", (sql) => {
 
   test("LOOP-8: v0 offers read tools only, since the gate is not built", async () => {
     const { agent, brain } = agentWith([{ reply: "hi" }], [checkAvailability, bookTable])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const offered = brain.calls[0]?.tools.map((tool) => tool.name) ?? []
     expect(offered).toEqual(["check_availability"])
@@ -291,7 +291,7 @@ describeDatabase("a turn", (sql) => {
 
   test("LOOP-7: the brain gets the prompt, the runtime block and the message", async () => {
     const { agent, brain } = agentWith([{ reply: "hi" }])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const call = brain.calls[0]
     expect(call?.system).toContain(PROMPT)
@@ -302,8 +302,8 @@ describeDatabase("a turn", (sql) => {
 
   test("LOOP-7: an earlier turn's messages are the next turn's history", async () => {
     const { agent, brain } = agentWith([{ reply: "We open at 11." }, { reply: "Yes." }])
-    await agent.receive(hello())
-    await agent.receive(hello({ channelMessageId: "msg-2", text: "Are you open now?" }))
+    await agent.receiveAndWait(hello())
+    await agent.receiveAndWait(hello({ channelMessageId: "msg-2", text: "Are you open now?" }))
 
     expect(brain.calls[1]?.messages).toEqual([
       { role: "person", text: "Any space on Monday?" },
@@ -318,9 +318,9 @@ describeDatabase("a turn", (sql) => {
       [checkAvailability],
       { history: 2 },
     )
-    await agent.receive(hello({ channelMessageId: "m1", text: "one" }))
-    await agent.receive(hello({ channelMessageId: "m2", text: "two" }))
-    await agent.receive(hello({ channelMessageId: "m3", text: "three" }))
+    await agent.receiveAndWait(hello({ channelMessageId: "m1", text: "one" }))
+    await agent.receiveAndWait(hello({ channelMessageId: "m2", text: "two" }))
+    await agent.receiveAndWait(hello({ channelMessageId: "m3", text: "three" }))
 
     // Two from history, plus the message being answered.
     expect(brain.calls[2]?.messages).toHaveLength(3)
@@ -333,7 +333,7 @@ describeDatabase("a turn", (sql) => {
       { tool: "check_availability", input: { date: "2026-10-19", size: 2 } },
       { reply: "Yes." },
     ])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const turn = (await agent.store.turns.list())[0]
     expect(turn?.steps).toBe(2)
@@ -345,7 +345,7 @@ describeDatabase("a turn", (sql) => {
 
   test("LOOP-8: the conversation is stored in both directions", async () => {
     const { agent } = agentWith([{ reply: "We open at 11." }])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const messages = await agent.store.messages.list({}, { orderBy: "seq" })
     expect(messages.map((row) => [row.direction, row.author, row.text])).toEqual([
@@ -358,8 +358,8 @@ describeDatabase("a turn", (sql) => {
     // The clock is frozen, so the question and the reply carry the same
     // created_at. Order must come from insert order, not from the time.
     const { agent, brain } = agentWith([{ reply: "We open at 11." }, { reply: "Yes." }])
-    await agent.receive(hello())
-    await agent.receive(hello({ channelMessageId: "msg-2", text: "Are you open now?" }))
+    await agent.receiveAndWait(hello())
+    await agent.receiveAndWait(hello({ channelMessageId: "msg-2", text: "Are you open now?" }))
 
     const stored = await agent.store.messages.list({}, { orderBy: "seq" })
     expect(new Set(stored.map((row) => row.created_at)).size).toBe(1)
@@ -380,7 +380,7 @@ describeDatabase("a turn", (sql) => {
 
   test("LOOP-8: the inbox row is marked done and tied to its turn", async () => {
     const { agent } = agentWith([{ reply: "hi" }])
-    const result = await agent.receive(hello())
+    const result = await agent.receiveAndWait(hello())
 
     const row = await agent.store.inbox.byId(result.inboxId)
     expect(row?.status).toBe("done")
@@ -405,7 +405,7 @@ describeDatabase("a turn", (sql) => {
       tools: [checkAvailability],
     })
 
-    const result = await looping.receive(hello())
+    const result = await looping.receiveAndWait(hello())
     expect(result.turn?.outcome).toBe("step_cap")
     expect(result.turn?.steps).toBe(3)
     void agent
@@ -415,7 +415,7 @@ describeDatabase("a turn", (sql) => {
     const { agent } = agentWith([
       { output: { finishReason: "stop", usage: { inputTokens: 0, outputTokens: 0 } } },
     ])
-    const result = await agent.receive(hello())
+    const result = await agent.receiveAndWait(hello())
 
     expect(result.turn?.outcome).toBe("no_reply")
     expect(sender.sent).toEqual([])
@@ -434,7 +434,7 @@ describeDatabase("a turn", (sql) => {
       tools: [checkAvailability],
     })
 
-    const result = await agent.receive(hello())
+    const result = await agent.receiveAndWait(hello())
     expect(result.turn?.brainsUsed).toEqual(["second"])
     expect(sender.texts()).toEqual(["Second brain here."])
   })
@@ -450,14 +450,14 @@ describeDatabase("a turn", (sql) => {
       tools: [],
     })
 
-    const result = await agent.receive(hello())
+    const result = await agent.receiveAndWait(hello())
     expect(result.turn?.outcome).toBe("brains_failed")
     expect(sender.sent).toEqual([])
   })
 
   test("DATA-1: a second agent on the same database sees none of this", async () => {
     const { agent } = agentWith([{ reply: "hi" }])
-    await agent.receive(hello())
+    await agent.receiveAndWait(hello())
 
     const other = createAgent({
       config: config({ name: "dentist" }),
