@@ -123,7 +123,25 @@ and T11.5, which publishes.
 
 ---
 
-## K6. C13 asks for a timed out send to be flagged, and flags do not exist
+## K6. A tool's arguments are not in the event trace
+
+**Status:** open. Closed at T3.5.
+
+**What happens.** EVT-2's `tool_ran` records that a tool ran, its risk, whether
+it succeeded and how long it took. It does not record what the tool was given.
+DATA-2's `tool_runs` table holds the arguments and the result, and it is parked
+at T3.5.
+
+**What it costs.** An evals-agent assertion of the form `must_call X with {...}`
+cannot be checked from the core's own events. An adapter can record the call
+itself, which is what the M1 check's adapter does, but that is the adapter
+watching rather than the core reporting.
+
+**What would resolve it.** T3.5, which builds `tool_runs` alongside the gate.
+
+---
+
+## K7. C13 asks for a timed out send to be flagged, and flags do not exist
 
 **Status:** open. Closed at M9, or by a Spec change.
 

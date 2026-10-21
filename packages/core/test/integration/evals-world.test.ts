@@ -264,7 +264,9 @@ describeDatabase("the core under a client with no SQLSTATE", (sql) => {
     // The shim builds the same `update ... where ... returning *`, so this
     // is the mechanism that has to keep working there.
     const first = agentWith()
+    const firstSender = sender
     const second = agentWith()
+    const secondSender = sender
 
     await first.receive(hello())
     first.start()
@@ -273,6 +275,9 @@ describeDatabase("the core under a client with no SQLSTATE", (sql) => {
     await second.settled()
 
     expect(await first.store.turns.count()).toBe(1)
-    expect(sender.sent).toHaveLength(1)
+    // Either process may win the claim, so the count that matters is the
+    // total. Asserting on one of them passes or fails by luck, which is
+    // how this test was first written.
+    expect(firstSender.sent.length + secondSender.sent.length).toBe(1)
   })
 })
