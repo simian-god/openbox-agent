@@ -26,13 +26,20 @@
 import type { FetchLike } from "../http.ts"
 import {
   DecisionError,
-  confidenceOf,
   type Answer,
   type DecisionModel,
   type DecisionResult,
   type DecisionUsage,
   type Question,
 } from "./types.ts"
+import {
+  decisionFail,
+  readChoice,
+  readConfidence,
+  readProbability,
+  readScore,
+  readSpreadObject,
+} from "./validate.ts"
 
 const ID = "jev"
 
@@ -56,13 +63,6 @@ const ROUTES: Record<JevRoute, { url: string; model: string }> = {
 const MAX_OPTIONS = 255
 const MIN_LEVELS = 2
 const MAX_LEVELS = 10
-
-/**
- * How far a spread may be from adding up to 1 before it is refused. The
- * vendor rounds what it sends, so a little slack is right; normalising a
- * spread that is properly wrong would hide a broken answer.
- */
-const MASS_TOLERANCE = 0.05
 
 export interface JevOptions {
   apiKey: string
@@ -88,7 +88,7 @@ type WireQuestion =
   | { type: "noul"; instructions: string; criteria: { true: string; false: string } }
 
 const fail = (message: string, retryable = false): DecisionError =>
-  new DecisionError(ID, message, retryable)
+  decisionFail(ID, message, retryable)
 
 /** The Spec's Question onto Jev's own, refusing what Jev would refuse. */
 function toWire(name: string, question: Question): WireQuestion {
@@ -129,46 +129,6 @@ function toWire(name: string, question: Question): WireQuestion {
   }
 }
 
-/** A spread, checked before anything is read off it. */
-function readSpread(name: string, raw: unknown): Record<string, number> {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw fail(`question ${name}: the answer carried no probabilities`)
-  }
-
-  const spread: Record<string, number> = {}
-  let total = 0
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      throw fail(`question ${name}: the probability for ${key} is not a number`)
-    }
-    if (value < 0 || value > 1) {
-      throw fail(`question ${name}: the probability for ${key} is ${value}, not between 0 and 1`)
-    }
-    spread[key] = value
-    total += value
-  }
-
-  if (Object.keys(spread).length === 0) {
-    throw fail(`question ${name}: the answer carried an empty spread`)
-  }
-  if (Math.abs(total - 1) > MASS_TOLERANCE) {
-    throw fail(`question ${name}: the probabilities add up to ${total}, not 1`)
-  }
-  return spread
-}
-
-/** The vendor's confidence when it sent one, the spread's own otherwise. */
-function readConfidence(name: string, raw: unknown, spread: Record<string, number>): number {
-  if (raw === undefined || raw === null) return confidenceOf(spread)
-  if (typeof raw !== "number" || !Number.isFinite(raw)) {
-    throw fail(`question ${name}: the confidence is not a number`)
-  }
-  if (raw < 0 || raw > 1) {
-    throw fail(`question ${name}: the confidence is ${raw}, not between 0 and 1`)
-  }
-  return raw
-}
-
 /** One answer, checked against the question it was asked for. */
 function readAnswer(name: string, question: Question, raw: unknown): Answer {
   if (raw === undefined || raw === null) {
@@ -181,19 +141,12 @@ function readAnswer(name: string, question: Question, raw: unknown): Answer {
       if (answer["type"] !== "choice") {
         throw fail(`question ${name}: asked for a choice, answered with ${String(answer["type"])}`)
       }
-      const probabilities = readSpread(name, answer["probabilities"])
-      const picked = answer["choice"]
-      if (typeof picked !== "string") throw fail(`question ${name}: the choice is not a name`)
-      if (!(picked in question.options)) {
-        throw fail(
-          `question ${name}: ${picked} is not one of the options (${Object.keys(question.options).join(", ")})`,
-        )
-      }
+      const probabilities = readSpreadObject(ID, name, answer["probabilities"])
       return {
         type: "choice",
-        choice: picked,
+        choice: readChoice(ID, name, answer["choice"], question.options),
         probabilities,
-        confidence: readConfidence(name, answer["confidence"], probabilities),
+        confidence: readConfidence(ID, name, answer["confidence"], probabilities),
       }
     }
 
@@ -201,22 +154,14 @@ function readAnswer(name: string, question: Question, raw: unknown): Answer {
       if (answer["type"] !== "score") {
         throw fail(`question ${name}: asked for a score, answered with ${String(answer["type"])}`)
       }
-      const probabilities = readSpread(name, answer["probabilities"])
-      const score = answer["score"]
-      if (typeof score !== "number" || !Number.isFinite(score)) {
-        throw fail(`question ${name}: the score is not a number`)
-      }
-      // Jev's score is the spread's expected level, so it cannot sit
-      // outside the levels that were offered.
-      const highest = question.levels.length - 1
-      if (score < 0 || score > highest + MASS_TOLERANCE) {
-        throw fail(`question ${name}: the score is ${score}, and the levels only reach ${highest}`)
-      }
+      const probabilities = readSpreadObject(ID, name, answer["probabilities"])
       return {
         type: "score",
-        score,
+        // Jev's score is the spread's expected level, so it comes back
+        // fractional and cannot sit outside the levels offered.
+        score: readScore(ID, name, answer["score"], question.levels),
         probabilities,
-        confidence: readConfidence(name, answer["confidence"], probabilities),
+        confidence: readConfidence(ID, name, answer["confidence"], probabilities),
       }
     }
 
@@ -224,14 +169,7 @@ function readAnswer(name: string, question: Question, raw: unknown): Answer {
       if (answer["type"] !== "noul") {
         throw fail(`question ${name}: asked for a noul, answered with ${String(answer["type"])}`)
       }
-      const p = answer["noul"]
-      if (typeof p !== "number" || !Number.isFinite(p)) {
-        throw fail(`question ${name}: the noul is not a number`)
-      }
-      if (p < 0 || p > 1) {
-        throw fail(`question ${name}: the noul is ${p}, not between 0 and 1`)
-      }
-      return { type: "yesno", p }
+      return { type: "yesno", p: readProbability(ID, name, "noul", answer["noul"]) }
     }
   }
 }

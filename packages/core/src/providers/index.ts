@@ -13,6 +13,10 @@ export { supabaseFromEnv, DB_ENV_KEYS } from "./db.ts"
 export type { FetchLike } from "./http.ts"
 export * from "./decision/types.ts"
 export { jevDecisionModel, JEV_ROUTES, type JevRoute, type JevOptions } from "./decision/jev.ts"
+export {
+  openaiDecisionsModel,
+  type OpenaiDecisionsOptions,
+} from "./decision/openai-decisions.ts"
 
 /** Where a provider's key is read from. Also the list in .env.example. */
 export const ENV_KEYS = {

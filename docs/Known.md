@@ -184,3 +184,33 @@ moves shows up as a `DecisionError` rather than a wrong decision.
 **What would resolve it.** A TypeSafe key, which needs their waitlist to open, or
 OpenRouter promoting the decisions endpoint out of alpha. Worth re-checking both
 at T3.3, which looks at the OpenAI Decisions API anyway.
+
+---
+
+## K9. The OpenAI Decisions API documents no usage object and no limits
+
+**Status:** open, worked around.
+
+**What happens.** Its guide and reference describe the request, every
+question type and every answer type, but say nothing about a `usage` object,
+and give no numbers for how many questions, choices or levels one request may
+carry. Billing is per input token, so a usage object probably exists, but
+nothing published says what it is called.
+
+**What it costs.** Two things. Spend tracking (LIMIT-3 and the C16 spend cap,
+M7) can see what a brain cost but may not be able to see what a decision cost
+on this route, which would make an agent's reported spend lower than its bill.
+And the limits this adapter cannot check are checked by the API instead, so a
+question that is too big is found out by a 400 rather than refused here. Jev
+publishes both of its limits and they are refused before the request.
+
+**What we did.** `usage.input_tokens` is read if it is sent and reported as
+zero if it is not, so nothing crashes and nothing invents a number. The score
+mapping refuses fewer than two levels, since a score between one level is
+meaningless whatever the API allows. The live test prints what the real API
+reports for usage, so running it once answers the question.
+
+**What would resolve it.** Running the live test with a real key, which
+settles the usage object in one request. The limits need the endpoint to leave
+beta, or an answer from OpenAI. Worth re-checking when the beta ends, which is
+also when Spec section 23's first line can be struck.

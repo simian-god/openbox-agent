@@ -98,6 +98,8 @@ export {
   JEV_ROUTES,
   type JevRoute,
   type JevOptions,
+  openaiDecisionsModel,
+  type OpenaiDecisionsOptions,
   type FetchLike,
   ProviderError,
   BrainError,
