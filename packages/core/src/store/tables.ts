@@ -11,6 +11,9 @@ export const CORE_TABLES = [
   "ob_outbox",
   "ob_jobs",
   "ob_events",
+  "ob_tool_runs",
+  "ob_decisions",
+  "ob_flags",
 ] as const
 
 export type CoreTable = (typeof CORE_TABLES)[number]
@@ -23,6 +26,31 @@ export type OutboxKind = "reply" | "proactive" | "operator_alert" | "confirm"
 /** `unknown` is not a kind of failure: the send threw, so nobody knows. */
 export type OutboxStatus = "queued" | "sending" | "sent" | "failed" | "unknown"
 export type JobStatus = "queued" | "running" | "done" | "failed"
+/** DATA-2. `pending` is an irreversible call waiting on a person's confirm. */
+export type ToolRunStatus = "ok" | "error" | "blocked" | "needs_confirmation" | "pending"
+/** What the decision model was asked about. */
+export type DecisionKind = "route" | "gate" | "frustration" | "wants_human"
+/**
+ * LEARN-1's kinds, as the Spec's own table lists them. A test holds this
+ * list to that table, so neither can drift from the other.
+ *
+ * T3.5 raises `gate_block` and `low_confidence`. The rest are declared up
+ * front so each feature only has to raise its own, and so the migration's
+ * check constraint is written once.
+ */
+export const FLAG_KINDS = [
+  "handover",
+  "gate_block",
+  "low_confidence",
+  "tool_error",
+  "unknown_tool",
+  "frustration",
+  "step_cap",
+  "confirmation_rejected",
+  "operator",
+] as const
+
+export type FlagKind = (typeof FLAG_KINDS)[number]
 
 export interface PersonRow {
   id: string
@@ -159,6 +187,61 @@ export interface EventRow {
   created_at: string
 }
 
+/**
+ * One tool call: what it was given, what came back, and what became of it.
+ *
+ * A call that never reached a handler still gets a row, because being
+ * blocked by the gate is as much a thing that happened as running.
+ */
+export interface ToolRunRow {
+  id: string
+  seq: number
+  agent_id: string
+  person_id: string
+  turn_id: string | null
+  step: number
+  tool: string
+  risk: string
+  args: unknown
+  result: unknown
+  status: ToolRunStatus
+  error: string | null
+  duration_ms: number
+  created_at: string
+}
+
+/** One decision model call, and what the core did with the answer. */
+export interface DecisionRow {
+  id: string
+  seq: number
+  agent_id: string
+  person_id: string
+  turn_id: string | null
+  step: number | null
+  kind: DecisionKind
+  /** A RouteDecision or GateDecision reason, depending on the kind. */
+  outcome: string
+  answers: Record<string, unknown>
+  model: string
+  duration_ms: number
+  cost_usd: number
+  created_at: string
+}
+
+/** LEARN-1: something about this turn worth a builder's attention. */
+export interface FlagRow {
+  id: string
+  seq: number
+  agent_id: string
+  person_id: string
+  turn_id: string | null
+  kind: FlagKind
+  detail: Record<string, unknown>
+  reviewed_at: string | null
+  review_outcome: string | null
+  created_at: string
+}
+
 /** Maps a table name to its row type. */
 export interface CoreRows {
   ob_people: PersonRow
@@ -170,6 +253,9 @@ export interface CoreRows {
   ob_outbox: OutboxRow
   ob_jobs: JobRow
   ob_events: EventRow
+  ob_tool_runs: ToolRunRow
+  ob_decisions: DecisionRow
+  ob_flags: FlagRow
 }
 
 /** What a caller supplies when inserting: no id, no agent_id, no defaults. */

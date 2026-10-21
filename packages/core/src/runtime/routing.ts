@@ -14,8 +14,9 @@
 // Nothing here touches the database or records an event. It answers with
 // what it decided and the step records that, which is what lets every rule
 // below be tested without a turn.
-import type { DecisionModel, Question } from "../providers/decision/types.ts"
+import type { Answer, DecisionModel, Question } from "../providers/decision/types.ts"
 import type { Tool } from "../tools/index.ts"
+import { answerOf, within } from "./decide.ts"
 
 /** ROUTE-1's extra option: the brain can answer without a tool. */
 export const NO_TOOL = "no_tool"
@@ -109,30 +110,6 @@ function split(tools: Tool[]): Tool[][] {
   return groups
 }
 
-/** Raised inside this file only, to say the step should carry on without routing. */
-class NoAnswer extends Error {}
-
-/**
- * Gives up after `ms`.
- *
- * The request itself is abandoned rather than cancelled, because the Spec's
- * `DecisionModel.ask` takes no abort signal (docs/Known.md K10). The timer
- * is always cleared, so a fast answer never holds the process open.
- */
-async function within<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new NoAnswer(`no answer within ${ms} ms`)), ms)
-      }),
-    ])
-  } finally {
-    if (timer !== undefined) clearTimeout(timer)
-  }
-}
-
 /** One answered choice, as the parts routing needs from it. */
 interface Picked {
   choice: string
@@ -140,24 +117,12 @@ interface Picked {
   probabilities: Record<string, number>
 }
 
-function pickedFrom(answers: Record<string, unknown>, name: string): Picked {
-  const answer = answers[name]
-  if (answer === undefined) {
-    throw new NoAnswer(`no answer for ${name}`)
-  }
-  const typed = answer as {
-    type?: string
-    choice?: string
-    confidence?: number
-    probabilities?: Record<string, number>
-  }
-  if (typed.type !== "choice" || typeof typed.choice !== "string") {
-    throw new NoAnswer(`${name} was not answered with a choice`)
-  }
+function pickedFrom(answers: Record<string, Answer>, name: string): Picked {
+  const answer = answerOf(answers, name, "choice")
   return {
-    choice: typed.choice,
-    confidence: typed.confidence ?? 0,
-    probabilities: typed.probabilities ?? {},
+    choice: answer.choice,
+    confidence: answer.confidence,
+    probabilities: answer.probabilities,
   }
 }
 

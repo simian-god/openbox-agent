@@ -1,7 +1,7 @@
 // Turn v0 end to end: a message arrives, a person is created, the brain
 // runs its steps, and a reply goes out through the sender.
 import { test, expect, describe, beforeAll, beforeEach, afterEach } from "bun:test"
-import { scriptedDecisionModel, choice } from "../../src/testing/scripted-decision.ts"
+import { scriptedDecisionModel, choice, yesno } from "../../src/testing/scripted-decision.ts"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
@@ -20,6 +20,7 @@ import {
 } from "../../src/testing/scripted-brain.ts"
 import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
+import { GATE_QUESTION } from "../../src/runtime/gate.ts"
 
 // LOOP-2: nothing is handled until a worker runs, and a worker left running
 // keeps its poll timer alive after the test. Every agent built here is
@@ -119,6 +120,21 @@ const bookTable = defineTool({
   confirmSummary: (args) => `Table for ${args.size}`,
   examples: { should: ["book it"], shouldNot: ["just asking"] },
   handler: async () => ({ booked: true }),
+})
+
+/** A write tool: reversible, so the gate can let it run (GATE-2). */
+const updateBooking = defineTool({
+  name: "update_booking",
+  description: "Changes a booking that already exists.",
+  input: z.object({ size: z.number().int().min(1) }),
+  risk: "write",
+  roles: ["end_user"],
+  conditions: {
+    callWhen: ["The person has asked to change a booking they have"],
+    dontCallWhen: ["The person has no booking yet"],
+  },
+  examples: { should: ["make it six instead"], shouldNot: ["Hello"] },
+  handler: async (args) => ({ changed: true, size: args.size }),
 })
 
 describeDatabase("a turn", (sql) => {
@@ -310,12 +326,16 @@ describeDatabase("a turn", (sql) => {
     expect(offered).not.toContain("operator_report")
   })
 
-  test("LOOP-8: v0 offers read tools only, since the gate is not built", async () => {
+  test("LOOP-8: every risk level is offered, because the gate decides, not the exposure", async () => {
+    // This test was the opposite before T3.5: with no gate, a write or
+    // irreversible tool was simply never mentioned to the brain. A tool
+    // the brain cannot see is a tool the agent cannot use, so withholding
+    // them was only ever a stand in for the gate.
     const { agent, brain } = agentWith([{ reply: "hi" }], [checkAvailability, bookTable])
     await agent.receiveAndWait(hello())
 
     const offered = brain.calls[0]?.tools.map((tool) => tool.name) ?? []
-    expect(offered).toEqual(["check_availability"])
+    expect(offered).toEqual(["check_availability", "book_table"])
   })
 
   test("LOOP-7: the brain gets the prompt, the runtime block and the message", async () => {
@@ -677,6 +697,336 @@ describeDatabase("a turn", (sql) => {
       expect(decisions.calls).toHaveLength(0)
       expect(captured.filter(([name]) => name === "route_decided")).toHaveLength(0)
       expect(brain.calls[0]?.tools.map((tool) => tool.name)).toEqual(["check_availability"])
+    })
+  })
+
+  describe("GATE-1 to GATE-5: the gate on a real turn", () => {
+    /** An agent whose decision model answers the gate with one probability. */
+    function gated(
+      script: ScriptedStep[],
+      p: number | { throws: string },
+      tools: Tool[] = [checkAvailability, updateBooking],
+    ): { agent: Agent; brain: ScriptedBrain; captured: [string, Record<string, unknown>][] } {
+      const captured: [string, Record<string, unknown>][] = []
+      const brain = scriptedBrain(script)
+      // Two tools, so routing is not asked (ROUTE-1) and the only decision
+      // request a step makes is the gate's.
+      const decisions =
+        typeof p === "number"
+          ? scriptedDecisionModel([{ [GATE_QUESTION]: yesno(p) }])
+          : scriptedDecisionModel([p])
+      sender = fakeSender()
+      const agent = createAgent({
+        config: config(),
+        deps: {
+          brains: [brain],
+          decisionModel: decisions,
+          db: localSupabase(),
+          sender,
+          clock,
+          events: {
+            capture: (event, props) => {
+              captured.push([event, props])
+            },
+          },
+        },
+        prompt: PROMPT,
+        tools,
+      })
+      return { agent, brain, captured }
+    }
+
+    const change = { tool: "update_booking", input: { size: 6 } } as const
+
+    /** Six read tools, which is one more than routing's default minimum. */
+    const six = (): Tool[] =>
+      ["one", "two", "three", "four", "five", "six"].map((name) =>
+        defineTool({
+          name: `look_up_${name}`,
+          description: `Looks up ${name}.`,
+          input: z.object({}),
+          risk: "read",
+          roles: ["end_user"],
+          conditions: {
+            callWhen: [`the person asks about ${name}`],
+            dontCallWhen: [`the person is not asking about ${name}`],
+          },
+          examples: { should: [`about ${name}`], shouldNot: ["hello"] },
+          handler: async () => ({ found: name }),
+        }),
+      )
+
+    test("GATE-2: a write the gate passes runs, and the person gets the answer", async () => {
+      const { agent, brain, captured } = gated([change, { reply: "Changed to six." }], 0.9)
+      const result = await agent.receiveAndWait(hello())
+
+      expect(result.turn?.outcome).toBe("replied")
+      expect(result.turn?.toolsRun).toEqual([{ name: "update_booking", ok: true }])
+      expect(sender.texts()).toEqual(["Changed to six."])
+      // The handler really ran, and its result went back to the brain.
+      const back = brain.calls[1]?.messages.at(-1) as { result?: unknown }
+      expect(back.result).toEqual({ changed: true, size: 6 })
+      expect(captured.filter(([name]) => name === "gate_passed")).toHaveLength(1)
+    })
+
+    test("GATE-2: a write the gate blocks never reaches the handler", async () => {
+      const { agent, brain, captured } = gated(
+        [change, { reply: "Let me check that with someone." }],
+        0.1,
+      )
+      const result = await agent.receiveAndWait(hello())
+
+      // Nothing ran, and the person still got an answer.
+      expect(result.turn?.toolsRun).toEqual([])
+      expect(sender.texts()).toEqual(["Let me check that with someone."])
+
+      // The brain was told, and told enough to do something else.
+      const told = brain.calls[1]?.messages.at(-1) as { error?: string }
+      expect(told.error).toContain("blocked")
+      expect(told.error).toContain("Do not call it again")
+
+      const blocked = captured.filter(([name]) => name === "guard_block")
+      expect(blocked).toHaveLength(1)
+      expect(blocked[0]?.[1]["tool"]).toBe("update_booking")
+    })
+
+    test("GATE-2: a write in the Confirm band is not run either", async () => {
+      const { agent, brain } = gated([change, { reply: "Shall I change it to six?" }], 0.55)
+      const result = await agent.receiveAndWait(hello())
+
+      expect(result.turn?.toolsRun).toEqual([])
+      const told = brain.calls[1]?.messages.at(-1) as { error?: string }
+      expect(told.error).toContain("confirm")
+      // GATE-2 asks for the condition in doubt. One yes/no gives one
+      // number, so every condition is quoted (docs/Known.md K12).
+      expect(told.error).toContain("The person has asked to change a booking they have")
+    })
+
+    test("GATE-4: an irreversible call is not run on a confident yes", async () => {
+      // CONF-1's structured confirm is M4. Until it exists an irreversible
+      // call cannot run at all, which is the safe half of the rule.
+      const { agent, brain } = gated(
+        [{ tool: "book_table", input: { size: 4 } }, { reply: "I will confirm that with you." }],
+        1,
+        [checkAvailability, bookTable],
+      )
+      const result = await agent.receiveAndWait(hello())
+
+      expect(result.turn?.toolsRun).toEqual([])
+      const told = brain.calls[1]?.messages.at(-1) as { error?: string }
+      expect(told.error).toContain("cannot be undone")
+    })
+
+    test("GATE-4: a decision model that is down does not run the write", async () => {
+      const { agent, brain, captured } = gated(
+        [change, { reply: "Can you confirm that change?" }],
+        { throws: "the provider is down" },
+      )
+      const result = await agent.receiveAndWait(hello())
+
+      expect(result.turn?.toolsRun).toEqual([])
+      expect(result.turn?.outcome).toBe("replied")
+      const told = brain.calls[1]?.messages.at(-1) as { error?: string }
+      expect(told.error).toContain("confirm")
+
+      const confirmed = captured.filter(([name]) => name === "gate_confirm")
+      expect(confirmed[0]?.[1]["reason"]).toBe("failed_closed")
+    })
+
+    test("GATE-4 and ROUTE-5: one outage, routing open and the gate closed", async () => {
+      // The whole arrangement in one turn. Routing cannot reach the model,
+      // so the brain sees every tool, including the write. The gate cannot
+      // reach it either, so the write does not run.
+      const brain = scriptedBrain([change, { reply: "Can you confirm that?" }])
+      const down = scriptedDecisionModel([{ throws: "the provider is down" }])
+      sender = fakeSender()
+      const agent = createAgent({
+        config: config(),
+        deps: { brains: [brain], decisionModel: down, db: localSupabase(), sender, clock },
+        prompt: PROMPT,
+        tools: [...six(), updateBooking],
+      })
+
+      const result = await agent.receiveAndWait(hello())
+
+      expect(result.turn?.routed[0]?.reason).toBe("fallback")
+      expect(brain.calls[0]?.tools.map((tool) => tool.name)).toContain("update_booking")
+      expect(result.turn?.toolsRun).toEqual([])
+      expect(result.turn?.outcome).toBe("replied")
+    })
+
+    test("GATE-5: a read tool is never asked about", async () => {
+      const { agent } = gated(
+        [
+          { tool: "check_availability", input: { date: "2026-10-19", size: 2 } },
+          { reply: "Yes, we have space." },
+        ],
+        0,
+      )
+      const result = await agent.receiveAndWait(hello())
+
+      // A 0 from the decision model, and the read tool ran anyway.
+      expect(result.turn?.toolsRun).toEqual([{ name: "check_availability", ok: true }])
+      expect(await agent.store.decisions.count({ kind: "gate" })).toBe(0)
+    })
+
+    test("DATA-2: a tool run records the arguments the brain proposed", async () => {
+      // Known K6: this is what the event trace could not say, and what an
+      // evals assertion of the form "must call X with these arguments"
+      // needs from the core rather than from an adapter watching.
+      const { agent } = gated([change, { reply: "Done." }], 0.9)
+      await agent.receiveAndWait(hello())
+
+      const runs = await agent.store.toolRuns.list({}, { orderBy: "seq" })
+      expect(runs).toHaveLength(1)
+      expect(runs[0]).toMatchObject({
+        tool: "update_booking",
+        risk: "write",
+        status: "ok",
+        args: { size: 6 },
+        result: { changed: true, size: 6 },
+        step: 1,
+      })
+      expect(runs[0]?.turn_id).not.toBeNull()
+    })
+
+    test("DATA-2: a blocked call is a tool run too, because it happened", async () => {
+      const { agent } = gated([change, { reply: "I cannot do that yet." }], 0.1)
+      await agent.receiveAndWait(hello())
+
+      const runs = await agent.store.toolRuns.list({}, { orderBy: "seq" })
+      expect(runs[0]).toMatchObject({
+        tool: "update_booking",
+        status: "blocked",
+        args: { size: 6 },
+        result: null,
+      })
+      expect(runs[0]?.error).toContain("block")
+    })
+
+    test("DATA-2: every gate call is in the decisions table with what it answered", async () => {
+      const { agent } = gated([change, { reply: "Done." }], 0.9)
+      await agent.receiveAndWait(hello())
+
+      const decided = await agent.store.decisions.list({ kind: "gate" }, { orderBy: "seq" })
+      expect(decided).toHaveLength(1)
+      expect(decided[0]).toMatchObject({ kind: "gate", outcome: "pass", model: "scripted" })
+      expect(decided[0]?.answers).toMatchObject({ [GATE_QUESTION]: { type: "yesno", p: 0.9 } })
+    })
+
+    test("LEARN-1: a Block raises a gate_block flag", async () => {
+      const { agent, captured } = gated([change, { reply: "I cannot do that." }], 0.1)
+      await agent.receiveAndWait(hello())
+
+      const flags = await agent.store.flags.list({}, { orderBy: "seq" })
+      expect(flags).toHaveLength(1)
+      expect(flags[0]).toMatchObject({ kind: "gate_block" })
+      expect(flags[0]?.detail).toMatchObject({ tool: "update_booking", p: 0.1 })
+      expect(flags[0]?.reviewed_at).toBeNull()
+      // And it is in the trace as well, so a run reads without a join.
+      expect(captured.filter(([name]) => name === "flag_raised")).toHaveLength(1)
+    })
+
+    test("LEARN-1: a Confirm is not a flag, because asking is the system working", async () => {
+      const { agent } = gated([change, { reply: "Shall I?" }], 0.55)
+      await agent.receiveAndWait(hello())
+
+      expect(await agent.store.flags.count()).toBe(0)
+    })
+
+    test("GATE-3: two Blocks in a row for the same person is a handover trigger", async () => {
+      // Across turns, not within one: the Spec says for the same person,
+      // and a person refused twice has been failed twice whether or not it
+      // happened in one breath.
+      const { agent } = gated(
+        [change, { reply: "I cannot." }, change, { reply: "I still cannot." }],
+        0.1,
+      )
+
+      const first = await agent.receiveAndWait(hello())
+      expect(first.turn?.handoverDue).toEqual([])
+
+      const second = await agent.receiveAndWait(hello({ channelMessageId: "msg-2" }))
+      expect(second.turn?.handoverDue).toEqual(["gate_block_repeat"])
+    })
+
+    test("GATE-3: a call that passed in between breaks the run", async () => {
+      const brain = scriptedBrain([
+        change,
+        { reply: "no" },
+        change,
+        { reply: "yes" },
+        change,
+        { reply: "no again" },
+      ])
+      // Block, then pass, then block.
+      const decisions = scriptedDecisionModel([
+        { [GATE_QUESTION]: yesno(0.1) },
+        { [GATE_QUESTION]: yesno(0.9) },
+        { [GATE_QUESTION]: yesno(0.1) },
+      ])
+      sender = fakeSender()
+      const agent = createAgent({
+        config: config(),
+        deps: { brains: [brain], decisionModel: decisions, db: localSupabase(), sender, clock },
+        prompt: PROMPT,
+        tools: [checkAvailability, updateBooking],
+      })
+
+      await agent.receiveAndWait(hello())
+      await agent.receiveAndWait(hello({ channelMessageId: "msg-2" }))
+      const third = await agent.receiveAndWait(hello({ channelMessageId: "msg-3" }))
+
+      expect(third.turn?.handoverDue).toEqual([])
+    })
+
+    test("GATE-3: two routing picks below the threshold in a row is the other trigger", async () => {
+      // Six tools, so routing runs, and a spread with nothing much behind
+      // the winner, so the pick is below the 0.6 threshold.
+      const brain = scriptedBrain([{ reply: "one" }, { reply: "two" }])
+      const unsure = scriptedDecisionModel([
+        { tool: choice("look_up_one", { look_up_one: 0.3, look_up_two: 0.3, no_tool: 0.4 }, 0.3) },
+      ])
+      sender = fakeSender()
+      const agent = createAgent({
+        config: config(),
+        deps: { brains: [brain], decisionModel: unsure, db: localSupabase(), sender, clock },
+        prompt: PROMPT,
+        tools: six(),
+      })
+
+      const first = await agent.receiveAndWait(hello())
+      expect(first.turn?.routed[0]?.reason).toBe("below_threshold")
+      expect(first.turn?.handoverDue).toEqual([])
+
+      const second = await agent.receiveAndWait(hello({ channelMessageId: "msg-2" }))
+      expect(second.turn?.handoverDue).toEqual(["low_confidence_repeat"])
+
+      // LEARN-1: and each of them raised a low_confidence flag.
+      const flags = await agent.store.flags.list({}, { orderBy: "seq" })
+      expect(flags.map((flag) => flag.kind)).toEqual(["low_confidence", "low_confidence"])
+      expect(flags[0]?.detail).toMatchObject({ choice: "look_up_one", threshold: 0.6 })
+    })
+
+    test("DATA-2: a routing decision is recorded whatever it decided", async () => {
+      const brain = scriptedBrain([{ reply: "hi" }])
+      const sure = scriptedDecisionModel([
+        { tool: choice("look_up_one", { look_up_one: 0.95, no_tool: 0.05 }) },
+      ])
+      sender = fakeSender()
+      const agent = createAgent({
+        config: config(),
+        deps: { brains: [brain], decisionModel: sure, db: localSupabase(), sender, clock },
+        prompt: PROMPT,
+        tools: six(),
+      })
+
+      await agent.receiveAndWait(hello())
+
+      const decided = await agent.store.decisions.list({ kind: "route" }, { orderBy: "seq" })
+      expect(decided).toHaveLength(1)
+      expect(decided[0]).toMatchObject({ outcome: "top_pick", step: 1 })
+      expect(decided[0]?.answers).toMatchObject({ tool: { choice: "look_up_one" } })
     })
   })
 

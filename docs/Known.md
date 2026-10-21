@@ -123,32 +123,14 @@ and T11.5, which publishes.
 
 ---
 
-## K6. A tool's arguments are not in the event trace
-
-**Status:** open. Closed at T3.5.
-
-**What happens.** EVT-2's `tool_ran` records that a tool ran, its risk, whether
-it succeeded and how long it took. It does not record what the tool was given.
-DATA-2's `tool_runs` table holds the arguments and the result, and it is parked
-at T3.5.
-
-**What it costs.** An evals-agent assertion of the form `must_call X with {...}`
-cannot be checked from the core's own events. An adapter can record the call
-itself, which is what the M1 check's adapter does, but that is the adapter
-watching rather than the core reporting.
-
-**What would resolve it.** T3.5, which builds `tool_runs` alongside the gate.
-
----
-
 ## K7. C13 asks for a timed out send to be flagged, and flags do not exist
 
 **Status:** open. Closed at M9, or by a Spec change.
 
 **What happens.** C13's last clause says a send whose outcome is unknown is
-flagged. SEND-2 records it as a `send_unknown` event, which is not a flag. The
-`flags` table and LEARN-1's list of flag kinds arrive in M9, and that list has no
-kind for an unknown send.
+flagged. SEND-2 records it as a `send_unknown` event, which is not a flag. T3.5
+built the `flags` table, so the table is no longer what is missing: LEARN-1's
+list of kinds has no kind for an unknown send, and the outbox raises no flag.
 
 **What it costs.** The M2 check cannot claim C13 in full. It was noted on T2.5
 rather than quietly passed.
@@ -244,21 +226,59 @@ and worth doing at the same time as K3, which is the same gap on the brain.
 
 ## K11. Both repositories share one local database, so their suites collide
 
-**Status:** open, avoided by not running them at once.
+**Status:** open, avoided by not running them at once, and by rerunning after
+an evals-agent run.
 
 **What happens.** openbox's integration tests and evals-agent's Postgres world
 both use the database that `bun run db:up` starts, and both empty it between
 files or cases. Run them at the same time and whichever is slower sees its rows
 disappear underneath it.
 
+It is not only about running them at once. evals-agent's Postgres world is
+disposable: it rebuilds the schema for a case, which leaves the shared database
+without the migration rows openbox's `migrate` expects. So the openbox run
+*after* an evals-agent run fails too, in `migrate` rather than in an assertion.
+That run reapplies the migrations as it goes, so the run after that is green.
+
 **What it costs.** It has produced a batch of failures that look like real bugs
-twice, once at T3.1 and once at T3.4. Both times a clean rerun was green, which
-is the tell.
+three times: T3.1, T3.4, and T3.5, where the trigger was a sequential
+evals-agent subject check rather than a concurrent one. Every time, a clean
+rerun was green, which is the tell.
 
 **What we did.** Nothing in code. A failure batch that includes several
-unrelated integration files, and passes on a rerun, is this.
+unrelated integration files, or a `migrate` error, and passes on a rerun, is
+this. Run `bun run check` twice after touching evals-agent and believe the
+second one.
 
 **What would resolve it.** evals-agent already has `EVALS_WORLD=sqlite`, which
 needs no database at all, and a disposable Postgres on its own port. Pointing
 evals-agent at a second database by default would close it properly, and that
 belongs in evals-agent rather than here.
+
+---
+
+## K12. The gate cannot say which condition it doubted
+
+**Status:** open by design. Resolved by a Spec change, or by asking per
+condition.
+
+**What happens.** GATE-2 says a Confirm tells the brain the call needs the
+person's confirmation, "quoting the condition in doubt". GATE-1 asks one yes/no
+question, and it comes back as one probability about all of the conditions at
+once. Nothing in that number says which condition the model doubted, so the
+brain is given every condition the call was judged against instead.
+
+**What it costs.** A list makes a less pointed message than one quoted line
+would. The brain still has what it needs to ask the person the right question,
+but it has to work out which part is missing, which is the bit a quoted
+condition would have done for it.
+
+**What we did.** Quoted all of them, and said so where it happens. Quoting one
+would mean guessing, and a guess presented as the reason a call was stopped is
+worse than a list.
+
+**What would resolve it.** Either GATE-1 asks one yes/no per condition, all in
+one request, which DM-2 allows: that costs more tokens on every gated call and
+gives a per condition answer. Or GATE-2 is reworded to ask for the conditions
+rather than the condition. The first is a real option and is a builder's
+decision, since it trades money for a better message.

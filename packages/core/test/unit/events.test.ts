@@ -13,6 +13,7 @@ import {
   type EventStore,
 } from "../../src/runtime/events.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
+import { FLAG_KINDS, type FlagKind } from "../../src/store/tables.ts"
 
 const SPEC = readFileSync(join(import.meta.dir, "..", "..", "..", "..", "docs", "Spec.md"), "utf8")
 
@@ -40,10 +41,26 @@ function namesInSpec(markdown: string): string[] {
 /** A store that records what was written, or refuses to write at all. */
 function fakeStore(options: { fail?: boolean } = {}): EventStore & {
   rows: Record<string, unknown>[]
+  written: Record<string, Record<string, unknown>[]>
 } {
   const rows: Record<string, unknown>[] = []
+  const written: Record<string, Record<string, unknown>[]> = {
+    ob_tool_runs: [],
+    ob_decisions: [],
+    ob_flags: [],
+  }
+
+  const table = (name: string) => ({
+    insert: async (row: Record<string, unknown>) => {
+      if (options.fail === true) throw new Error("no database")
+      written[name]?.push(row)
+      return { id: `${name}-${String(written[name]?.length)}` }
+    },
+  })
+
   return {
     rows,
+    written,
     events: {
       insert: async (row) => {
         if (options.fail === true) throw new Error("no database")
@@ -51,7 +68,39 @@ function fakeStore(options: { fail?: boolean } = {}): EventStore & {
         return { id: `e${rows.length}` }
       },
     },
+    toolRuns: table("ob_tool_runs"),
+    flags: table("ob_flags"),
+    decisions: {
+      ...table("ob_decisions"),
+      // Newest first, as the real store is asked for them.
+      list: async (where, listOptions = {}) => {
+        if (options.fail === true) throw new Error("no database")
+        const matching = (written["ob_decisions"] ?? []).filter((row) =>
+          Object.entries(where).every(([column, value]) => row[column] === value),
+        )
+        const ordered = [...matching].reverse()
+        return ordered.slice(0, listOptions.limit ?? ordered.length) as { outcome: string }[]
+      },
+    },
   }
+}
+
+/** The kinds in LEARN-1's table, read out of the Spec. */
+function flagKindsInSpec(markdown: string): string[] {
+  const from = markdown.indexOf("**LEARN-1.**")
+  if (from === -1) throw new Error("LEARN-1 is not in the Spec")
+  const after = markdown.indexOf("**LEARN-2.**", from)
+  const block = markdown.slice(from, after === -1 ? undefined : after)
+
+  const found: string[] = []
+  for (const line of block.split("\n")) {
+    if (!line.startsWith("|")) continue
+    const first = line.split("|").slice(1, -1)[0]
+    if (first === undefined) continue
+    const match = /`([a-z_]+)`/.exec(first)
+    if (match?.[1] !== undefined) found.push(match[1])
+  }
+  return found
 }
 
 /** A sink that records, or one that throws, like a bad analytics library. */
@@ -216,11 +265,238 @@ describe("a failure to record never reaches the person", () => {
   })
 })
 
+describe("LEARN-1: the flag kinds", () => {
+  test("LEARN-1: every kind in the Spec's table exists in the code", () => {
+    const missing = flagKindsInSpec(SPEC).filter((kind) => !FLAG_KINDS.includes(kind as FlagKind))
+    expect(missing).toEqual([])
+  })
+
+  test("LEARN-1: the code invents no kind the Spec does not list", () => {
+    const inSpec = new Set(flagKindsInSpec(SPEC))
+    expect(FLAG_KINDS.filter((kind) => !inSpec.has(kind))).toEqual([])
+  })
+
+  test("LEARN-1: the migration accepts exactly those kinds and no others", () => {
+    // A kind the type allows and the check constraint refuses would be a
+    // flag that is raised in a test and lost in production.
+    const sql = readFileSync(
+      join(import.meta.dir, "..", "..", "migrations", "0007_gate.sql"),
+      "utf8",
+    )
+    const allowed = [...sql.matchAll(/'([a-z_]+)'/g)]
+      .map((match) => match[1])
+      .filter((kind): kind is FlagKind => FLAG_KINDS.includes(kind as FlagKind))
+
+    expect([...new Set(allowed)].sort()).toEqual([...FLAG_KINDS].sort())
+  })
+})
+
+describe("DATA-2: the three tables the trace also writes", () => {
+  const clock = fixedClock("2026-10-19T06:00:00Z")
+
+  const writer = (store: ReturnType<typeof fakeStore>) =>
+    createEvents({ store, clock }).about({ personId: "p1", turnId: "t1" })
+
+  test("DATA-2: a tool run records what the tool was given", async () => {
+    // Known K6: this is the one thing the event trace could not say.
+    const store = fakeStore()
+    await writer(store).toolRun({
+      tool: "book_table",
+      risk: "write",
+      status: "ok",
+      args: { size: 4, date: "2026-10-19" },
+      result: { booked: true },
+      step: 2,
+      durationMs: 12,
+    })
+
+    expect(store.written["ob_tool_runs"]?.[0]).toMatchObject({
+      person_id: "p1",
+      turn_id: "t1",
+      step: 2,
+      tool: "book_table",
+      risk: "write",
+      args: { size: 4, date: "2026-10-19" },
+      result: { booked: true },
+      status: "ok",
+      duration_ms: 12,
+    })
+  })
+
+  test("DATA-2: a result JSON cannot carry does not lose the arguments with it", async () => {
+    const store = fakeStore()
+    const cycle: Record<string, unknown> = { name: "loop" }
+    cycle["self"] = cycle
+
+    await writer(store).toolRun({
+      tool: "book_table",
+      risk: "write",
+      status: "ok",
+      args: { size: 4 },
+      result: cycle,
+      step: 1,
+      durationMs: 0,
+    })
+
+    const row = store.written["ob_tool_runs"]?.[0]
+    expect(row?.["args"]).toEqual({ size: 4 })
+    expect(row?.["result"]).toEqual({ unrecorded: "this value could not be written as JSON" })
+  })
+
+  test("DATA-2: a decision records the outcome, the model and what it cost", async () => {
+    const store = fakeStore()
+    await writer(store).decision({
+      kind: "gate",
+      outcome: "block",
+      answers: { gate: { type: "yesno", p: 0.1 } },
+      model: "jev",
+      step: 1,
+      durationMs: 40,
+      costUsd: 0.00004,
+    })
+
+    expect(store.written["ob_decisions"]?.[0]).toMatchObject({
+      kind: "gate",
+      outcome: "block",
+      model: "jev",
+      step: 1,
+      duration_ms: 40,
+      cost_usd: 0.00004,
+    })
+  })
+
+  test("GATE-3: the same outcome twice in a row for one person is reported", async () => {
+    const store = fakeStore()
+    const events = writer(store)
+    const block = {
+      kind: "gate",
+      outcome: "block",
+      model: "jev",
+      durationMs: 0,
+      costUsd: 0,
+    } as const
+
+    expect((await events.decision(block)).repeated).toBe(false)
+    expect((await events.decision(block)).repeated).toBe(true)
+  })
+
+  test("GATE-3: a different outcome in between breaks the run", async () => {
+    const store = fakeStore()
+    const events = writer(store)
+    const gate = (outcome: string) =>
+      ({ kind: "gate", outcome, model: "jev", durationMs: 0, costUsd: 0 }) as const
+
+    await events.decision(gate("block"))
+    expect((await events.decision(gate("pass"))).repeated).toBe(false)
+    expect((await events.decision(gate("block"))).repeated).toBe(false)
+  })
+
+  test("GATE-3: another person's blocks are not this person's", async () => {
+    const store = fakeStore()
+    const base = createEvents({ store, clock })
+    const block = {
+      kind: "gate",
+      outcome: "block",
+      model: "jev",
+      durationMs: 0,
+      costUsd: 0,
+    } as const
+
+    await base.about({ personId: "p1" }).decision(block)
+    expect((await base.about({ personId: "p2" }).decision(block)).repeated).toBe(false)
+  })
+
+  test("GATE-3: routing and the gate are counted apart", async () => {
+    // A block and a low confidence pick are two different triggers, so one
+    // of each is not two of either.
+    const store = fakeStore()
+    const events = writer(store)
+
+    await events.decision({
+      kind: "gate",
+      outcome: "block",
+      model: "jev",
+      durationMs: 0,
+      costUsd: 0,
+    })
+    const routed = await events.decision({
+      kind: "route",
+      outcome: "block",
+      model: "jev",
+      durationMs: 0,
+      costUsd: 0,
+    })
+
+    expect(routed.repeated).toBe(false)
+  })
+
+  test("LEARN-1: a flag is a row and an event, so neither has to be joined", async () => {
+    const store = fakeStore()
+    await writer(store).flag("gate_block", { tool: "book_table", p: 0.1 })
+
+    expect(store.written["ob_flags"]?.[0]).toMatchObject({
+      person_id: "p1",
+      turn_id: "t1",
+      kind: "gate_block",
+      detail: { tool: "book_table", p: 0.1 },
+    })
+    expect(store.rows[0]).toMatchObject({ name: "flag_raised" })
+    expect(store.rows[0]?.["props"]).toMatchObject({ kind: "gate_block", tool: "book_table" })
+  })
+
+  test("a row that cannot be written is a failure, not a thrown error", async () => {
+    const store = fakeStore({ fail: true })
+    const events = writer(store)
+
+    await events.toolRun({
+      tool: "book_table",
+      risk: "write",
+      status: "ok",
+      args: {},
+      step: 1,
+      durationMs: 0,
+    })
+    await events.flag("gate_block")
+    const decided = await events.decision({
+      kind: "gate",
+      outcome: "block",
+      model: "jev",
+      durationMs: 0,
+      costUsd: 0,
+    })
+
+    // The turn carries on, and the count nobody could write is not claimed.
+    expect(decided.repeated).toBe(false)
+    expect(events.failures.map((failure) => failure.name)).toContain("ob_tool_runs")
+    expect(events.failures.map((failure) => failure.name)).toContain("ob_flags")
+  })
+})
+
 describe("noEvents", () => {
   test("it records nothing and never fails", async () => {
     const events = noEvents()
     await events.record("turn_started", { a: 1 })
     await events.about({ personId: "p1" }).record("turn_ended")
+    await events.toolRun({
+      tool: "x",
+      risk: "read",
+      status: "ok",
+      args: {},
+      step: 1,
+      durationMs: 0,
+    })
+    await events.flag("gate_block")
+    expect(
+      (
+        await events.decision({
+          kind: "gate",
+          outcome: "block",
+          model: "none",
+          durationMs: 0,
+          costUsd: 0,
+        })
+      ).repeated,
+    ).toBe(false)
     expect(events.failures).toEqual([])
   })
 })

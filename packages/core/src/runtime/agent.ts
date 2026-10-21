@@ -624,6 +624,7 @@ export function createAgent(options: AgentOptions): Agent {
       costUsd: 0,
       brainsUsed: [],
       routed: [],
+      handoverDue: [],
       toolsRun: [],
       outcome: "failed",
       error: message,

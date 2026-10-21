@@ -19,3 +19,18 @@ export {
   type RouteDecision,
   type RoutingState,
 } from "./routing.ts"
+export {
+  gate,
+  gateQuestion,
+  gateState,
+  bandFor,
+  isGated,
+  DEFAULT_BANDS,
+  GATE_QUESTION,
+  GATE_INSTRUCTIONS,
+  type Band,
+  type GateOptions,
+  type GateDecision,
+  type GateState,
+  type GateConversation,
+} from "./gate.ts"

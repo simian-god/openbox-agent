@@ -1,10 +1,14 @@
 // LOOP-8: the step loop.
 //
-// Steps 1 and 2 are routing (ROUTE-1 to ROUTE-5). The gate, confirmation,
-// handover and the built in tools are not here yet, so only read tools are
-// exposed and a write or irreversible tool is simply not offered. The
-// order of the steps is the order the Spec gives, so the later milestones
-// slot in rather than rearrange.
+// Steps 1 and 2 are routing (ROUTE-1 to ROUTE-5), step 9 is the gate
+// (GATE-1 to GATE-5). Confirmation, handover and the built in tools are
+// not here yet. The order of the steps is the order the Spec gives, so the
+// later milestones slot in rather than rearrange.
+//
+// Every call a step makes is written down whatever becomes of it: a row in
+// `ob_tool_runs` with the arguments the brain proposed, and a row in
+// `ob_decisions` for each decision model call. Being blocked by the gate
+// is as much a thing that happened as running.
 import type { OpenboxConfig } from "../config/index.ts"
 import type { Brain, BrainMessage } from "../providers/brains/types.ts"
 import { BrainError } from "../providers/brains/types.ts"
@@ -14,7 +18,8 @@ import type { Clock } from "../testing/clock.ts"
 import { buildMessages, buildRuntimeBlock, buildSystem } from "./context.ts"
 import type { MessageRow } from "../store/index.ts"
 import { noEvents, type EventWriter } from "./events.ts"
-import { route, type RoutingState } from "./routing.ts"
+import { route, ROUTING_QUESTION, type RoutingState } from "./routing.ts"
+import { gate, type GateConversation } from "./gate.ts"
 import type { DecisionModel } from "../providers/decision/types.ts"
 
 export interface TurnInput {
@@ -54,6 +59,13 @@ export interface TurnResult {
   /** One entry per step: what routing decided, for the trace and tests. */
   routed: { step: number; reason: string; choice?: string | undefined }[]
   /**
+   * GATE-3: a trigger this turn noticed, in the order it noticed them.
+   * Two Blocks in a row, or two routing picks below the threshold in a
+   * row, for the same person. Opening the handover is T6.2, so for now the
+   * turn reports the trigger and nothing acts on it.
+   */
+  handoverDue: HandoverTrigger[]
+  /**
    * `failed` is not produced here. `createAgent` uses it for a turn that
    * ended in a way the core did not plan for, so a caller of
    * `receiveAndWait` gets a result rather than a rejection.
@@ -62,6 +74,9 @@ export interface TurnResult {
   /** Set only when the outcome is `failed`. */
   error?: string | undefined
 }
+
+/** GATE-3's two triggers, named so a later milestone can act on them. */
+export type HandoverTrigger = "gate_block_repeat" | "low_confidence_repeat"
 
 /** LOOP-8 step 5: the brain called something it was not offered. */
 function unknownToolResult(name: string, offered: Tool[]): string {
@@ -86,27 +101,42 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
 
   const system = buildSystem(prompt, buildRuntimeBlock({ config, person, now: clock.now() }))
 
-  // ROLE-3 removes what this role may not use. v0 offers only read tools,
-  // because write and irreversible calls must pass the gate, which is M3.
-  const allowed = tools.forRole(person.role).filter((tool) => tool.risk === "read")
+  // ROLE-3 removes what this role may not use. Everything left is offered,
+  // whatever its risk: a write or irreversible call is held back by the
+  // gate at step 9, not by never being mentioned. A tool the brain cannot
+  // see is a tool the agent cannot use, and the gate is the thing that
+  // decides whether a call runs.
+  const allowed = tools.forRole(person.role)
 
-  // ROUTE-1: the state routing reasons over. The last 6 messages, the
-  // batch, and the active task, which arrives with tasks in M4.
-  const routingState = (): RoutingState => ({
-    messages: messages
+  /** The last 6 messages, which both routing and the gate reason over. */
+  const recent = (): { role: string; text: string }[] =>
+    messages
       .filter((message) => message.role === "person" || message.role === "agent")
       .slice(-6)
       .map((message) => ({
         role: message.role,
         text: "text" in message ? message.text : "",
-      })),
+      }))
+
+  // ROUTE-1: the state routing reasons over. The last 6 messages, the
+  // batch, and the active task, which arrives with tasks in M4.
+  const routingState = (): RoutingState => ({
+    messages: recent(),
     batch,
+    activeTask: null,
+  })
+
+  // GATE-1: the same window, without the batch, which is already the last
+  // of those messages.
+  const gateConversation = (): GateConversation => ({
+    messages: recent(),
     activeTask: null,
   })
 
   const brainsUsed: string[] = []
   const toolsRun: { name: string; ok: boolean }[] = []
   const routed: TurnResult["routed"] = []
+  const handoverDue: HandoverTrigger[] = []
   let costUsd = 0
   let steps = 0
 
@@ -116,6 +146,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     // Steps 1 and 2: routing decides which tools this step offers. It runs
     // on every step (ROUTE-3), so after one tool's result the next step
     // can route somewhere else.
+    const routedAt = clock.now().getTime()
     const routing = await route({
       decisionModel,
       tools: allowed,
@@ -141,6 +172,45 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         ...(routing.choice !== undefined ? { choice: routing.choice } : {}),
         ...(routing.confidence !== undefined ? { confidence: routing.confidence } : {}),
       })
+
+      // DATA-2: the decision itself, so a threshold can be tuned against
+      // what the model actually said (LEARN-5), and so GATE-3 has
+      // something to count.
+      const recorded = await events.decision({
+        kind: "route",
+        outcome: routing.reason,
+        answers:
+          routing.choice === undefined
+            ? {}
+            : {
+                [ROUTING_QUESTION]: {
+                  type: "choice",
+                  choice: routing.choice,
+                  confidence: routing.confidence,
+                  probabilities: routing.probabilities,
+                },
+              },
+        model: decisionModel.id,
+        step: steps,
+        durationMs: clock.now().getTime() - routedAt,
+        costUsd: routing.costUsd,
+      })
+
+      // LEARN-1: a pick the model was not sure about is worth a builder's
+      // attention, because it is usually a conditions problem rather than
+      // a model problem. A fallback is not flagged here: there was no pick
+      // to be unsure about, and `fallback_used` already says the model was
+      // unreachable.
+      if (routing.reason === "below_threshold") {
+        await events.flag("low_confidence", {
+          step: steps,
+          threshold: config.decisionModel.routeThreshold,
+          ...(routing.choice !== undefined ? { choice: routing.choice } : {}),
+          ...(routing.confidence !== undefined ? { confidence: routing.confidence } : {}),
+        })
+        // GATE-3: twice in a row for the same person.
+        if (recorded.repeated) handoverDue.push("low_confidence_repeat")
+      }
     }
 
     if (routing.reason === "fallback") {
@@ -192,7 +262,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       // LOOP-12 proper, with its holding message, is T2.x. Here the turn
       // simply ends and says so, rather than pretending it replied.
       void lastError
-      return { steps, costUsd, brainsUsed, toolsRun, routed, outcome: "brains_failed" }
+      return { steps, costUsd, brainsUsed, toolsRun, routed, handoverDue, outcome: "brains_failed" }
     }
 
     costUsd += output.usage.costUsd ?? 0
@@ -202,8 +272,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     if (call === undefined) {
       const reply = output.text?.trim()
       return reply === undefined || reply === ""
-        ? { steps, costUsd, brainsUsed, toolsRun, routed, outcome: "no_reply" }
-        : { reply, steps, costUsd, brainsUsed, toolsRun, routed, outcome: "replied" }
+        ? { steps, costUsd, brainsUsed, toolsRun, routed, handoverDue, outcome: "no_reply" }
+        : { reply, steps, costUsd, brainsUsed, toolsRun, routed, handoverDue, outcome: "replied" }
     }
 
     messages.push({ role: "tool_call", id: call.id, name: call.name, input: call.input })
@@ -244,12 +314,103 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         ran: false,
         error,
       })
+      // The arguments are recorded as the brain sent them, unvalidated,
+      // which is the only form they exist in. A review of a tool nobody
+      // can call correctly needs to see what was actually tried.
+      await events.toolRun({
+        tool: tool.name,
+        risk: tool.risk,
+        status: "error",
+        args: call.input,
+        error,
+        step: steps,
+        durationMs: 0,
+      })
 
       messages.push({ role: "tool_result", id: call.id, name: call.name, result: null, error })
       continue
     }
 
-    // Step 8: a read tool runs straight away.
+    // Step 9: a write or an irreversible call goes through the gate. A
+    // read tool comes straight back as `not_gated` (GATE-5), without a
+    // request being made, so reading costs nothing and cannot be stopped
+    // by a decision model being down.
+    const gatedAt = clock.now().getTime()
+    const decision = await gate({
+      decisionModel,
+      tool,
+      args: parsed.data,
+      conversation: gateConversation(),
+      bands: config.decisionModel.gateBands,
+      timeoutMs: config.decisionTimeoutMs,
+    })
+    const gateMs = clock.now().getTime() - gatedAt
+    costUsd += decision.costUsd
+
+    if (decision.reason !== "not_gated") {
+      const recorded = await events.decision({
+        kind: "gate",
+        outcome: decision.reason,
+        answers: decision.answers ?? {},
+        model: decisionModel.id,
+        step: steps,
+        durationMs: gateMs,
+        costUsd: decision.costUsd,
+      })
+
+      const props = {
+        tool: tool.name,
+        risk: tool.risk,
+        step: steps,
+        reason: decision.reason,
+        ...(decision.p !== undefined ? { p: decision.p } : {}),
+        ...(decision.band !== undefined ? { band: decision.band } : {}),
+        ...(decision.error !== undefined ? { error: decision.error } : {}),
+      }
+
+      // EVT-2's three names for the three things the gate can decide.
+      // `guard_block` rather than `gate_block`, to match the effect kind
+      // evals-agent already records.
+      if (decision.outcome === "run") await events.record("gate_passed", props)
+      else if (decision.outcome === "confirm") await events.record("gate_confirm", props)
+      else await events.record("guard_block", props)
+
+      if (decision.outcome === "block") {
+        await events.flag("gate_block", props)
+        // GATE-3: two Blocks in a row for the same person.
+        if (recorded.repeated) handoverDue.push("gate_block_repeat")
+      }
+    }
+
+    if (decision.outcome !== "run") {
+      // GATE-2: not run. The brain is told, and told what to do instead,
+      // because a tool result that only says no leaves it guessing.
+      const told = decision.message ?? `${tool.name} did not run.`
+      await events.toolRun({
+        tool: tool.name,
+        risk: tool.risk,
+        status: decision.outcome === "block" ? "blocked" : "needs_confirmation",
+        args: parsed.data,
+        error:
+          decision.error !== undefined
+            ? `the gate could not be answered: ${decision.error}`
+            : `the gate said ${decision.reason}: p ${String(decision.p)}, bands pass ${String(
+                decision.band?.pass,
+              )} confirm ${String(decision.band?.confirm)}`,
+        step: steps,
+        durationMs: gateMs,
+      })
+      messages.push({
+        role: "tool_result",
+        id: call.id,
+        name: tool.name,
+        result: null,
+        error: told,
+      })
+      continue
+    }
+
+    // Step 8: a read tool runs straight away. So does a write that passed.
     const ctx: ToolContext = {
       clock,
       person: {
@@ -268,27 +429,47 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     try {
       const result = await tool.handler(parsed.data, ctx)
       toolsRun.push({ name: tool.name, ok: true })
+      const durationMs = clock.now().getTime() - ranAt
       await events.record("tool_ran", {
         tool: tool.name,
         risk: tool.risk,
         step: steps,
         ok: true,
         ran: true,
-        durationMs: clock.now().getTime() - ranAt,
+        durationMs,
+      })
+      await events.toolRun({
+        tool: tool.name,
+        risk: tool.risk,
+        status: "ok",
+        args: parsed.data,
+        result,
+        step: steps,
+        durationMs,
       })
       messages.push({ role: "tool_result", id: call.id, name: tool.name, result })
     } catch (error) {
       // LOOP-10: a thrown error goes back to the brain as an error result.
       const message = error instanceof Error ? error.message : String(error)
       toolsRun.push({ name: tool.name, ok: false })
+      const durationMs = clock.now().getTime() - ranAt
       await events.record("tool_ran", {
         tool: tool.name,
         risk: tool.risk,
         step: steps,
         ok: false,
         ran: true,
-        durationMs: clock.now().getTime() - ranAt,
+        durationMs,
         error: message,
+      })
+      await events.toolRun({
+        tool: tool.name,
+        risk: tool.risk,
+        status: "error",
+        args: parsed.data,
+        error: message,
+        step: steps,
+        durationMs,
       })
       messages.push({
         role: "tool_result",
@@ -302,5 +483,5 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
 
   // LOOP-9's fixed reply, flag and operator alert are M7. v0 reports it.
   void turnId
-  return { steps, costUsd, brainsUsed, toolsRun, routed, outcome: "step_cap" }
+  return { steps, costUsd, brainsUsed, toolsRun, routed, handoverDue, outcome: "step_cap" }
 }

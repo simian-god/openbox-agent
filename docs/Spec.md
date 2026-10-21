@@ -279,8 +279,8 @@ type Outbound = {
 | `facts` | key and value per person. Unique on (agent_id, person_id, key). |
 | `tasks` | type, fields, missing, status (`open`, `active`, `done`, `cancelled`, `expired`), expires_at. |
 | `pending_actions` | tool, args, args_hash, summary, code, status (`pending`, `confirmed`, `executed`, `failed`, `cancelled`, `expired`), expires_at, task_id. |
-| `tool_runs` | tool, args, result, status (`ok`, `error`, `blocked`, `needs_confirmation`, `pending`), duration. |
-| `decisions` | Every decision model call: kind (`route`, `gate`, `frustration`, `wants_human`), answers, model, duration, cost. |
+| `tool_runs` | tool, args, result, status (`ok`, `error`, `blocked`, `needs_confirmation`, `pending`), the step it ran on, duration. |
+| `decisions` | Every decision model call: kind (`route`, `gate`, `frustration`, `wants_human`), the outcome the core reached from it, answers, model, the step, duration, cost. |
 | `outbox` | Every outgoing message: payload, kind (`reply`, `proactive`, `operator_alert`, `confirm`), status (`queued`, `sending`, `sent`, `failed`, `unknown`), attempts, idempotency_key (unique), not_before, urgent. |
 | `jobs` | kind, run_at, payload, status, lease, attempts, dedupe_key (unique). |
 | `handovers` | person, status (`waiting`, `active`, `closed`, `unanswered`), reason, operator, timestamps. |
