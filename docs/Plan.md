@@ -206,7 +206,7 @@ Each task lists the Spec IDs it implements. **Done when** is the bar for closing
 | Task | What | Spec |
 |---|---|---|
 | T6.1 | Operator role, `openbox operator add`, role filtering, blocking, operator tools | ROLE-2 to ROLE-4, built in tools table |
-| T6.2 | Handover states and every trigger: `escalate`, `wants_human`, repeat rules | HAND-1 to HAND-3, GATE-3, LOOP-10 |
+| T6.2 | Handover states and every trigger: `escalate`, `wants_human`, repeat rules | HAND-1 to HAND-3, GATE-3, LOOP-10 (the repeat rule; its timeout is T7.6) |
 | T6.3 | Operator focus, word for word relay, `/` commands | HAND-4, HAND-5 |
 | T6.4 | Waiting and idle timeouts as jobs | HAND-6, HAND-7 |
 | T6.5 | Knowledge candidates from operator answers | HAND-8 |
@@ -222,8 +222,9 @@ Each task lists the Spec IDs it implements. **Done when** is the bar for closing
 | T7.3 | Rate limit, step cap, spend tracking with the pricing table, the spend cap triggering handover | LIMIT-1 to LIMIT-3, LOOP-9 |
 | T7.4 | Sarvam and OpenAI transcribers, language detection | LOOP-6, MEDIA-1, MEDIA-3 |
 | T7.5 | Images and `sendFile` | MEDIA-2, MEDIA-4 |
+| T7.6 | Timeouts and cancellation: the brain, the tools, and a deadline on `stop()`. One helper, used in all three places, that gives up after a set time and cancels the request rather than abandoning it | BRAIN-6 (new), LOOP-10 (the timeout), Known K3, Known K10 |
 
-**Done when:** C10, C16 and C17 pass.
+**Done when:** C10, C16 and C17 pass, and a dependency that never answers ends the turn, answers the person and lets `stop()` finish.
 
 ### M8. Knowledge
 
@@ -376,3 +377,4 @@ Every change to Spec made during the build goes here, with the date, the Spec ID
 | 2026-10-21 | DATA-2 | `ob_decisions` gains an `outcome` column and the step, next to the answers | GATE-3 asks whether this person has been Blocked twice in a row, which is a question about rows, and digging the answer out of a jsonb blob is both slow and unindexable. The outcome is also not the same thing as the answer: it is what the bands made of it, which is what a review and `openbox tune` both want |
 | 2026-10-21 | DM-2, GATE-1 | The gate is a decision request of its own, not part of the step's one request | DM-2 puts every question for a step in one request. The gate cannot join it: it asks about arguments the brain has not proposed yet when routing is asked. A step that calls a write tool makes two requests, and that is inherent rather than a saving left on the table |
 | 2026-10-21 | GATE-2, GATE-4 | Passing the gate on an irreversible call returns `needs_confirm`, so it does not run | GATE-4 says an irreversible call always needs a structured confirm, and CONF-1's pending actions are M4. Rather than let one run on a confident yes, the call does not run and the brain is told a confirmation is required. M4 turns that into a real pending action |
+| 2026-10-21 | Plan M7 | T7.6 added: timeouts and cancellation for the brain and the tools, and a deadline on `stop()` | A turn waits on three outside things and only the decision model had a time limit. A brain that never answers leaves the turn running, and `stop()` waits for turns in flight, so a deploy will not drain. Observed in T2.5, written down as Known K3, and in no row until now. LOOP-10's timeout half moves here from T6.2, which keeps its repeat rule, because the three timeouts are one piece of code in three places. K10's abort signal lands here too, since cancelling is the same work. The brain's limit becomes `brainTimeoutMs` in config and needs a number from the builder when the row is worked |

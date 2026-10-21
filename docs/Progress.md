@@ -97,6 +97,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 | T7.3 | Rate limit, step cap, spend tracking with the pricing table, the spend cap triggering handover | todo | | |
 | T7.4 | Sarvam and OpenAI transcribers, language detection | todo | | |
 | T7.5 | Images and `sendFile` | todo | | |
+| T7.6 | Timeouts and cancellation: the brain, the tools, and a deadline on `stop()` | todo | | |
 | M7 check | C10, C16 and C17 pass. | todo | | |
 
 ## M8. Knowledge

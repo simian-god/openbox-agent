@@ -69,7 +69,7 @@ different assertion style in Bun's test runner.
 
 ## K3. A brain has no timeout, so `stop()` can wait for ever
 
-**Status:** open, and not scheduled.
+**Status:** open. Scheduled at T7.6.
 
 **What happens.** LOOP-10 gives a tool a 15 second timeout. Nothing gives a brain
 one. A brain that never answers leaves the turn running, and `stop()` waits for
@@ -82,8 +82,8 @@ worker will not exit. In production it would mean a deploy that will not drain.
 brain held on a gate did exactly this and a cleanup hook timed out.
 
 **What would resolve it.** A timeout around `Brain.complete`, and a deadline on
-`stop()`. Neither is in any current row, so it needs scheduling before anything
-depends on a clean shutdown.
+`stop()`. Both are T7.6, along with the tool timeout and K10, because the three
+timeouts are one piece of code used in three places.
 
 ---
 
@@ -201,7 +201,7 @@ also when Spec section 23's first line can be struck.
 
 ## K10. A timed out decision request is abandoned, not cancelled
 
-**Status:** open by design, and documented.
+**Status:** open, documented. Scheduled at T7.6.
 
 **What happens.** ROUTE-5 gives routing `decisionTimeoutMs` to answer, 3 seconds
 by default. When it runs out, the step carries on with every tool exposed, but
@@ -219,8 +219,8 @@ is adding a signal to `DecisionModel`, which changes an interface in the Spec fo
 a cost that is small today.
 
 **What would resolve it.** An abort signal on `DecisionModel.ask`, passed
-through to both adapters' `fetch`. Worth doing if a real agent shows the cost,
-and worth doing at the same time as K3, which is the same gap on the brain.
+through to both adapters' `fetch`. Scheduled at T7.6, with K3, which is the same
+gap on the brain.
 
 ---
 
