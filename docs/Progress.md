@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** M2 check
+**Next task:** T3.1
 
 ## M0. Foundations
 
@@ -40,7 +40,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 | T2.4 | Job loop: claim, run, retry, dedupe keys, and a recovery sweep for turns a dead process left behind | done | 2026-10-20 | ob_jobs plus the loop, as the third user of the shared pump: claimed by conditional update, run under a lease, taken over when that lease expires, retried with backoff, deduped by key (PRO-1). The recovery sweep hands back messages a dead process left mid turn, which was the last way a message could be lost. A reply is now keyed by the messages it answers, not by the turn, so a recovered message cannot be answered twice. JOB-1 to JOB-4 added to the Spec. Two defaults still open for the builder, see the questions. |
 | T2.5 | Integration tests: the same webhook twice, three messages in a burst, two worker processes on… | done | 2026-10-20 | A suite for C13's four claims as a whole, not a piece at a time. The one that needed it: two processes on one database, eight people messaging twice, with a watcher proving nobody was ever inside two turns at once and that both processes really competed. Also found that settled() waits for work that is ready, so a message inside its burst window is not waited for; documented. C13's "flagged" half needs the flags table, which is M9. |
 | T2.6 | Gate: run a minimal agent under evals-agent's harness and confirm DATA-4's conditional updates… | done | 2026-10-21 | The gate passes and is no longer blocked. evals-agent's shim builds update ... where ... returning * with every filter the core uses, so DATA-4's claims hold there. An openbox agent now runs under the harness over its own ten migrations with no module mocking and no ported database functions, which is TEST-1 and TEST-2 earning their place. Three faults found between the two repositories, all fixed: the shim's errors carry no SQLSTATE, so duplicate detection here reads the message too; the shim left bigserial alone, so sequences were NULL, fixed in evals-agent; and a json column came back as a string, so a reply went out empty, also fixed there. A flake of my own in this row's own test, which asserted on one of two senders when either may win. |
-| M2 check | C13's tests pass against Postgres and under the evals-agent harness. | todo | | |
+| M2 check | C13's tests pass against Postgres and under the evals-agent harness. | done | 2026-10-21 | Both halves pass. Against Postgres: the C13 suite plus 409 tests, three clean runs. Under the harness: all four claims, in both of its worlds, with the agent's own event trace as the evidence. A webhook delivered twice gives one turn and one inbox row. Three messages in the burst window give one turn over three rows. Two real agents on one database, each with its own lease owner, give one turn and one owner for one person. A send whose outcome is unknown leaves the row unknown after one attempt and says nothing to the person. One clause of the C13 criterion is still outstanding and is Known K7: it asks for a timed out send to be flagged, and flags are M9. |
 
 ## M3. Decision model, routing and gating
 
