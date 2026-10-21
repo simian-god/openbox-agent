@@ -1,8 +1,11 @@
 import { test, expect } from "bun:test"
 import { parseArgs } from "../../src/cli/index.ts"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 
-// Argument parsing only. PKG-2 is about what the public entry exports,
-// which is proven once createAgent exists.
+// Argument parsing, and that every command the usage text offers is a
+// command the switch below it actually has. PKG-2 is about what the public
+// entry exports, which is proven once createAgent exists.
 
 test("cli: the cli reads a command and its options", () => {
   const { command, flags } = parseArgs(["migrate", "--migrations", "db/migrations"])
@@ -28,4 +31,22 @@ test("cli: a flag before the command is still read", () => {
 
 test("cli: no arguments means no command", () => {
   expect(parseArgs([]).command).toBeUndefined()
+})
+
+test("cli: every command the usage text offers is one the switch handles", () => {
+  // This exists because `tune` was added to the usage text and not to the
+  // switch, so `openbox tune` printed "Unknown command: tune" under a help
+  // screen that advertised it.
+  //
+  // Read rather than run. Calling each command would mean migrate reaching
+  // for a real database and chat reaching for stdin, and a test that can
+  // touch either is a test nobody will keep.
+  const source = readFileSync(join(import.meta.dir, "..", "..", "src", "cli", "index.ts"), "utf8")
+
+  const usage = source.slice(source.indexOf("const USAGE"), source.indexOf("/** Reads --name"))
+  const offered = [...usage.matchAll(/^ {2}openbox (\w+)/gm)].map((match) => match[1])
+  const handled = [...source.matchAll(/^ {4}case "(\w+)":/gm)].map((match) => match[1])
+
+  expect(offered.length).toBeGreaterThan(1)
+  expect([...offered].sort()).toEqual([...handled].sort())
 })

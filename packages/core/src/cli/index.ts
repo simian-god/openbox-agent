@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// The `openbox` command. Four subcommands by the end; `migrate` is the
+// The `openbox` command. Four subcommands by the end; `migrate` was the
 // first. Hand written argument parsing, since four commands need no
 // framework.
 //
@@ -12,12 +12,14 @@
 import { join } from "node:path"
 import { migrate, MigrateError } from "../migrate/index.ts"
 import { runChat } from "./chat.ts"
+import { runTune } from "./tune.ts"
 
 const USAGE = `openbox - tools for an openbox-agent project
 
 Usage:
   openbox migrate [options]    apply the core migrations, then the agent's
   openbox chat [options]       talk to the agent in this folder
+  openbox tune [options]       measure where the routing threshold belongs
 
 Options for migrate:
   --database-url <url>   Postgres connection. Defaults to DATABASE_URL
@@ -29,6 +31,14 @@ Options for chat:
   --prompt <file>        defaults to prompt.md
   --tools <dir>          defaults to tools
   --as <id>              who is typing. Defaults to "local"
+
+Options for tune:
+  --dir <dir>            the agent project. Defaults to this folder
+  --tolerance <n>        the share of examples that may lose their tool.
+                         Defaults to 0.01, one in a hundred
+  --examples <file>      defaults to examples/routing.jsonl
+  --write                set routeThreshold in agent.config.ts. Off by
+                         default: nothing changes the agent unless you say so
 
   --help                 show this
 `
@@ -110,6 +120,22 @@ export async function run(argv: string[]): Promise<number> {
         ...(flags.has("tools") ? { tools: flags.get("tools") } : {}),
         ...(flags.has("as") ? { as: flags.get("as") } : {}),
       })
+    case "tune": {
+      const tolerance = flags.get("tolerance")
+      const asNumber = tolerance === undefined ? undefined : Number(tolerance)
+      if (asNumber !== undefined && (Number.isNaN(asNumber) || asNumber < 0 || asNumber > 1)) {
+        console.error(`--tolerance must be a share between 0 and 1, not "${tolerance}".`)
+        return 1
+      }
+      return runTune({
+        ...(flags.has("dir") ? { dir: flags.get("dir") } : {}),
+        ...(flags.has("config") ? { config: flags.get("config") } : {}),
+        ...(flags.has("tools") ? { tools: flags.get("tools") } : {}),
+        ...(flags.has("examples") ? { examplesFile: flags.get("examples") } : {}),
+        ...(asNumber !== undefined ? { tolerance: asNumber } : {}),
+        ...(flags.has("write") ? { write: true } : {}),
+      })
+    }
     default:
       console.error(`Unknown command: ${command}\n`)
       console.log(USAGE)

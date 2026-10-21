@@ -54,6 +54,14 @@ Database, needing Docker:
 
 Integration tests use that database and reset it per file. With no database running they skip, so `bun test` stays green without Docker.
 
+Measuring where the routing threshold belongs (ROUTE-4), which needs a
+decision model key and no database:
+
+- `bun packages/core/src/cli/index.ts tune --dir <agent>` - reports it.
+  `--tolerance` sets the share of examples that may lose their tool,
+  `--write` applies the result to `agent.config.ts`. Nothing is written
+  without it.
+
 Talking to the demo agent, which needs the database and an OpenRouter key:
 
 - `bun packages/core/src/cli/index.ts chat --dir examples/demo-agent` - the terminal channel. `examples/demo-agent/README.md` has the environment it needs. Inside chat, `:help` lists its commands.

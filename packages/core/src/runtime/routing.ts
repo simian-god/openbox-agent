@@ -32,10 +32,10 @@ export const ROUTING_QUESTION = "tool"
 const TOOLS_PER_QUESTION = 254
 
 /** ROUTE-2: the top tools until their combined probability reaches this. */
-const ENOUGH_MASS = 0.9
+export const ENOUGH_MASS = 0.9
 
 /** ROUTE-2: and never more than this many. */
-const MOST_TOOLS = 3
+export const MOST_TOOLS = 3
 
 /** ROUTE-1: the last 6 messages, the current batch, and the active task. */
 export interface RoutingState {
@@ -110,8 +110,15 @@ function split(tools: Tool[]): Tool[][] {
   return groups
 }
 
-/** One answered choice, as the parts routing needs from it. */
-interface Picked {
+/**
+ * One answered choice, as the parts routing needs from it.
+ *
+ * Exported because `openbox tune` records one of these per labeled example
+ * and then measures every candidate threshold against it offline. That is
+ * what makes tuning one request per example rather than one per example
+ * per threshold.
+ */
+export interface Picked {
   choice: string
   confidence: number
   probabilities: Record<string, number>
@@ -135,7 +142,8 @@ function pickedFrom(answers: Record<string, Answer>, name: string): Picked {
  * `no_tool` among the top counts towards the mass, since the mass is a
  * statement about the distribution, but it is not a tool to expose.
  */
-function topTools(picked: Picked, byName: Map<string, Tool>): Tool[] {
+export function topTools(picked: Picked, tools: Tool[]): Tool[] {
+  const byName = new Map(tools.map((tool) => [tool.name, tool]))
   const winner = byName.get(picked.choice)
   const chosen: Tool[] = winner ? [winner] : []
   let mass = picked.probabilities[picked.choice] ?? 0
@@ -263,7 +271,7 @@ export async function route(options: RouteOptions): Promise<RouteDecision> {
       }
     }
 
-    const chosen = topTools(picked, byName)
+    const chosen = topTools(picked, tools)
     return {
       tools: chosen,
       builtins,

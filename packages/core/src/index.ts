@@ -95,6 +95,7 @@ export {
 
 export {
   providersFromConfig,
+  decisionModelFromConfig,
   modelsFromConfig,
   supabaseFromEnv,
   DB_ENV_KEYS,
@@ -240,6 +241,10 @@ export {
 export {
   runChat,
   chatConfig,
+  runTune,
+  formatReport,
+  writeThreshold,
+  type TuneOptions as TuneCommandOptions,
   loadProject,
   ProjectError,
   PROJECT_FILES,
@@ -258,6 +263,23 @@ export {
   type LoadProjectOptions,
   type LoadedProject,
 } from "./cli/public.ts"
+
+export {
+  tune,
+  measureAt,
+  answerExamples,
+  examplesFromTools,
+  parseRoutingJsonl,
+  mergeExamples,
+  isPositive,
+  ROUTING_EXAMPLES_FILE,
+  DEFAULT_TOLERANCE,
+  type TuneOptions,
+  type TuneReport,
+  type AtThreshold,
+  type Answered,
+  type LabeledExample,
+} from "./tune/index.ts"
 
 export { CORE_VERSION } from "./version.ts"
 export { fixedClock, systemClock, type Clock, type FixedClock } from "./testing/clock.ts"

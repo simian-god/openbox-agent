@@ -411,7 +411,7 @@ defineTool({
 
 **ROUTE-3.** Routing runs on every step, so after one tool's result the next step can route to another (check availability, then book).
 
-**ROUTE-4.** The threshold is set per decision model in config, starting at 0.6 *(default)*. `openbox tune` sets it from `examples/routing.jsonl` and reviewed decisions (LEARN-5).
+**ROUTE-4.** The threshold is set per decision model in config, starting at 0.6 *(default)*. `openbox tune` measures it from `examples/routing.jsonl` and reviewed decisions (LEARN-5). It reports the lowest threshold at which the right tool is still exposed for all but a chosen share of the labeled examples, `--tolerance`, 1 in 100 *(default)*. Lowest, because every step above it is a turn paying full price for a tool list it did not need. A recommendation that narrows almost nothing is reported as routing not being worth asking for, rather than as a tuned threshold.
 
 **ROUTE-5.** If the decision model fails or times out (`decisionTimeoutMs`, 3 s *(default)*), the step proceeds as if confidence were below the threshold, and records `fallback_used`. Nothing is retried: a step has seconds in total, so the person's wait is not spent on an optimisation.
 
@@ -629,7 +629,7 @@ agent.trigger({ personId, event: "order_ready", data: { ... }, urgent? })
 6. applies the fix only when the new cases pass, nothing old regresses, and the builder approves
 7. marks the flags reviewed with the outcome
 
-**LEARN-5.** Every routing decision the builder reviews is appended to `examples/routing.jsonl` with its correct tool. `openbox tune` recomputes the thresholds from that file and reports accuracy per decision model.
+**LEARN-5.** Every routing decision the builder reviews is appended to `examples/routing.jsonl` with its correct tool. A line is `{ "text", "tool" }`, or `{ "messages", "batch", "tool" }` when the right tool depends on the conversation. `openbox tune` recomputes the thresholds from that file and from every tool's own `should` and `shouldNot` examples (TOOL-1), so a new agent has a labeled set before it has any traffic, and reports accuracy per decision model. It asks the decision model once per distinct question, not once per label and never once per candidate threshold, and measures every threshold against the recorded answers. It changes config only when asked (LEARN-7).
 
 **LEARN-6.** Knowledge candidates from handovers wait for an operator's `approve_knowledge` before they're searchable.
 

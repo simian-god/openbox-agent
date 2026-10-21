@@ -124,6 +124,23 @@ function buildDecisionModel(
 }
 
 /**
+ * Just the decision model, for a command that needs nothing else.
+ *
+ * `openbox tune` measures a dial on the decision model. It never calls a
+ * brain and never opens the database, so asking for their keys would make
+ * it a command that fails for reasons that have nothing to do with it.
+ */
+export function decisionModelFromConfig(
+  config: OpenboxConfig,
+  env: Env = process.env,
+): DecisionModel {
+  const problems: string[] = []
+  const built = buildDecisionModel(config, env, problems)
+  if (built === undefined) throw new ProviderError(problems)
+  return built
+}
+
+/**
  * Builds the providers an agent needs from its config.
  *
  * Anything passed in `override` is used as it stands, so tests and

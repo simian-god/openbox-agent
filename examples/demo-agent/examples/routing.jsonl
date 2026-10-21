@@ -1,0 +1,19 @@
+// LEARN-5: labeled routing examples. One JSON object per line.
+//
+// `openbox tune` reads this file together with every tool's own `should`
+// and `shouldNot` examples, asks the decision model about each one, and
+// reports where routeThreshold belongs. Lines are appended here whenever a
+// routing decision is reviewed, so the set grows with real traffic.
+//
+// This agent has one tool, and ROUTE-1 only routes above routingMinTools,
+// so `openbox tune` will say there is nothing to tune until it has more.
+// The file is here to show the shape.
+//
+// Short form: one message and the tool that should answer it.
+{"text": "what time do you open on monday?", "tool": "check_opening_hours"}
+{"text": "are you open right now?", "tool": "check_opening_hours"}
+{"text": "thanks, see you then", "tool": "no_tool"}
+{"text": "do you do takeaway?", "tool": "no_tool"}
+// Full form, for when the right tool depends on what came before. "and
+// tuesday?" is only an hours question because of the message above it.
+{"messages": [{"role": "person", "text": "what time do you open on monday?"}, {"role": "agent", "text": "11:00 to 15:00, then 19:00 to 23:00."}], "batch": ["and tuesday?"], "tool": "check_opening_hours"}
