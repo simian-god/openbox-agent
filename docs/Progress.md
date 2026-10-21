@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** T3.1
+**Next task:** T3.2
 
 ## M0. Foundations
 

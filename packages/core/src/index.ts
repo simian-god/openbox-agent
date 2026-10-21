@@ -96,6 +96,15 @@ export {
   readResponse,
   ProviderError,
   BrainError,
+  DecisionError,
+  confidenceOf,
+  winnerOf,
+  type DecisionModel,
+  type DecisionRequest,
+  type DecisionResult,
+  type DecisionUsage,
+  type Question,
+  type Answer,
   ENV_KEYS,
   type Brain,
   type BrainInput,
@@ -107,6 +116,16 @@ export {
   type ProvidersOverride,
   type Env,
 } from "./providers/index.ts"
+
+export {
+  scriptedDecisionModel,
+  choice,
+  score,
+  yesno,
+  type ScriptedDecisionModel,
+  type ScriptedDecisionOptions,
+  type ScriptedAnswers,
+} from "./testing/scripted-decision.ts"
 
 export {
   scriptedBrain,

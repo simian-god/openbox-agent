@@ -10,6 +10,7 @@ import { openRouterBrain } from "./brains/openrouter.ts"
 export * from "./brains/types.ts"
 export { openRouterBrain, toWireMessages, readResponse } from "./brains/openrouter.ts"
 export { supabaseFromEnv, DB_ENV_KEYS } from "./db.ts"
+export * from "./decision/types.ts"
 
 /** Where a provider's key is read from. Also the list in .env.example. */
 export const ENV_KEYS = {
