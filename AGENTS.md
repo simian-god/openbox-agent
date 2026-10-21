@@ -10,6 +10,7 @@ This file is the single source of rules for coding agents. Codex reads it direct
 - `docs/Spec.md`: what the core does. Every requirement has an ID like CONF-4.
 - `docs/Plan.md`: how it gets built. Milestones, tasks, stack, risks, decisions log.
 - `docs/Progress.md`: the status of every task. You keep it up to date.
+- `docs/Known.md`: problems we are living with, and why. A workaround belongs here so it is not rediscovered as a mystery. A row leaves it when it is resolved, not when it is worked around.
 
 Read only the parts your task needs, not every doc in full.
 

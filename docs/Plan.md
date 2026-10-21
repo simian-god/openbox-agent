@@ -339,6 +339,14 @@ C1 (the second agent ships with zero core changes) can only be checked by buildi
 
 ---
 
+## 8. Known problems
+
+Moved to `docs/Known.md`, so a workaround has one home rather than living in a
+commit message. The risks table above is what might go wrong; that file is what
+already has.
+
+---
+
 ## 8. Decisions log
 
 Every change to Spec made during the build goes here, with the date, the Spec ID, what changed and why. Review.md reads from this.
