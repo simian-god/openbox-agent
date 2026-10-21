@@ -13,6 +13,7 @@
     "format:check": "biome format .",
     "check": "bun run typecheck && bun run format:check && bun test",
     "trace": "bun run scripts/trace.ts",
+    "c8": "bun run scripts/c8.ts",
     "db:up": "supabase start",
     "db:down": "supabase stop",
     "db:status": "supabase status"

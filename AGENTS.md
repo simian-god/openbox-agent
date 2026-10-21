@@ -54,6 +54,15 @@ Database, needing Docker:
 
 Integration tests use that database and reset it per file. With no database running they skip, so `bun test` stays green without Docker.
 
+Measuring whether routing is worth it (C8), which needs a brain key and a
+decision model key and no database:
+
+- `bun run c8 --dir packages/core/test/fixtures/routing-agent` - says what
+  it would spend. Add `--go` to run it, `--limit <n>` to measure fewer
+  examples. Two real brain calls per labeled example, so it is the
+  expensive one. The demo agent has one tool and cannot answer C8 at all,
+  which is Known K13.
+
 Measuring where the routing threshold belongs (ROUTE-4), which needs a
 decision model key and no database:
 

@@ -19,6 +19,7 @@ it. See `docs/Progress.md` for where the build has got to.
 | `skill/` | the `/openboxagent` skill for Claude Code and Codex |
 | `examples/demo-agent` | a one tool agent, rebuilt by the skill at M11 |
 | `install/` | installers that link the skill into `~/.claude` and `~/.codex` |
+| `scripts/` | `trace` for Spec ID coverage, `c8` for whether routing is worth it |
 | `docs/` | Intent, Spec, Plan and Progress |
 
 ## Requirements

@@ -1,0 +1,14 @@
+// LEARN-5: labeled routing examples for the C8 fixture.
+//
+// These are the ones a tool's own examples cannot express: the message that
+// is only a booking because of the message above it, and the plain thank you
+// that needs no tool at all.
+{"text": "thanks, see you friday", "tool": "no_tool"}
+{"text": "perfect, that works", "tool": "no_tool"}
+{"text": "sorry, who am i speaking to?", "tool": "no_tool"}
+{"messages": [{"role": "person", "text": "any space friday evening?"}, {"role": "agent", "text": "Yes. For how many, and what time?"}], "batch": ["four of us, around 8"], "tool": "check_availability"}
+{"messages": [{"role": "person", "text": "do you have a table for four on friday at 8?"}, {"role": "agent", "text": "Yes, 8pm on Friday is free for four. Shall I book it?"}], "batch": ["yes please, under asha"], "tool": "book_table"}
+{"messages": [{"role": "person", "text": "i booked for friday, reference BK-2026-10-23"}, {"role": "agent", "text": "I have it. What would you like to change?"}], "batch": ["make it six of us"], "tool": "change_booking"}
+{"messages": [{"role": "person", "text": "i have a booking on friday"}, {"role": "agent", "text": "I see it. How can I help?"}], "batch": ["we cannot come, let it go"], "tool": "cancel_booking"}
+{"messages": [{"role": "person", "text": "what time do you open on friday?"}, {"role": "agent", "text": "11:00 to 15:00, then 19:00 to 23:30."}], "batch": ["and sunday?"], "tool": "opening_hours"}
+{"messages": [{"role": "person", "text": "where are you?"}, {"role": "agent", "text": "12 Market Road, next to the post office."}], "batch": ["can i leave the car there?"], "tool": "parking"}

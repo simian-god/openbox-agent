@@ -282,3 +282,29 @@ one request, which DM-2 allows: that costs more tokens on every gated call and
 gives a per condition answer. Or GATE-2 is reworded to ask for the conditions
 rather than the condition. The first is a real option and is a builder's
 decision, since it trades money for a better message.
+
+---
+
+## K13. C8 cannot be measured on the demo agent
+
+**Status:** open, worked around. Closed at T11.1.
+
+**What happens.** C8 compares the same turns with routing and without it.
+Routing only runs above `routingMinTools` agent tools, 5 by default (ROUTE-1),
+and `examples/demo-agent` has one tool. So on the demo agent there are no two
+arms to compare, and `openbox tune` has no threshold to measure either. Both
+commands say so and stop rather than reporting a number about nothing.
+
+**What it costs.** M3's "Done when" asks for C8 to be measurable on the demo
+agent, and it is not. The measurement itself is real, and runs on a fixture.
+
+**What we did.** Built `packages/core/test/fixtures/routing-agent`: eight tools
+across all three risk levels, each with the conditions and examples TOOL-1 asks
+for, plus its own `examples/routing.jsonl`. `bun run c8 --dir
+packages/core/test/fixtures/routing-agent` measures C8 there. It is test data,
+not a second example to learn from, and its README says so.
+
+**What would resolve it.** T11.1 rebuilds the demo agent with the skill, and a
+real restaurant agent has far more than five tools. C8 moves onto it then and
+this fixture can go. Until then the M3 check records C8 as measured on the
+fixture rather than on the demo agent.
