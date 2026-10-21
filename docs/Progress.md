@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** T3.2
+**Next task:** T3.3
 
 ## M0. Foundations
 
@@ -46,8 +46,8 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 
 | Task | What | Status | Date | Note |
 |---|---|---|---|---|
-| T3.1 | `DecisionModel` interface, scripted decision model | todo | | |
-| T3.2 | Jev adapter, through TypeSafe and through OpenRouter, with recorded contract tests | todo | | |
+| T3.1 | `DecisionModel` interface, scripted decision model | done | 2026-10-21 | The interface from Spec section 4, with three question types and probabilities rather than prose. DM-2 is in the shape: `ask` takes every question for a step at once. `DecisionError` is its own type, so the gate can tell an outage from an answer (GATE-4). The scripted model is deliberately unhelpful: an unscripted question gets the most boring answer there is, and a fixture that cannot be true is refused when it is written. Row was left `todo` by a missed edit in the T3.1 commit; corrected here. |
+| T3.2 | Jev adapter, through TypeSafe and through OpenRouter, with recorded contract tests | done | 2026-10-21 | Checked against the real docs first: both routes take the same body, so one adapter serves both and only the URL, the key and the model id differ. The mapping DM-1 asks for: our yesno is Jev's noul, our options and levels are both its criteria, and its confidence is passed through rather than recomputed, because the docs say it describes the whole distribution and is not the top probability. Jev's score is an expected level and comes back fractional, so the fraction is kept. Two documented limits are refused before a request is paid for, 255 options and 2 to 10 levels. Every response is validated before it becomes an answer, on the same rule the scripted model holds its fixtures to. One live test through OpenRouter. TypeSafe's own route cannot be live tested, which is Known K8. |
 | T3.3 | Check the OpenAI Decisions API's real shape, then build its adapter | todo | | |
 | T3.4 | Routing: options, exposure rules, every step, fallback on failure, more than 255 options… | todo | | |
 | T3.5 | Risk levels, the gate, bands per tool, failing closed, the `tool_runs` and decisions tables, `gate_block`… | todo | | |

@@ -13,14 +13,12 @@
 //   parameter needed to ask for cost
 import type { Brain, BrainInput, BrainMessage, BrainOutput } from "./types.ts"
 import { BrainError } from "./types.ts"
+import type { FetchLike } from "../http.ts"
 
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 
-/**
- * Just the part of fetch this adapter uses, so a test can stand in for it
- * without having to reproduce the runtime's whole fetch type.
- */
-export type FetchLike = (url: string, init: RequestInit) => Promise<Response>
+/** Kept exported here because this adapter's tests import it from here. */
+export type { FetchLike }
 
 export interface OpenRouterOptions {
   apiKey: string

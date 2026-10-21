@@ -155,3 +155,32 @@ rather than quietly passed.
 
 **What would resolve it.** Either LEARN-1 gains a kind for it and M9 raises the
 flag, or C13 is satisfied by the event and the Spec says so.
+
+---
+
+## K8. Jev's own API cannot be live tested, and the route that can is alpha
+
+**Status:** open, accepted.
+
+**What happens.** DM-1 asks for Jev on two routes, and only one of them can be
+reached. TypeSafe's own API is in early access behind a waitlist, with no self
+serve signup, so `TYPESAFE_API_KEY` cannot be obtained here. OpenRouter serves
+the same model to anyone with an OpenRouter key, but it serves it from
+`POST /api/alpha/decisions`, which is alpha and says so.
+
+**What it costs.** The TypeSafe route is built from its published API reference
+and proven only against recorded responses. If that reference is wrong, nothing
+here would catch it. The OpenRouter route has a live test, but an alpha endpoint
+may change shape without a version bump.
+
+**What we did.** Both routes share one request and response path, so the live
+test on the OpenRouter route exercises almost all of the TypeSafe route too: the
+mapping, the validation and the error handling are the same code. Only the URL,
+the key and the model id differ. Both default model ids are pinned rather than
+floating on `jev-latest`, so a new version cannot arrive under a running agent.
+Every response is validated before it becomes an answer, so a contract that
+moves shows up as a `DecisionError` rather than a wrong decision.
+
+**What would resolve it.** A TypeSafe key, which needs their waitlist to open, or
+OpenRouter promoting the decisions endpoint out of alpha. Worth re-checking both
+at T3.3, which looks at the OpenAI Decisions API anyway.
