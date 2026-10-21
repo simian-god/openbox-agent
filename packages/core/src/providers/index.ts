@@ -6,6 +6,9 @@
 import type { OpenboxConfig } from "../config/index.ts"
 import type { Brain } from "./brains/types.ts"
 import { openRouterBrain } from "./brains/openrouter.ts"
+import type { DecisionModel } from "./decision/types.ts"
+import { jevDecisionModel, type JevRoute } from "./decision/jev.ts"
+import { openaiDecisionsModel } from "./decision/openai-decisions.ts"
 
 export * from "./brains/types.ts"
 export { openRouterBrain, toWireMessages, readResponse } from "./brains/openrouter.ts"
@@ -45,10 +48,13 @@ export type Env = Record<string, string | undefined>
 export interface ProvidersOverride {
   /** Used as given. The first is the primary, the rest are fallbacks. */
   brains?: Brain[] | undefined
+  /** Used as given, so a test or evals-agent never needs a key. */
+  decisionModel?: DecisionModel | undefined
 }
 
 export interface BuiltProviders {
   brains: Brain[]
+  decisionModel: DecisionModel
 }
 
 /** One brain from a config entry, or a problem explaining why not. */
@@ -70,6 +76,50 @@ function buildBrain(id: string, env: Env, problems: string[]): Brain | undefined
       // build, not a typo by the builder.
       problems.push(`brain ${id} is named in config but its adapter is not built yet`)
       return undefined
+  }
+}
+
+/** One decision model from config, or a problem explaining why not. */
+function buildDecisionModel(
+  config: OpenboxConfig,
+  env: Env,
+  problems: string[],
+): DecisionModel | undefined {
+  const wanted = config.decisionModel
+
+  switch (wanted.id) {
+    case "jev": {
+      // DM-1: config names the route, and the route decides which key is
+      // read. That is what stops one vendor's key reaching another.
+      const route = (wanted.route ?? "openrouter") as JevRoute
+      const key = route === "typesafe" ? ENV_KEYS.typesafe : ENV_KEYS.openrouter
+      const apiKey = env[key]
+      if (apiKey === undefined || apiKey === "") {
+        problems.push(
+          `decision model jev on the ${route} route needs ${key} in the environment. Secrets never go in config (CFG-2)`,
+        )
+        return undefined
+      }
+      return jevDecisionModel({
+        apiKey,
+        route,
+        ...(wanted.model !== undefined ? { model: wanted.model } : {}),
+      })
+    }
+
+    case "openai-decisions": {
+      const apiKey = env[ENV_KEYS["openai-agents"]]
+      if (apiKey === undefined || apiKey === "") {
+        problems.push(
+          `decision model openai-decisions needs ${ENV_KEYS["openai-agents"]} in the environment. Secrets never go in config (CFG-2)`,
+        )
+        return undefined
+      }
+      return openaiDecisionsModel({
+        apiKey,
+        ...(wanted.model !== undefined ? { model: wanted.model } : {}),
+      })
+    }
   }
 }
 
@@ -99,9 +149,16 @@ export function providersFromConfig(
       .filter((brain): brain is Brain => brain !== undefined)
   }
 
+  let decisionModel: DecisionModel | undefined
+  if (override.decisionModel !== undefined) {
+    decisionModel = override.decisionModel
+  } else {
+    decisionModel = buildDecisionModel(config, env, problems)
+  }
+
   if (problems.length > 0) throw new ProviderError(problems)
 
-  return { brains }
+  return { brains, decisionModel: decisionModel as DecisionModel }
 }
 
 /** The model each brain should be called with, in the same order. */

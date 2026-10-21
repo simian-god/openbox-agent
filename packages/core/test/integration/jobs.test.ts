@@ -4,6 +4,7 @@
 // be lost outright: a process killed mid turn leaves the messages it had
 // taken marked `merged`, and nothing else ever looks at those.
 import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import {
@@ -71,6 +72,7 @@ describeDatabase("the job loop", (sql) => {
   function agentWith(over: Record<string, unknown> = {}): Agent {
     sender = fakeSender()
     const deps: Deps = {
+      decisionModel: scriptedDecisionModel([]),
       brains: [scriptedBrain([{ reply: "We open at 11." }])],
       db: localSupabase(),
       sender,
@@ -333,6 +335,7 @@ describeDatabase("the recovery sweep", (sql) => {
   function agentWith(over: Record<string, unknown> = {}): Agent {
     sender = fakeSender()
     const deps: Deps = {
+      decisionModel: scriptedDecisionModel([]),
       brains: [scriptedBrain([{ reply: "We open at 11." }])],
       db: localSupabase(),
       sender,

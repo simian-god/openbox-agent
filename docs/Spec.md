@@ -198,7 +198,7 @@ type Answer =
   | { type: "yesno"; p: number }
 ```
 
-**DM-1.** Adapters at launch: Jev (TypeSafe API or OpenRouter) and OpenAI Decisions API. Laya later. Each adapter maps these three types onto the vendor's own (Jev: choice, score, noul; OpenAI: choice, score, predicate).
+**DM-1.** Adapters at launch: Jev (TypeSafe API or OpenRouter) and OpenAI Decisions API. A model with more than one route takes `route` in config, and `model` pins its version (section 19). Laya later. Each adapter maps these three types onto the vendor's own (Jev: choice, score, noul; OpenAI: choice, score, predicate).
 
 **DM-2.** All questions for one step go in one request, so the state is paid for once.
 
@@ -413,7 +413,7 @@ defineTool({
 
 **ROUTE-4.** The threshold is set per decision model in config, starting at 0.6 *(default)*. `openbox tune` sets it from `examples/routing.jsonl` and reviewed decisions (LEARN-5).
 
-**ROUTE-5.** If the decision model fails or times out (3 s *(default)*), the step proceeds as if confidence were below the threshold, and records `fallback_used`.
+**ROUTE-5.** If the decision model fails or times out (`decisionTimeoutMs`, 3 s *(default)*), the step proceeds as if confidence were below the threshold, and records `fallback_used`. Nothing is retried: a step has seconds in total, so the person's wait is not spent on an optimisation.
 
 ### Gate
 
@@ -670,13 +670,20 @@ export default defineConfig({
   hours: { mon: [["11:00", "23:00"]], /* ... */ exceptions: [{ date: "2026-10-20", closed: true }] },
 
   brain: { id: "openrouter", model: "...", fallbacks: [{ id: "openai-agents", model: "..." }] },
-  decisionModel: { id: "jev", routeThreshold: 0.6, gateBands: { /* per tool overrides */ } },
+  decisionModel: {
+    id: "jev",
+    route: "openrouter",               // DM-1: which route, for a model that has more than one
+    model: "typesafe/jev-1.14",        // optional, pins the version
+    routeThreshold: 0.6,
+    gateBands: { /* per tool overrides */ },
+  },
   transcriber: { id: "sarvam" },
   retriever: { id: "local", embedder: null },
 
   history: 30,
   burstWindowMs: 3000,
   routingMinTools: 5,
+  decisionTimeoutMs: 3000,             // ROUTE-5
   maxSteps: 8,
   leaseSeconds: 60,                    // LOOP-2
   workerPollMs: 1000,                  // how often a worker looks for waiting messages

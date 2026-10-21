@@ -6,6 +6,8 @@ import { z } from "zod"
 import {
   BRAIN_IDS,
   DECISION_MODEL_IDS,
+  DECISION_ROUTE_IDS,
+  DECISION_ROUTES,
   EMBEDDER_IDS,
   RETRIEVER_IDS,
   TRANSCRIBER_IDS,
@@ -94,10 +96,28 @@ const GATE_BAND = z
 const DECISION_MODEL = z
   .object({
     id: z.enum(DECISION_MODEL_IDS),
+    // DM-1: only for a model published on more than one route. Left out,
+    // the adapter's own default route is used.
+    route: z.enum(DECISION_ROUTE_IDS).optional(),
+    // Pins the version. Left out, the adapter's pinned default is used.
+    model: z.string().min(1).optional(),
     routeThreshold: z.number().min(0).max(1).default(0.6),
     gateBands: z.record(z.string(), GATE_BAND).default({}),
   })
   .strict()
+  .refine((value) => value.route === undefined || DECISION_ROUTES[value.id].length > 0, {
+    message: "this decision model has only one route, so route must be left out",
+    path: ["route"],
+  })
+  .refine(
+    (value) =>
+      value.route === undefined ||
+      (DECISION_ROUTES[value.id] as readonly string[]).includes(value.route),
+    {
+      message: "that route is not one this decision model is published on",
+      path: ["route"],
+    },
+  )
 
 const TRANSCRIBER = z
   .object({
@@ -162,6 +182,9 @@ export const configSchema = z
     history: z.number().int().positive().default(30),
     burstWindowMs: z.number().int().min(0).default(3000),
     routingMinTools: z.number().int().min(0).default(5),
+    // ROUTE-5: how long a step waits for the decision model before
+    // carrying on with every tool exposed.
+    decisionTimeoutMs: z.number().int().positive().default(3000),
     maxSteps: z.number().int().positive().default(8),
 
     // LOOP-2: how long a worker owns a person before the claim expires.

@@ -17,6 +17,18 @@ export const CLI_BRAIN_IDS = ["claude-code-cli", "codex-cli"] as const
 /** DM-1. Laya comes later. */
 export const DECISION_MODEL_IDS = ["jev", "openai-decisions"] as const
 
+/**
+ * DM-1: the routes a decision model is published on, for the ones that
+ * have more than one. The route decides which key is read, so naming it in
+ * config is what stops one vendor's key being sent to another.
+ */
+export const DECISION_ROUTES = {
+  jev: ["typesafe", "openrouter"],
+  "openai-decisions": [],
+} as const satisfies Record<(typeof DECISION_MODEL_IDS)[number], readonly string[]>
+
+export const DECISION_ROUTE_IDS = ["typesafe", "openrouter"] as const
+
 /** DEP-2. */
 export const TRANSCRIBER_IDS = ["sarvam", "openai"] as const
 export const RETRIEVER_IDS = ["local", "pgvector"] as const
@@ -25,6 +37,7 @@ export const EMBEDDER_IDS = ["openai"] as const
 export type BrainId = (typeof BRAIN_IDS)[number]
 export type CliBrainId = (typeof CLI_BRAIN_IDS)[number]
 export type DecisionModelId = (typeof DECISION_MODEL_IDS)[number]
+export type DecisionRouteId = (typeof DECISION_ROUTE_IDS)[number]
 export type TranscriberId = (typeof TRANSCRIBER_IDS)[number]
 export type RetrieverId = (typeof RETRIEVER_IDS)[number]
 export type EmbedderId = (typeof EMBEDDER_IDS)[number]

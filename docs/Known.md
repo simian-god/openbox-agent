@@ -214,3 +214,51 @@ reports for usage, so running it once answers the question.
 settles the usage object in one request. The limits need the endpoint to leave
 beta, or an answer from OpenAI. Worth re-checking when the beta ends, which is
 also when Spec section 23's first line can be struck.
+
+---
+
+## K10. A timed out decision request is abandoned, not cancelled
+
+**Status:** open by design, and documented.
+
+**What happens.** ROUTE-5 gives routing `decisionTimeoutMs` to answer, 3 seconds
+by default. When it runs out, the step carries on with every tool exposed, but
+the HTTP request is still in flight. Nothing cancels it, because the Spec's
+`DecisionModel.ask` takes no abort signal.
+
+**What it costs.** The abandoned request is still billed, and its connection is
+held until the provider answers or the socket drops. At one request per step and
+a 3 second timeout, a few per turn at worst. It also means a provider that is
+slow rather than down is paid for and ignored.
+
+**What we did.** The timer is always cleared, so a fast answer never holds the
+process open, and the result is ignored rather than applied late. The alternative
+is adding a signal to `DecisionModel`, which changes an interface in the Spec for
+a cost that is small today.
+
+**What would resolve it.** An abort signal on `DecisionModel.ask`, passed
+through to both adapters' `fetch`. Worth doing if a real agent shows the cost,
+and worth doing at the same time as K3, which is the same gap on the brain.
+
+---
+
+## K11. Both repositories share one local database, so their suites collide
+
+**Status:** open, avoided by not running them at once.
+
+**What happens.** openbox's integration tests and evals-agent's Postgres world
+both use the database that `bun run db:up` starts, and both empty it between
+files or cases. Run them at the same time and whichever is slower sees its rows
+disappear underneath it.
+
+**What it costs.** It has produced a batch of failures that look like real bugs
+twice, once at T3.1 and once at T3.4. Both times a clean rerun was green, which
+is the tell.
+
+**What we did.** Nothing in code. A failure batch that includes several
+unrelated integration files, and passes on a rerun, is this.
+
+**What would resolve it.** evals-agent already has `EVALS_WORLD=sqlite`, which
+needs no database at all, and a disposable Postgres on its own port. Pointing
+evals-agent at a second database by default would close it properly, and that
+belongs in evals-agent rather than here.

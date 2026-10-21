@@ -9,3 +9,13 @@ export * from "./worker.ts"
 export * from "./context.ts"
 export * from "./turn.ts"
 export * from "./agent.ts"
+export {
+  route,
+  routingQuestion,
+  NO_TOOL,
+  NO_TOOL_DESCRIPTION,
+  ROUTING_QUESTION,
+  type RouteOptions,
+  type RouteDecision,
+  type RoutingState,
+} from "./routing.ts"

@@ -24,7 +24,9 @@ export default defineConfig({
   },
 
   brain: { id: "openrouter", model: "openai/gpt-4o-mini" },
-  decisionModel: { id: "jev" },
+  // DM-1: Jev on the OpenRouter route, which uses OPENROUTER_API_KEY. The
+  // TypeSafe route needs its own key and its own waitlist (docs/Known.md K8).
+  decisionModel: { id: "jev", route: "openrouter" },
   retriever: { id: "local" },
 
   limits: { dailySpendUsd: 1 },

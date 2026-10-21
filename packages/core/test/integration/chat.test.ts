@@ -3,6 +3,7 @@
 // Everything is real except the brain and the terminal: a scripted brain so
 // no key or network is needed (TEST-3), and a fake io so no tty is needed.
 import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { join } from "node:path"
 import { afterEach, describe } from "bun:test"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
@@ -80,7 +81,13 @@ describeDatabase("openbox chat", (sql) => {
     const io = fakeIo(typed)
     const brain = scriptedBrain(script)
     const channel = terminalChannel({ io, sessionId: "s1" })
-    const deps: Deps = { brains: [brain], db: localSupabase(), sender: channel.sender, clock }
+    const deps: Deps = {
+      decisionModel: scriptedDecisionModel([]),
+      brains: [brain],
+      db: localSupabase(),
+      sender: channel.sender,
+      clock,
+    }
     const agent = createAgent({
       config: chatConfig(config(over)),
       deps,
@@ -185,7 +192,13 @@ describeDatabase("openbox chat", (sql) => {
     const channel = terminalChannel({ io, sessionId: "s1" })
     const agent = createAgent({
       config: chatConfig(config()),
-      deps: { brains: [brain], db: localSupabase(), sender: channel.sender, clock },
+      deps: {
+        decisionModel: scriptedDecisionModel([]),
+        brains: [brain],
+        db: localSupabase(),
+        sender: channel.sender,
+        clock,
+      },
       prompt: "You are the host.",
       tools: [],
     })
@@ -243,6 +256,7 @@ describeDatabase("openbox chat against the demo agent", (sql) => {
     const code = await runChat({
       dir: DEMO,
       io,
+      decisionModel: scriptedDecisionModel([]),
       brains: [brain],
       db: localSupabase(),
       sessionId: "s1",
@@ -269,6 +283,7 @@ describeDatabase("openbox chat against the demo agent", (sql) => {
     const code = await runChat({
       dir: DEMO,
       io,
+      decisionModel: scriptedDecisionModel([]),
       brains: [scriptedBrain([{ reply: "Hello." }])],
       db: localSupabase(),
       env: {},
@@ -306,10 +321,14 @@ describe("openbox chat when something is wrong", () => {
 
   test("SKILL-6: a missing database is named too", async () => {
     const io = fakeIo([])
+    // Both providers are passed in, so the only thing left missing is the
+    // database. Without the decision model override this would stop at its
+    // key instead, which is correct but is not what this test is about.
     const code = await runChat({
       dir: DEMO,
       io,
       brains: [scriptedBrain([])],
+      decisionModel: scriptedDecisionModel([]),
       env: {},
     })
 

@@ -1,6 +1,7 @@
 // Turn v0 end to end: a message arrives, a person is created, the brain
 // runs its steps, and a reply goes out through the sender.
-import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, describe, beforeAll, beforeEach, afterEach } from "bun:test"
+import { scriptedDecisionModel, choice } from "../../src/testing/scripted-decision.ts"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
@@ -143,7 +144,13 @@ describeDatabase("a turn", (sql) => {
   ): { agent: Agent; brain: ScriptedBrain } {
     const brain = scriptedBrain(script)
     sender = fakeSender()
-    const deps: Deps = { brains: [brain], db: localSupabase(), sender, clock }
+    const deps: Deps = {
+      decisionModel: scriptedDecisionModel([]),
+      brains: [brain],
+      db: localSupabase(),
+      sender,
+      clock,
+    }
     return { agent: createAgent({ config: config(over), deps, prompt: PROMPT, tools }), brain }
   }
 
@@ -422,7 +429,13 @@ describeDatabase("a turn", (sql) => {
     sender = fakeSender()
     const looping = createAgent({
       config: config({ maxSteps: 3 }),
-      deps: { brains: [brain], db: localSupabase(), sender, clock },
+      deps: {
+        decisionModel: scriptedDecisionModel([]),
+        brains: [brain],
+        db: localSupabase(),
+        sender,
+        clock,
+      },
       prompt: PROMPT,
       tools: [checkAvailability],
     })
@@ -451,7 +464,13 @@ describeDatabase("a turn", (sql) => {
 
     const agent = createAgent({
       config: config(),
-      deps: { brains: [failing, working], db: localSupabase(), sender, clock },
+      deps: {
+        decisionModel: scriptedDecisionModel([]),
+        brains: [failing, working],
+        db: localSupabase(),
+        sender,
+        clock,
+      },
       prompt: PROMPT,
       tools: [checkAvailability],
     })
@@ -467,7 +486,13 @@ describeDatabase("a turn", (sql) => {
 
     const agent = createAgent({
       config: config(),
-      deps: { brains: [failing], db: localSupabase(), sender, clock },
+      deps: {
+        decisionModel: scriptedDecisionModel([]),
+        brains: [failing],
+        db: localSupabase(),
+        sender,
+        clock,
+      },
       prompt: PROMPT,
       tools: [],
     })
@@ -484,6 +509,7 @@ describeDatabase("a turn", (sql) => {
     const other = createAgent({
       config: config({ name: "dentist" }),
       deps: {
+        decisionModel: scriptedDecisionModel([]),
         brains: [scriptedBrain([{ reply: "hi" }])],
         db: localSupabase(),
         sender: fakeSender(),
@@ -497,6 +523,163 @@ describeDatabase("a turn", (sql) => {
     expect(await agent.store.people.count()).toBe(1)
   })
 
+  // ROUTE-1 to ROUTE-5 are proven on their own in test/unit/routing.test.ts.
+  // What only a real turn can show is ROUTE-3: that routing runs again on
+  // every step, so a second step can route somewhere else.
+  describe("ROUTE-3: routing on every step", () => {
+    /** Six read tools, which is one more than routing's default minimum. */
+    const six = (): Tool[] =>
+      ["one", "two", "three", "four", "five", "six"].map((name) =>
+        defineTool({
+          name: `look_up_${name}`,
+          description: `Looks up ${name}.`,
+          input: z.object({}),
+          risk: "read",
+          roles: ["end_user"],
+          conditions: {
+            callWhen: [`the person asks about ${name}`],
+            dontCallWhen: [`the person is not asking about ${name}`],
+          },
+          examples: { should: [`about ${name}`], shouldNot: ["hello"] },
+          handler: async () => ({ found: name }),
+        }),
+      )
+
+    test("ROUTE-3: a two step turn routes twice, and the second step can route elsewhere", async () => {
+      const tools = six()
+      const brain = scriptedBrain([{ tool: "look_up_one", input: {} }, { reply: "Here you go." }])
+      const decisions = scriptedDecisionModel([
+        { tool: choice("look_up_one", { look_up_one: 0.95, no_tool: 0.05 }) },
+        { tool: choice("look_up_four", { look_up_four: 0.92, no_tool: 0.08 }) },
+      ])
+      sender = fakeSender()
+      const agent = createAgent({
+        config: config(),
+        deps: { brains: [brain], decisionModel: decisions, db: localSupabase(), sender, clock },
+        prompt: PROMPT,
+        tools,
+      })
+
+      const result = await agent.receiveAndWait(hello())
+
+      expect(result.turn?.outcome).toBe("replied")
+      // Once per step, not once per turn.
+      expect(decisions.calls).toHaveLength(2)
+      expect(result.turn?.routed.map((entry) => entry.choice)).toEqual([
+        "look_up_one",
+        "look_up_four",
+      ])
+
+      // And the brain saw only what each step routed to.
+      expect(brain.calls[0]?.tools.map((tool) => tool.name)).toEqual(["look_up_one"])
+      expect(brain.calls[1]?.tools.map((tool) => tool.name)).toEqual(["look_up_four"])
+    })
+
+    test("ROUTE-3: every routed step records route_decided", async () => {
+      const captured: [string, Record<string, unknown>][] = []
+      const brain = scriptedBrain([{ tool: "look_up_one", input: {} }, { reply: "Done." }])
+      const decisions = scriptedDecisionModel([
+        { tool: choice("look_up_one", { look_up_one: 0.95, no_tool: 0.05 }) },
+        { tool: choice("no_tool", { no_tool: 0.9, look_up_one: 0.1 }) },
+      ])
+      sender = fakeSender()
+      const agent = createAgent({
+        config: config(),
+        deps: {
+          brains: [brain],
+          decisionModel: decisions,
+          db: localSupabase(),
+          sender,
+          clock,
+          events: {
+            capture: (event, props) => {
+              captured.push([event, props])
+            },
+          },
+        },
+        prompt: PROMPT,
+        tools: six(),
+      })
+
+      await agent.receiveAndWait(hello())
+
+      const routed = captured.filter(([name]) => name === "route_decided")
+      expect(routed).toHaveLength(2)
+      expect(routed[0]?.[1]["reason"]).toBe("top_pick")
+      expect(routed[1]?.[1]["reason"]).toBe("no_tool")
+      // A confident no_tool means the second step was offered nothing.
+      expect(routed[1]?.[1]["exposed"]).toEqual([])
+    })
+
+    test("ROUTE-5: a decision model that is down still answers the person", async () => {
+      // The point of failing open. The person must not notice that an
+      // optimisation was unavailable.
+      const captured: [string, Record<string, unknown>][] = []
+      const brain = scriptedBrain([{ reply: "We open at 11." }])
+      const down = scriptedDecisionModel([{ throws: "the provider is down", retryable: true }])
+      sender = fakeSender()
+      const agent = createAgent({
+        config: config(),
+        deps: {
+          brains: [brain],
+          decisionModel: down,
+          db: localSupabase(),
+          sender,
+          clock,
+          events: {
+            capture: (event, props) => {
+              captured.push([event, props])
+            },
+          },
+        },
+        prompt: PROMPT,
+        tools: six(),
+      })
+
+      const result = await agent.receiveAndWait(hello())
+
+      expect(result.turn?.outcome).toBe("replied")
+      expect(sender.sent[0]?.text).toBe("We open at 11.")
+      // Every tool was offered, exactly as a below threshold answer would.
+      expect(brain.calls[0]?.tools).toHaveLength(6)
+
+      const fell = captured.filter(([name]) => name === "fallback_used")
+      expect(fell).toHaveLength(1)
+      // The same event name as a brain fallback, so `what` separates them.
+      expect(fell[0]?.[1]["what"]).toBe("decision_model")
+    })
+
+    test("ROUTE-1: an agent with few tools records no routing at all", async () => {
+      const captured: [string, Record<string, unknown>][] = []
+      const brain = scriptedBrain([{ reply: "We open at 11." }])
+      const decisions = scriptedDecisionModel([])
+      sender = fakeSender()
+      const agent = createAgent({
+        config: config(),
+        deps: {
+          brains: [brain],
+          decisionModel: decisions,
+          db: localSupabase(),
+          sender,
+          clock,
+          events: {
+            capture: (event, props) => {
+              captured.push([event, props])
+            },
+          },
+        },
+        prompt: PROMPT,
+        tools: [checkAvailability],
+      })
+
+      await agent.receiveAndWait(hello())
+
+      expect(decisions.calls).toHaveLength(0)
+      expect(captured.filter(([name]) => name === "route_decided")).toHaveLength(0)
+      expect(brain.calls[0]?.tools.map((tool) => tool.name)).toEqual(["check_availability"])
+    })
+  })
+
   test("CFG-1: an irreversible tool with no confirmSummary stops the agent starting", () => {
     // defineTool refuses this, so the only way to reach createAgent's check
     // is a tool built around it, as a hand written adapter might.
@@ -505,7 +688,13 @@ describeDatabase("a turn", (sql) => {
     expect(() =>
       createAgent({
         config: config(),
-        deps: { brains: [scriptedBrain([])], db: localSupabase(), sender: fakeSender(), clock },
+        deps: {
+          decisionModel: scriptedDecisionModel([]),
+          brains: [scriptedBrain([])],
+          db: localSupabase(),
+          sender: fakeSender(),
+          clock,
+        },
         prompt: PROMPT,
         tools: [unsafe],
       }),

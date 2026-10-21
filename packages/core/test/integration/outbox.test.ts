@@ -5,6 +5,7 @@
 // so it is `unknown` rather than failed, and saying it again is worse than
 // not knowing.
 import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import {
@@ -95,6 +96,7 @@ describeDatabase("the outbox", (sql) => {
 
   function agentWith(sender: Sender, over: Record<string, unknown> = {}): Agent {
     const deps: Deps = {
+      decisionModel: scriptedDecisionModel([]),
       brains: [scriptedBrain([{ reply: "We open at 11." }])],
       db: localSupabase(),
       sender,
@@ -375,6 +377,7 @@ describeDatabase("the outbox", (sql) => {
     const other = createAgent({
       config: config(),
       deps: {
+        decisionModel: scriptedDecisionModel([]),
         brains: [scriptedBrain([{ reply: "x" }])],
         db: localSupabase(),
         sender: second,
@@ -400,6 +403,7 @@ describeDatabase("the outbox", (sql) => {
     const other = createAgent({
       config: config({ name: "dentist" }),
       deps: {
+        decisionModel: scriptedDecisionModel([]),
         brains: [scriptedBrain([{ reply: "x" }])],
         db: localSupabase(),
         sender: fakeSender(),

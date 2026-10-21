@@ -4,6 +4,7 @@
 // of them build a second agent against the same database and make the two
 // compete. Nothing sleeps where a gate will do.
 import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import { createAgent, createLeases, FREE, type Agent, type Deps } from "../../src/runtime/index.ts"
@@ -97,7 +98,13 @@ describeDatabase("the worker", (sql) => {
     clock = systemClock,
   ): Agent {
     sender = fakeSender()
-    const deps: Deps = { brains, db: localSupabase(), sender, clock }
+    const deps: Deps = {
+      brains,
+      decisionModel: scriptedDecisionModel([]),
+      db: localSupabase(),
+      sender,
+      clock,
+    }
     const agent = createAgent({ config: config(over), deps, prompt: PROMPT, tools: [] })
     agent.start()
     started.push(agent)
@@ -149,7 +156,13 @@ describeDatabase("the worker", (sql) => {
     const brain = scriptedBrain([{ reply: "hi" }])
     const idle = createAgent({
       config: config(),
-      deps: { brains: [brain], db: localSupabase(), sender, clock: systemClock },
+      deps: {
+        decisionModel: scriptedDecisionModel([]),
+        brains: [brain],
+        db: localSupabase(),
+        sender,
+        clock: systemClock,
+      },
       prompt: PROMPT,
       tools: [],
     })
@@ -172,7 +185,13 @@ describeDatabase("the worker", (sql) => {
     sender = fakeSender()
     const idle = createAgent({
       config: config(),
-      deps: { brains: [scriptedBrain([])], db: localSupabase(), sender, clock: systemClock },
+      deps: {
+        decisionModel: scriptedDecisionModel([]),
+        brains: [scriptedBrain([])],
+        db: localSupabase(),
+        sender,
+        clock: systemClock,
+      },
       prompt: PROMPT,
       tools: [],
     })
@@ -211,6 +230,7 @@ describeDatabase("the worker", (sql) => {
     const second = createAgent({
       config: config(),
       deps: {
+        decisionModel: scriptedDecisionModel([]),
         brains: [secondBrain],
         db: localSupabase(),
         sender: secondSender,
@@ -299,7 +319,13 @@ describeDatabase("the worker", (sql) => {
     // The worker is not running yet, so all three land in the inbox first.
     const writer = createAgent({
       config: config(),
-      deps: { brains: [brain], db: localSupabase(), sender, clock: systemClock },
+      deps: {
+        decisionModel: scriptedDecisionModel([]),
+        brains: [brain],
+        db: localSupabase(),
+        sender,
+        clock: systemClock,
+      },
       prompt: PROMPT,
       tools: [],
     })
@@ -327,7 +353,13 @@ describeDatabase("the worker", (sql) => {
     sender = fakeSender()
     const writer = createAgent({
       config: config(),
-      deps: { brains: [brain], db: localSupabase(), sender, clock: systemClock },
+      deps: {
+        decisionModel: scriptedDecisionModel([]),
+        brains: [brain],
+        db: localSupabase(),
+        sender,
+        clock: systemClock,
+      },
       prompt: PROMPT,
       tools: [],
     })
@@ -352,7 +384,13 @@ describeDatabase("the worker", (sql) => {
     sender = fakeSender()
     const writer = createAgent({
       config: config(),
-      deps: { brains: [brain], db: localSupabase(), sender, clock: systemClock },
+      deps: {
+        decisionModel: scriptedDecisionModel([]),
+        brains: [brain],
+        db: localSupabase(),
+        sender,
+        clock: systemClock,
+      },
       prompt: PROMPT,
       tools: [],
     })
@@ -526,6 +564,7 @@ describeDatabase("the worker", (sql) => {
     const other = createAgent({
       config: config({ name: "dentist" }),
       deps: {
+        decisionModel: scriptedDecisionModel([]),
         brains: [scriptedBrain([{ reply: "wrong agent" }])],
         db: localSupabase(),
         sender,

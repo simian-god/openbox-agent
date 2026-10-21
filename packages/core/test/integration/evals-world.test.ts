@@ -18,6 +18,7 @@
 // rewritten into the shape the shim reports, so the core cannot quietly go
 // back to depending on a Postgres error code.
 import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -171,6 +172,7 @@ describeDatabase("the core under a client with no SQLSTATE", (sql) => {
   function agentWith(over: Record<string, unknown> = {}): Agent {
     sender = fakeSender()
     const deps: Deps = {
+      decisionModel: scriptedDecisionModel([]),
       brains: [scriptedBrain([{ reply: "We open at 11." }])],
       db: withShimErrors(localSupabase()),
       sender,

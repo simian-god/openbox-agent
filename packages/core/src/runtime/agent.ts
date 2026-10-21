@@ -32,19 +32,26 @@ import { createOutbox, type Outbox } from "./outbox.ts"
 import { createWorker } from "./worker.ts"
 import type { Inbound, Sender } from "./sender.ts"
 import { runTurn, type TurnResult } from "./turn.ts"
+import type { DecisionModel } from "../providers/decision/types.ts"
 import { ensureVersionRow, versionHash } from "./version.ts"
 
 export interface Deps {
   /** The first is the primary, the rest are fallbacks in order. */
   brains: Brain[]
+  /**
+   * DM-1: what routing and the gate ask. Required, because config always
+   * names one, so an agent that could not ask would be misconfigured
+   * rather than simply unrouted. Tests pass `scriptedDecisionModel`.
+   */
+  decisionModel: DecisionModel
   db: SupabaseClient
   sender: Sender
   clock?: Clock | undefined
   /** EVT-1: told about every event, alongside the agent's own table. */
   events?: EventSink | undefined
-  // decisionModel, transcriber and retriever join Deps as the features
-  // that need them land, in M3, M7 and M8. They are left out rather than
-  // stubbed, so nothing can quietly depend on a fake.
+  // transcriber and retriever join Deps as the features that need them
+  // land, in M7 and M8. They are left out rather than stubbed, so nothing
+  // can quietly depend on a fake.
 }
 
 export interface AgentOptions {
@@ -528,6 +535,7 @@ export function createAgent(options: AgentOptions): Agent {
       history: [...history].reverse(),
       store,
       brains: deps.brains,
+      decisionModel: deps.decisionModel,
       models,
       tools,
       clock,
@@ -615,6 +623,7 @@ export function createAgent(options: AgentOptions): Agent {
       steps: 0,
       costUsd: 0,
       brainsUsed: [],
+      routed: [],
       toolsRun: [],
       outcome: "failed",
       error: message,

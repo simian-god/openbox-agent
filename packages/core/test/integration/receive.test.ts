@@ -8,6 +8,7 @@
 // Nothing here sleeps. A brain held on a gate makes "the turn is still
 // running" an exact statement rather than a race.
 import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import {
@@ -111,7 +112,13 @@ describeDatabase("receive", (sql) => {
 
   function agentWith(brains: Brain[], over: Record<string, unknown> = {}): Agent {
     sender = fakeSender()
-    const deps: Deps = { brains, db: localSupabase(), sender, clock }
+    const deps: Deps = {
+      brains,
+      decisionModel: scriptedDecisionModel([]),
+      db: localSupabase(),
+      sender,
+      clock,
+    }
     return createAgent({ config: config(over), deps, prompt: PROMPT, tools: [] })
   }
 
@@ -283,7 +290,13 @@ describeDatabase("receive", (sql) => {
     }
     const agent = createAgent({
       config: config(),
-      deps: { brains: [broken], db: localSupabase(), sender, clock },
+      deps: {
+        decisionModel: scriptedDecisionModel([]),
+        brains: [broken],
+        db: localSupabase(),
+        sender,
+        clock,
+      },
       prompt: PROMPT,
       tools: [],
       onTurnError: (failure) => problems.push(failure.error),

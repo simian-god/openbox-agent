@@ -14,6 +14,7 @@ import {
   type Env,
 } from "../providers/index.ts"
 import type { Brain } from "../providers/brains/types.ts"
+import type { DecisionModel } from "../providers/decision/types.ts"
 import { createAgent } from "../runtime/agent.ts"
 import { loadProject, ProjectError, type LoadProjectOptions } from "./project.ts"
 import { stdio, terminalChannel, type ChatIo } from "./terminal.ts"
@@ -26,6 +27,7 @@ export interface ChatOptions extends LoadProjectOptions {
   io?: ChatIo | undefined
   /** Used as given, so a test needs no key and no network (DEP-3). */
   brains?: Brain[] | undefined
+  decisionModel?: DecisionModel | undefined
   db?: SupabaseClient | undefined
   sessionId?: string | undefined
 }
@@ -58,12 +60,21 @@ export async function runChat(options: ChatOptions = {}): Promise<number> {
   const config = chatConfig(project.config)
 
   let brains: Brain[]
+  let decisionModel: DecisionModel
   let db: SupabaseClient
   try {
-    brains =
-      options.brains !== undefined
-        ? providersFromConfig(config, { brains: options.brains }, env).brains
-        : providersFromConfig(config, {}, env).brains
+    // One call, so every missing key is reported together rather than one
+    // run at a time.
+    const built = providersFromConfig(
+      config,
+      {
+        ...(options.brains !== undefined ? { brains: options.brains } : {}),
+        ...(options.decisionModel !== undefined ? { decisionModel: options.decisionModel } : {}),
+      },
+      env,
+    )
+    brains = built.brains
+    decisionModel = built.decisionModel
     db = options.db ?? supabaseFromEnv(env)
   } catch (error) {
     if (error instanceof ProviderError) {
@@ -85,7 +96,7 @@ export async function runChat(options: ChatOptions = {}): Promise<number> {
   try {
     agent = createAgent({
       config,
-      deps: { brains, db, sender: channel.sender },
+      deps: { brains, decisionModel, db, sender: channel.sender },
       prompt: project.prompt,
       tools: project.tools,
     })

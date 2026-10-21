@@ -1,10 +1,10 @@
 // LOOP-8: the step loop.
 //
-// Turn v0. Routing, the gate, confirmation, handover and the built in
-// tools are not here yet, so only read tools are exposed and a write or
-// irreversible tool is simply not offered. The order of the steps is the
-// order the Spec gives, so the later milestones slot in rather than
-// rearrange.
+// Steps 1 and 2 are routing (ROUTE-1 to ROUTE-5). The gate, confirmation,
+// handover and the built in tools are not here yet, so only read tools are
+// exposed and a write or irreversible tool is simply not offered. The
+// order of the steps is the order the Spec gives, so the later milestones
+// slot in rather than rearrange.
 import type { OpenboxConfig } from "../config/index.ts"
 import type { Brain, BrainMessage } from "../providers/brains/types.ts"
 import { BrainError } from "../providers/brains/types.ts"
@@ -14,6 +14,8 @@ import type { Clock } from "../testing/clock.ts"
 import { buildMessages, buildRuntimeBlock, buildSystem } from "./context.ts"
 import type { MessageRow } from "../store/index.ts"
 import { noEvents, type EventWriter } from "./events.ts"
+import { route, type RoutingState } from "./routing.ts"
+import type { DecisionModel } from "../providers/decision/types.ts"
 
 export interface TurnInput {
   config: OpenboxConfig
@@ -25,6 +27,8 @@ export interface TurnInput {
   history: MessageRow[]
   store: Store
   brains: Brain[]
+  /** DM-1: what routing asks (ROUTE-1). */
+  decisionModel: DecisionModel
   models: string[]
   tools: ToolRegistry
   clock: Clock
@@ -47,6 +51,8 @@ export interface TurnResult {
   /** Which brain answered each step, in order (BRAIN-5, DEP-3). */
   brainsUsed: string[]
   toolsRun: { name: string; ok: boolean }[]
+  /** One entry per step: what routing decided, for the trace and tests. */
+  routed: { step: number; reason: string; choice?: string | undefined }[]
   /**
    * `failed` is not produced here. `createAgent` uses it for a turn that
    * ended in a way the core did not plan for, so a caller of
@@ -71,6 +77,7 @@ function unknownToolResult(name: string, offered: Tool[]): string {
 export async function runTurn(input: TurnInput): Promise<TurnResult> {
   const { config, history, store, brains, models, tools, clock, person, batch, prompt, turnId } =
     input
+  const decisionModel = input.decisionModel
   const events = input.events ?? noEvents()
 
   // LOOP-7, then LOOP-8 step 10: this turn's own calls and results are
@@ -81,15 +88,70 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
 
   // ROLE-3 removes what this role may not use. v0 offers only read tools,
   // because write and irreversible calls must pass the gate, which is M3.
-  const offered = tools.forRole(person.role).filter((tool) => tool.risk === "read")
+  const allowed = tools.forRole(person.role).filter((tool) => tool.risk === "read")
+
+  // ROUTE-1: the state routing reasons over. The last 6 messages, the
+  // batch, and the active task, which arrives with tasks in M4.
+  const routingState = (): RoutingState => ({
+    messages: messages
+      .filter((message) => message.role === "person" || message.role === "agent")
+      .slice(-6)
+      .map((message) => ({
+        role: message.role,
+        text: "text" in message ? message.text : "",
+      })),
+    batch,
+    activeTask: null,
+  })
 
   const brainsUsed: string[] = []
   const toolsRun: { name: string; ok: boolean }[] = []
+  const routed: TurnResult["routed"] = []
   let costUsd = 0
   let steps = 0
 
   while (steps < config.maxSteps) {
     steps++
+
+    // Steps 1 and 2: routing decides which tools this step offers. It runs
+    // on every step (ROUTE-3), so after one tool's result the next step
+    // can route somewhere else.
+    const routing = await route({
+      decisionModel,
+      tools: allowed,
+      state: routingState(),
+      minTools: config.routingMinTools,
+      threshold: config.decisionModel.routeThreshold,
+      timeoutMs: config.decisionTimeoutMs,
+    })
+    const offered = routing.exposed
+    costUsd += routing.costUsd
+    routed.push({
+      step: steps,
+      reason: routing.reason,
+      ...(routing.choice !== undefined ? { choice: routing.choice } : {}),
+    })
+
+    if (routing.reason !== "not_routed") {
+      await events.record("route_decided", {
+        step: steps,
+        reason: routing.reason,
+        exposed: offered.map((tool) => tool.name),
+        requests: routing.requests,
+        ...(routing.choice !== undefined ? { choice: routing.choice } : {}),
+        ...(routing.confidence !== undefined ? { confidence: routing.confidence } : {}),
+      })
+    }
+
+    if (routing.reason === "fallback") {
+      // ROUTE-5. The same event name as a brain fallback, so `what` is
+      // what tells the two apart in the trace.
+      await events.record("fallback_used", {
+        what: "decision_model",
+        step: steps,
+        ...(routing.error !== undefined ? { error: routing.error } : {}),
+      })
+    }
 
     // Step 3: the brain, with the fallback chain (BRAIN-5 proper is M5).
     let answered = false
@@ -130,7 +192,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       // LOOP-12 proper, with its holding message, is T2.x. Here the turn
       // simply ends and says so, rather than pretending it replied.
       void lastError
-      return { steps, costUsd, brainsUsed, toolsRun, outcome: "brains_failed" }
+      return { steps, costUsd, brainsUsed, toolsRun, routed, outcome: "brains_failed" }
     }
 
     costUsd += output.usage.costUsd ?? 0
@@ -140,8 +202,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     if (call === undefined) {
       const reply = output.text?.trim()
       return reply === undefined || reply === ""
-        ? { steps, costUsd, brainsUsed, toolsRun, outcome: "no_reply" }
-        : { reply, steps, costUsd, brainsUsed, toolsRun, outcome: "replied" }
+        ? { steps, costUsd, brainsUsed, toolsRun, routed, outcome: "no_reply" }
+        : { reply, steps, costUsd, brainsUsed, toolsRun, routed, outcome: "replied" }
     }
 
     messages.push({ role: "tool_call", id: call.id, name: call.name, input: call.input })
@@ -240,5 +302,5 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
 
   // LOOP-9's fixed reply, flag and operator alert are M7. v0 reports it.
   void turnId
-  return { steps, costUsd, brainsUsed, toolsRun, outcome: "step_cap" }
+  return { steps, costUsd, brainsUsed, toolsRun, routed, outcome: "step_cap" }
 }

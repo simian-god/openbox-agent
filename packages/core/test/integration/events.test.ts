@@ -3,6 +3,7 @@
 // Events and versions are built in from the start rather than bolted on at
 // the end, so every later feature records itself as it lands.
 import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
@@ -107,6 +108,7 @@ describeDatabase("events and versions", (sql) => {
     sender = fakeSender()
     const deps: Deps = {
       brains: over.brains ?? [scriptedBrain(script)],
+      decisionModel: scriptedDecisionModel([]),
       db: localSupabase(),
       sender,
       clock,
@@ -298,7 +300,13 @@ describeDatabase("events and versions", (sql) => {
     sender = fakeSender()
     const agent = createAgent({
       config: config(),
-      deps: { brains: [scriptedBrain([{ reply: "We open at 11." }])], db, sender, clock },
+      deps: {
+        decisionModel: scriptedDecisionModel([]),
+        brains: [scriptedBrain([{ reply: "We open at 11." }])],
+        db,
+        sender,
+        clock,
+      },
       prompt: PROMPT,
       tools: [checkAvailability],
     })
@@ -380,6 +388,7 @@ describeDatabase("events and versions", (sql) => {
     const other = createAgent({
       config: config({ name: "dentist" }),
       deps: {
+        decisionModel: scriptedDecisionModel([]),
         brains: [scriptedBrain([{ reply: "hi" }])],
         db: localSupabase(),
         sender: fakeSender(),

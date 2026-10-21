@@ -11,6 +11,7 @@
 // that cannot be checked a piece at a time: two processes, one database,
 // and nobody handled twice.
 import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import {
@@ -144,6 +145,7 @@ describeDatabase("C13: messy delivery", (sql) => {
     // Both processes get the retry, as a load balancer would deliver it.
     const sender = fakeSender()
     const deps = (): Deps => ({
+      decisionModel: scriptedDecisionModel([]),
       brains: [watcher().brain("b", "We open at 11.")],
       db: localSupabase(),
       sender,
@@ -171,6 +173,7 @@ describeDatabase("C13: messy delivery", (sql) => {
       // A real window, so this is the window doing the work and not a zero.
       config: config({ burstWindowMs: 250 }),
       deps: {
+        decisionModel: scriptedDecisionModel([]),
         brains: [seen.brain("b", "All three, noted.")],
         db: localSupabase(),
         sender,
@@ -205,6 +208,7 @@ describeDatabase("C13: messy delivery", (sql) => {
       createAgent({
         config: config(),
         deps: {
+          decisionModel: scriptedDecisionModel([]),
           brains: [seen.brain(id, "answered")],
           db: localSupabase(),
           sender,
@@ -249,6 +253,7 @@ describeDatabase("C13: messy delivery", (sql) => {
     const agent = createAgent({
       config: config(),
       deps: {
+        decisionModel: scriptedDecisionModel([]),
         brains: [seen.brain("b", "ok")],
         db: localSupabase(),
         sender,
@@ -283,6 +288,7 @@ describeDatabase("C13: messy delivery", (sql) => {
     const agent = createAgent({
       config: config(),
       deps: {
+        decisionModel: scriptedDecisionModel([]),
         brains: [watcher().brain("b", "We open at 11.")],
         db: localSupabase(),
         sender,
@@ -306,6 +312,7 @@ describeDatabase("C13: messy delivery", (sql) => {
     const agent = createAgent({
       config: config(),
       deps: {
+        decisionModel: scriptedDecisionModel([]),
         brains: [watcher().brain("b", "We open at 11.")],
         db: localSupabase(),
         sender,
@@ -330,6 +337,7 @@ describeDatabase("C13: messy delivery", (sql) => {
     const agent = createAgent({
       config: config(),
       deps: {
+        decisionModel: scriptedDecisionModel([]),
         brains: [watcher().brain("b", "We open at 11.")],
         db: localSupabase(),
         sender,
@@ -352,6 +360,7 @@ describeDatabase("C13: messy delivery", (sql) => {
     const agent = createAgent({
       config: config(),
       deps: {
+        decisionModel: scriptedDecisionModel([]),
         brains: [watcher().brain("b", "We open at 11.")],
         db: localSupabase(),
         sender,
