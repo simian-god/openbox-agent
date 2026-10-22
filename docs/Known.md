@@ -296,7 +296,9 @@ arms to compare, and `openbox tune` has no threshold to measure either. Both
 commands say so and stop rather than reporting a number about nothing.
 
 **What it costs.** M3's "Done when" asks for C8 to be measurable on the demo
-agent, and it is not. The measurement itself is real, and runs on a fixture.
+agent, and it is not. The measurement itself is real, and runs on a fixture. The
+M3 check row is `blocked` because of this one item, which was the builder's call:
+rewording the bar would have closed the row and lost the reminder.
 
 **What we did.** Built `packages/core/test/fixtures/routing-agent`: eight tools
 across all three risk levels, each with the conditions and examples TOOL-1 asks
@@ -306,5 +308,5 @@ not a second example to learn from, and its README says so.
 
 **What would resolve it.** T11.1 rebuilds the demo agent with the skill, and a
 real restaurant agent has far more than five tools. C8 moves onto it then and
-this fixture can go. Until then the M3 check records C8 as measured on the
-fixture rather than on the demo agent.
+this fixture can go. `bun run m3-check` is in the repo so that row can be
+re-run in one command rather than rebuilt from the Plan.
