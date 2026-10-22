@@ -467,10 +467,14 @@ describeDatabase("structured confirmation", (sql) => {
 
       const [first, second] = await Promise.all([tap(), tap()])
 
-      // Exactly one of them ran it, whichever won the claim.
+      // Exactly one of them ran it, whichever won the claim. The loser can
+      // land either way and both are right: `rejected` when it finds the
+      // action claimed, `already_done` when the winner has got as far as
+      // executing it. What matters is that it is not `executed`.
       expect(charged).toEqual([{ size: 4 }])
-      const kinds = [first?.kind, second?.kind].sort()
-      expect(kinds).toEqual(["executed", "rejected"])
+      const kinds = [first?.kind, second?.kind]
+      expect(kinds.filter((kind) => kind === "executed")).toHaveLength(1)
+      expect(kinds.filter((kind) => kind === "rejected" || kind === "already_done")).toHaveLength(1)
       expect((await agent.store.pendingActions.byId(action.id))?.status).toBe("executed")
     })
 

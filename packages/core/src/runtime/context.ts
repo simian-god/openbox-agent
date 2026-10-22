@@ -7,7 +7,7 @@
 // prompt can stay a fixed string and be hashed for a version (LEARN-2).
 import type { OpenboxConfig } from "../config/index.ts"
 import type { BrainMessage } from "../providers/brains/types.ts"
-import type { MessageRow, PersonRow } from "../store/index.ts"
+import type { MessageRow, PendingActionRow, PersonRow, TaskRow } from "../store/index.ts"
 
 const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const
 type DayKey = (typeof DAY_KEYS)[number]
@@ -60,11 +60,20 @@ export interface RuntimeBlockInput {
   config: OpenboxConfig
   person: PersonRow
   now: Date
+  /** LOOP-7: this person's open tasks, with the active one marked. */
+  tasks?: TaskRow[] | undefined
+  /** LOOP-7: what they have been asked to confirm and has not expired. */
+  pendingActions?: PendingActionRow[] | undefined
 }
 
 /**
- * The runtime block LOOP-7 describes. Facts, tasks and pending actions
- * join it when those features land, in M4.
+ * The runtime block LOOP-7 describes. Facts join it with `remember`, in
+ * T4.4.
+ *
+ * Tasks are listed with what is still missing from each, because that is
+ * the one thing the brain must not work out for itself (BUILTIN-2). Said
+ * plainly in the block, so a brain that is about to claim a booking is
+ * complete has to read the opposite first.
  */
 export function buildRuntimeBlock(input: RuntimeBlockInput): string {
   const { config, person, now } = input
@@ -90,6 +99,37 @@ export function buildRuntimeBlock(input: RuntimeBlockInput): string {
     `Today: ${hoursLine(config, now)}`,
     `Tomorrow: ${hoursLine(config, tomorrow)}`,
   )
+
+  const tasks = input.tasks ?? []
+  if (tasks.length > 0) {
+    lines.push("", "# Open tasks")
+    for (const task of tasks) {
+      const mark = task.status === "active" ? " (active)" : ""
+      const fields = Object.entries(task.fields)
+        .map(([name, value]) => `${name}=${JSON.stringify(value)}`)
+        .join(", ")
+      lines.push(`- ${task.type}${mark}, id ${task.id}`)
+      lines.push(`  known: ${fields === "" ? "nothing yet" : fields}`)
+      lines.push(
+        task.missing.length === 0
+          ? "  still missing: nothing"
+          : `  still missing: ${task.missing.join(", ")}`,
+      )
+    }
+    lines.push(
+      "Use update_task to record anything new. What is still missing is worked out",
+      "for you: never decide a task is complete yourself.",
+    )
+  }
+
+  const pending = input.pendingActions ?? []
+  if (pending.length > 0) {
+    lines.push("", "# Waiting on their confirmation")
+    for (const action of pending) {
+      lines.push(`- ${action.tool}: ${action.summary}`)
+    }
+    lines.push("This has not happened yet. Do not say it has.")
+  }
 
   return lines.join("\n")
 }

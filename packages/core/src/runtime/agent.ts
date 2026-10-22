@@ -23,6 +23,8 @@ import {
   type Store,
 } from "../store/index.ts"
 import { createToolRegistry, type Tool, type ToolRegistry } from "../tools/index.ts"
+import { taskTools, openTasks, TASK_EXPIRE_JOB } from "../tools/tasks.ts"
+import type { TaskRow } from "../store/index.ts"
 import type { Clock } from "../testing/clock.ts"
 import { systemClock } from "../testing/clock.ts"
 import { createEvents, type EventFailure, type EventSink, type EventWriter } from "./events.ts"
@@ -170,7 +172,31 @@ export function createAgent(options: AgentOptions): Agent {
   const { config, deps, prompt } = options
   const clock = deps.clock ?? systemClock
   const store = createStore(deps.db, config.name)
-  const tools = createToolRegistry(options.tools ?? [])
+
+  // BUILTIN-2: the task tools exist only for an agent that declares task
+  // types. Four tool schemas on every brain call is a real cost, and an
+  // agent with nothing multi turn to track cannot use them anyway.
+  const hasTaskTypes = Object.keys(config.taskTypes).length > 0
+
+  // Declared here and filled in below, because the task tools need to
+  // cancel pending actions and the confirmations need the tool registry.
+  // One of the two has to be late, and a tool nobody has called yet is
+  // the safer one.
+  let taskChanged: ((task: TaskRow, why: string) => Promise<void>) | undefined
+  let scheduleTaskExpiry: ((task: TaskRow) => Promise<void>) | undefined
+
+  const tools = createToolRegistry([
+    ...(options.tools ?? []),
+    ...(hasTaskTypes
+      ? taskTools({
+          config,
+          store,
+          clock: deps.clock ?? systemClock,
+          onTaskChanged: (task, why) => taskChanged?.(task, why) ?? Promise.resolve(),
+          scheduleExpiry: (task) => scheduleTaskExpiry?.(task) ?? Promise.resolve(),
+        })
+      : []),
+  ])
   const events = createEvents({
     store,
     clock,
@@ -188,7 +214,7 @@ export function createAgent(options: AgentOptions): Agent {
   // which means a secret. Refused at startup rather than at the moment a
   // person is asked to confirm something, because that is the worst
   // possible time to find out.
-  const irreversible = (options.tools ?? []).filter((tool) => tool.risk === "irreversible")
+  const irreversible = tools.all().filter((tool) => tool.risk === "irreversible")
   const secret = options.secret ?? ""
   if (irreversible.length > 0 && secret === "") {
     problems.push(
@@ -346,7 +372,7 @@ export function createAgent(options: AgentOptions): Agent {
           jobs,
           sender: deps.sender,
           secret,
-          toolByName: (name) => tools.all().find((tool) => tool.name === name),
+          toolByName: (name) => tools.get(name),
           contextFor: (person) => toolContext({ store, clock, person }),
         })
 
@@ -354,6 +380,56 @@ export function createAgent(options: AgentOptions): Agent {
     jobs.on(EXPIRE_JOB, async (job) => {
       const actionId = (job.payload as { actionId?: unknown }).actionId
       if (typeof actionId === "string") await confirmations.expire(actionId)
+    })
+  }
+
+  if (hasTaskTypes) {
+    // CONF-6 and BUILTIN-3: a task whose fields changed, or that closed,
+    // takes its pending action with it. The person agreed to what they
+    // were shown, and that is no longer what they were shown.
+    taskChanged = async (task, why) => {
+      if (confirmations === undefined) return
+      const open = await store.pendingActions.list({ task_id: task.id, status: "pending" })
+      for (const action of open) {
+        await store.pendingActions.update(
+          { id: action.id, status: "pending" },
+          { status: "cancelled", decided_at: clock.now().toISOString(), error: why },
+        )
+      }
+    }
+
+    // BUILTIN-3: one job per expiry time. The key carries the time, so
+    // every change schedules a new one and the old ones find the task no
+    // longer idle and do nothing. Rescheduling a job is not a thing the
+    // dedupe key allows, and this needs no new machinery.
+    scheduleTaskExpiry = async (task) => {
+      await jobs.queue({
+        kind: TASK_EXPIRE_JOB,
+        payload: { taskId: task.id, expiresAt: task.expires_at },
+        runAt: new Date(task.expires_at),
+        dedupeKey: `${TASK_EXPIRE_JOB}:${task.id}:${task.expires_at}`,
+      })
+    }
+
+    jobs.on(TASK_EXPIRE_JOB, async (job) => {
+      const taskId = (job.payload as { taskId?: unknown }).taskId
+      if (typeof taskId !== "string") return
+      const task = await store.tasks.byId(taskId)
+      if (task === null) return
+      if (task.status !== "open" && task.status !== "active") return
+      // The task was touched after this job was scheduled, so it is not
+      // idle. A later job is already queued for the new time.
+      if (new Date(task.expires_at).getTime() > clock.now().getTime()) return
+
+      const [expired] = await store.tasks.update(
+        { id: task.id },
+        { status: "expired", closed_at: clock.now().toISOString() },
+      )
+      await events
+        .about({ personId: task.person_id })
+        .record("job_ran", { job: TASK_EXPIRE_JOB, taskId: task.id, expired: true })
+      // BUILTIN-3: expiry takes the task's pending actions with it.
+      if (expired !== undefined) await taskChanged?.(expired, "the task expired")
     })
   }
 
@@ -654,6 +730,16 @@ export function createAgent(options: AgentOptions): Agent {
       }
     }
 
+    // LOOP-7: read before the turn, so the brain sees where the
+    // conversation got to rather than having to work it out from thirty
+    // messages. BUILTIN-2's `missing` is the part it must not work out.
+    const tasks = hasTaskTypes ? await openTasks(store, person) : []
+    const active = tasks.find((task) => task.status === "active")
+    const pending =
+      confirmations === undefined
+        ? []
+        : await store.pendingActions.list({ person_id: person.id, status: "pending" })
+
     const result = await runTurn({
       config,
       history: [...history].reverse(),
@@ -671,6 +757,18 @@ export function createAgent(options: AgentOptions): Agent {
       events: turnEvents,
       ...(notices.length > 0 ? { notices } : {}),
       ...(confirmations !== undefined ? { confirm: confirmations } : {}),
+      ...(tasks.length > 0 ? { tasks } : {}),
+      ...(pending.length > 0 ? { pendingActions: pending } : {}),
+      ...(active !== undefined
+        ? {
+            activeTask: {
+              id: active.id,
+              type: active.type,
+              fields: active.fields,
+              missing: active.missing,
+            },
+          }
+        : {}),
     })
 
     if (result.reply !== undefined) {

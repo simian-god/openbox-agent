@@ -76,6 +76,14 @@ export interface ToolDefinition<TInput extends z.ZodObject = z.ZodObject> {
 
 /** A registered tool: the definition plus what the core derives from it. */
 export interface Tool<TInput extends z.ZodObject = z.ZodObject> extends ToolDefinition<TInput> {
+  /**
+   * True for a tool the core itself ships (section 10).
+   *
+   * BUILTIN-1: these skip routing and are exposed whatever routing
+   * decides, so a step has to be able to tell them apart from the
+   * builder's own tools.
+   */
+  readonly builtin: boolean
   /** TOOL-1: the input schema, as a brain needs it. */
   readonly inputSchema: JSONSchema
   /** TOOL-3: description, then the call when and don't call when lines. */
@@ -135,6 +143,33 @@ function toBrainSchema(input: z.ZodObject): JSONSchema {
 export function defineTool<TInput extends z.ZodObject>(
   definition: ToolDefinition<TInput>,
 ): Tool<TInput> {
+  return build(definition, false)
+}
+
+/**
+ * The same rules, for a tool the core itself ships (section 10).
+ *
+ * Its own door rather than a flag on `defineTool`, because the one thing
+ * `defineTool` must keep refusing is an agent tool wearing a built in
+ * tool's name. This one insists on the opposite: the name has to be one of
+ * section 10's, so nothing can smuggle an ordinary tool through here and
+ * have it exposed on every step without routing.
+ */
+export function defineBuiltinTool<TInput extends z.ZodObject>(
+  definition: ToolDefinition<TInput>,
+): Tool<TInput> {
+  if (!isBuiltinToolName(definition.name)) {
+    throw new ToolError(`The tool ${definition.name}`, [
+      `name: ${definition.name} is not one of section 10's built in tools, so it cannot be registered as one`,
+    ])
+  }
+  return build(definition, true)
+}
+
+function build<TInput extends z.ZodObject>(
+  definition: ToolDefinition<TInput>,
+  builtin: boolean,
+): Tool<TInput> {
   const problems: string[] = []
   const d = definition as unknown as Record<string, unknown>
 
@@ -143,7 +178,7 @@ export function defineTool<TInput extends z.ZodObject>(
     problems.push(
       "name: must be 1 to 64 characters of letters, numbers, underscore or hyphen, so a brain can call it",
     )
-  } else if (isBuiltinToolName(name)) {
+  } else if (!builtin && isBuiltinToolName(name)) {
     problems.push(`name: ${name} is a built in tool, so an agent tool cannot take that name`)
   }
 
@@ -212,6 +247,7 @@ export function defineTool<TInput extends z.ZodObject>(
   const schema = definition.input
   return Object.freeze({
     ...definition,
+    builtin,
     inputSchema: toBrainSchema(schema),
     brainDescription: brainDescription(definition.description, definition.conditions),
     parse: (args: unknown) => schema.parse(args) as z.output<TInput>,

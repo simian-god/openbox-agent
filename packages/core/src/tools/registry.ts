@@ -3,11 +3,22 @@ import { isBuiltinToolName } from "./builtins.ts"
 import { ToolError, type Role, type Tool } from "./define.ts"
 
 export interface ToolRegistry {
-  /** Every agent tool, in the order it was registered. */
+  /**
+   * Every agent tool, in the order it was registered.
+   *
+   * The builder's own tools only. LEARN-2 hashes this, and a built in
+   * tool's wording is the core's business rather than the agent's: the
+   * core package version is already in the hash.
+   */
   all(): Tool[]
+  /** Every built in tool the core registered (section 10). */
+  builtins(): Tool[]
+  /** Any tool by name, built in or not. */
   get(name: string): Tool | undefined
-  /** ROLE-3: the tools this role is allowed to use. */
+  /** ROLE-3: the agent tools this role is allowed to use. */
   forRole(role: Role): Tool[]
+  /** BUILTIN-1: the built in tools this role may use, which skip routing. */
+  builtinsForRole(role: Role): Tool[]
 }
 
 /**
@@ -24,7 +35,9 @@ export function createToolRegistry(tools: Tool[]): ToolRegistry {
       problems.push(`${tool.name}: two tools share this name`)
       continue
     }
-    if (isBuiltinToolName(tool.name)) {
+    // A built in tool may hold a built in name. That is the only thing
+    // that may, and `defineBuiltinTool` is the only way to get one.
+    if (!tool.builtin && isBuiltinToolName(tool.name)) {
       problems.push(`${tool.name}: this is a built in tool's name`)
       continue
     }
@@ -34,10 +47,14 @@ export function createToolRegistry(tools: Tool[]): ToolRegistry {
   if (problems.length > 0) throw new ToolError("These tools", problems)
 
   const registered = [...byName.values()]
+  const agentTools = registered.filter((tool) => !tool.builtin)
+  const builtinTools = registered.filter((tool) => tool.builtin)
 
   return {
-    all: () => [...registered],
+    all: () => [...agentTools],
+    builtins: () => [...builtinTools],
     get: (name: string) => byName.get(name),
-    forRole: (role: Role) => registered.filter((tool) => tool.roles.includes(role)),
+    forRole: (role: Role) => agentTools.filter((tool) => tool.roles.includes(role)),
+    builtinsForRole: (role: Role) => builtinTools.filter((tool) => tool.roles.includes(role)),
   }
 }

@@ -24,6 +24,13 @@ export {
 
 export {
   defineTool,
+  defineBuiltinTool,
+  taskTools,
+  openTasks,
+  missingFields,
+  describeTask,
+  TASK_EXPIRE_JOB,
+  type TaskToolOptions,
   createToolRegistry,
   brainDescription,
   ToolError,
@@ -87,6 +94,8 @@ export {
   type FlagKind,
   type PendingActionRow,
   type PendingActionStatus,
+  type TaskRow,
+  type TaskStatus,
   type OutboxRow,
   type OutboxKind,
   type OutboxStatus,

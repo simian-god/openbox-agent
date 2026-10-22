@@ -160,10 +160,15 @@ const PRICING = z.record(
     .strict(),
 )
 
+/** BUILTIN-2: a task type's fields, and which of them are required. */
 const TASK_TYPE = z
   .object({
     fields: z.record(z.string(), z.enum(["required", "optional"])),
-    idleHours: z.number().positive(),
+    // BUILTIN-3: how long a task may go without a change before it
+    // expires. 24 hours is the Spec's default, and it was required here
+    // with no default, which made every task type carry a number the
+    // builder had no basis to choose.
+    idleHours: z.number().positive().default(24),
   })
   .strict()
 

@@ -15,6 +15,7 @@ export const CORE_TABLES = [
   "ob_decisions",
   "ob_flags",
   "ob_pending_actions",
+  "ob_tasks",
 ] as const
 
 export type CoreTable = (typeof CORE_TABLES)[number]
@@ -39,6 +40,12 @@ export type PendingActionStatus =
   | "failed"
   | "cancelled"
   | "expired"
+
+/**
+ * DATA-2. `active` is the one task of a person's that the brain is working
+ * on, which is a status rather than a flag so there can only be one.
+ */
+export type TaskStatus = "open" | "active" | "done" | "cancelled" | "expired"
 
 /** DATA-2. `pending` is an irreversible call waiting on a person's confirm. */
 export type ToolRunStatus = "ok" | "error" | "blocked" | "needs_confirmation" | "pending"
@@ -282,6 +289,27 @@ export interface PendingActionRow {
   created_at: string
 }
 
+/** BUILTIN-2: a job of work that takes more than one turn. */
+export interface TaskRow {
+  id: string
+  seq: number
+  agent_id: string
+  person_id: string
+  turn_id: string | null
+  /** A key of config.taskTypes. */
+  type: string
+  /** What has been gathered so far. */
+  fields: Record<string, unknown>
+  /** BUILTIN-2: required fields still missing. Written only by code. */
+  missing: string[]
+  status: TaskStatus
+  /** BUILTIN-3: idle expiry, pushed out by every change. */
+  expires_at: string
+  closed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 /** Maps a table name to its row type. */
 export interface CoreRows {
   ob_people: PersonRow
@@ -297,6 +325,7 @@ export interface CoreRows {
   ob_decisions: DecisionRow
   ob_flags: FlagRow
   ob_pending_actions: PendingActionRow
+  ob_tasks: TaskRow
 }
 
 /** What a caller supplies when inserting: no id, no agent_id, no defaults. */

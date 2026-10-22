@@ -21,7 +21,7 @@ import { noEvents, type EventWriter } from "./events.ts"
 import { route, ROUTING_QUESTION, type RoutingState } from "./routing.ts"
 import { gate, type GateConversation } from "./gate.ts"
 import { toolContext } from "./tool-context.ts"
-import type { PendingActionRow } from "../store/index.ts"
+import type { PendingActionRow, TaskRow } from "../store/index.ts"
 import type { DecisionModel } from "../providers/decision/types.ts"
 
 export interface TurnInput {
@@ -55,6 +55,15 @@ export interface TurnInput {
    * is when they happened.
    */
   notices?: string[] | undefined
+  /**
+   * ROUTE-1 and GATE-1: the task the brain is working on, as both the
+   * routing question and the gate reason over it. Null until one is open.
+   */
+  activeTask?: unknown
+  /** LOOP-7: this person's open tasks, for the runtime block. */
+  tasks?: TaskRow[] | undefined
+  /** LOOP-7: what they have been asked to confirm and has not expired. */
+  pendingActions?: PendingActionRow[] | undefined
   /**
    * CONF-1: makes a pending action when an irreversible call passes the
    * gate. Absent for an agent with no irreversible tools, in which case
@@ -130,7 +139,16 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   // asked anything.
   for (const text of input.notices ?? []) messages.push({ role: "notice", text })
 
-  const system = buildSystem(prompt, buildRuntimeBlock({ config, person, now: clock.now() }))
+  const system = buildSystem(
+    prompt,
+    buildRuntimeBlock({
+      config,
+      person,
+      now: clock.now(),
+      ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
+      ...(input.pendingActions !== undefined ? { pendingActions: input.pendingActions } : {}),
+    }),
+  )
 
   // ROLE-3 removes what this role may not use. Everything left is offered,
   // whatever its risk: a write or irreversible call is held back by the
@@ -138,6 +156,11 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   // see is a tool the agent cannot use, and the gate is the thing that
   // decides whether a call runs.
   const allowed = tools.forRole(person.role)
+
+  // BUILTIN-1: the core's own tools are exposed on every step whatever
+  // routing decides, and they do not count toward routingMinTools. An
+  // agent with four tools and the task tools is still a small agent.
+  const builtins = tools.builtinsForRole(person.role)
 
   /** The last 6 messages, which both routing and the gate reason over. */
   const recent = (): { role: string; text: string }[] =>
@@ -154,14 +177,14 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   const routingState = (): RoutingState => ({
     messages: recent(),
     batch,
-    activeTask: null,
+    activeTask: input.activeTask ?? null,
   })
 
   // GATE-1: the same window, without the batch, which is already the last
   // of those messages.
   const gateConversation = (): GateConversation => ({
     messages: recent(),
-    activeTask: null,
+    activeTask: input.activeTask ?? null,
   })
 
   const brainsUsed: string[] = []
@@ -181,6 +204,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     const routing = await route({
       decisionModel,
       tools: allowed,
+      builtins,
       state: routingState(),
       minTools: config.routingMinTools,
       threshold: config.decisionModel.routeThreshold,
