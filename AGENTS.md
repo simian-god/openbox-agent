@@ -58,6 +58,8 @@ Milestone checks that are scripted rather than run by hand:
 
 - `bun run m3-check` - M3's four items, pass or fail each. One fails on
   purpose until T11.1, see Known K13.
+- `bun run m4-check` - C9, C14 and C15, clause by clause, naming the test
+  that proves each one.
 
 Measuring whether routing is worth it (C8), which needs a brain key and a
 decision model key and no database:
