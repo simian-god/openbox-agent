@@ -8,53 +8,11 @@
 import type { OpenboxConfig } from "../config/index.ts"
 import type { BrainMessage } from "../providers/brains/types.ts"
 import type { MessageRow, PendingActionRow, PersonRow, TaskRow } from "../store/index.ts"
+// TIME-2 and TIME-4: the zone and hours logic lives in one place, so what
+// the brain is told about today matches what a tool decides about it.
+import { hoursLine, partsInZone } from "../time/index.ts"
 
-const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const
-type DayKey = (typeof DAY_KEYS)[number]
-
-/** The parts of a date, read in the agent's timezone rather than the server's. */
-export function partsInZone(at: Date, timezone: string) {
-  const formatter = new Intl.DateTimeFormat("en-GB", {
-    timeZone: timezone,
-    weekday: "long",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })
-
-  const found: Record<string, string> = {}
-  for (const part of formatter.formatToParts(at)) found[part.type] = part.value
-
-  return {
-    weekday: found["weekday"] ?? "",
-    date: `${found["year"]}-${found["month"]}-${found["day"]}`,
-    time: `${found["hour"]}:${found["minute"]}`,
-  }
-}
-
-/** Which day of the week an instant falls on, in the agent's timezone. */
-function dayKeyInZone(at: Date, timezone: string): DayKey {
-  const name = new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short" })
-    .format(at)
-    .toLowerCase()
-  return (DAY_KEYS.find((key) => key === name) ?? "mon") as DayKey
-}
-
-/** The opening hours for one day, as a line a brain can read. */
-function hoursLine(config: OpenboxConfig, at: Date): string {
-  const { date } = partsInZone(at, config.timezone)
-  const exception = config.hours.exceptions?.find((entry) => entry.date === date)
-
-  if (exception?.closed === true) return "closed"
-
-  const ranges = exception?.ranges ?? config.hours[dayKeyInZone(at, config.timezone)]
-  if (ranges === undefined || ranges.length === 0) return "closed"
-
-  return ranges.map(([from, to]) => `${from} to ${to}`).join(", ")
-}
+export { partsInZone }
 
 export interface RuntimeBlockInput {
   config: OpenboxConfig
@@ -79,11 +37,16 @@ export function buildRuntimeBlock(input: RuntimeBlockInput): string {
   const { config, person, now } = input
   const { weekday, date, time } = partsInZone(now, config.timezone)
   const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+  const next = partsInZone(tomorrow, config.timezone)
 
   const lines = [
     "# Right now",
     `Date: ${date} (${weekday})`,
     `Time: ${time} (${config.timezone})`,
+    // TIME-4: tomorrow's date as well as today's, so the brain can say
+    // the word "tomorrow" without working out what date it is.
+    `Tomorrow: ${next.date} (${next.weekday})`,
+    "Never work out a date yourself. Pass the words the person used to the tool.",
     "",
     "# Who you are talking to",
     `Role: ${person.role}`,

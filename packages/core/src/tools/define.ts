@@ -2,6 +2,7 @@
 // enforces, and the description the brain reads.
 import { z } from "zod"
 import { isBuiltinToolName } from "./builtins.ts"
+import type { TimeHelpers } from "../time/index.ts"
 
 /** How much damage a call can do. Decides whether the gate runs (LOOP-8). */
 export type Risk = "read" | "write" | "irreversible"
@@ -34,6 +35,14 @@ export interface ToolPerson {
 export interface ToolContext {
   /** TIME-1: nothing reads the system clock directly. */
   readonly clock: { now(): Date }
+  /**
+   * TIME-2: the time helpers, all in the agent's timezone.
+   *
+   * TIME-3 is why a tool needs these rather than a date: a tool input that
+   * holds a time takes the words the person said, and the tool resolves
+   * them here. The brain never works out which day Friday is.
+   */
+  readonly time: TimeHelpers
   readonly person: ToolPerson
   /**
    * The agent's own tables, already scoped to this agent (DATA-1). Use

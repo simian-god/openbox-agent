@@ -3,6 +3,7 @@
 import { test, expect } from "bun:test"
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs"
 import { join } from "node:path"
+import { code } from "../support/source.ts"
 
 const root = join(import.meta.dir, "..", "..", "..", "..")
 const read = (p: string) => readFileSync(join(root, p), "utf8")
@@ -77,4 +78,30 @@ test("REL-2: no secret file can be committed by accident", () => {
   const ignored = read(".gitignore")
   expect(ignored).toContain(".env")
   expect(ignored).toContain("!.env.example")
+})
+
+test("TIME-1: only the clock itself reads the system clock", () => {
+  // Enforced by structure rather than by discipline, the same way DEP-1 is.
+  // The reason is a real failure: in the M1 live run a tool took a raw date,
+  // the brain worked out which day Friday was, got it wrong, and told
+  // someone Sunday's opening hours. Every time in the core comes from the
+  // injected clock, so a test can freeze it and a server's timezone can
+  // never change an answer.
+  //
+  // `systemClock` is the one place the real clock is read. That is what it
+  // is for, and it is injected like anything else.
+  const allowed = new Set(["packages/core/src/testing/clock.ts"])
+
+  const reads: string[] = []
+  for (const file of sourceFiles("packages/core/src").concat(sourceFiles("examples"))) {
+    if (allowed.has(file) || !file.endsWith(".ts")) continue
+    // Comments and strings stripped, so a rule about what the code calls is
+    // not tripped by a comment explaining the rule.
+    const body = code(read(file))
+    if (/\bDate\.now\s*\(/.test(body) || /new\s+Date\s*\(\s*\)/.test(body)) {
+      reads.push(file)
+    }
+  }
+
+  expect(reads).toEqual([])
 })

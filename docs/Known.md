@@ -310,3 +310,40 @@ not a second example to learn from, and its README says so.
 real restaurant agent has far more than five tools. C8 moves onto it then and
 this fixture can go. `bun run m3-check` is in the repo so that row can be
 re-run in one command rather than rebuilt from the Plan.
+
+---
+
+## K14. SEND-4's ordering test fails about one full run in six
+
+**Status:** open, not root caused. Not reproducible on its own.
+
+**What happens.** `outbox.test.ts`'s "SEND-4: one person's messages go out in
+order, never two at once" fails intermittently, only under the whole suite.
+Eight runs of that file on its own were clean. Roughly one full `bun run check`
+in six fails it, and the run after is green.
+
+**What it costs.** Confidence in a real guarantee. SEND-4 says one person's
+messages go out one at a time in order, and this test is the only thing proving
+it, so a flake here is the most expensive kind: it trains you to rerun.
+
+**What was ruled out.** The pump serialises by person: `active` is keyed on
+`person_id`, the key is set in the same synchronous block as the check that reads
+it, and it is held until the send resolves. `sweep` cannot run twice at once, and
+`nudge` and `drain` neither send nor sweep on their own. `candidates` takes one
+row per person per pass. None of that leaves an obvious way for two sends to one
+person to overlap inside one agent.
+
+**What was not ruled out.** An agent from another test file still running its
+outbox pump against the same database, which would steal a row rather than
+overlap. Every integration file has an `afterEach` that stops its agents, so if
+that is the cause something is escaping one of them.
+
+**What we did.** Made the next occurrence say which it is. The test used to throw
+inside the sender on an overlap, and the outbox reads a thrown send as an outcome
+it cannot know (SEND-2), so the message was left alone and the only symptom was a
+short list, which looks identical to a row another process took. It now records
+overlaps and asserts on them separately, so a failure says "two at once" or "a
+message never arrived" rather than leaving both open.
+
+**What would resolve it.** The next failure, read with those two assertions
+apart. Worth doing then rather than guessing now.

@@ -134,7 +134,10 @@ a message too, so an operator's commands can be typed.`
 export function terminalChannel(options: TerminalChannelOptions): TerminalChannel {
   const { io } = options
   const channelUserId = options.channelUserId ?? LOCAL_USER
-  const sessionId = options.sessionId ?? String(Date.now())
+  // Random rather than a timestamp. TIME-1 keeps the system clock out of
+  // the core, and two sessions started in the same millisecond would have
+  // shared an id anyway, which is the one thing a session id must not do.
+  const sessionId = options.sessionId ?? Math.random().toString(36).slice(2, 10)
 
   let buttons: readonly ChatButton[] = []
   let sent = 0

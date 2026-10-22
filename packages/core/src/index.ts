@@ -153,6 +153,20 @@ export {
   type ScriptedAnswers,
 } from "./testing/scripted-decision.ts"
 
+export { fakeToolContext, fakeToolContextFor } from "./testing/tool-context.ts"
+
+export {
+  createTimeHelpers,
+  rangesOn,
+  hoursLine,
+  dayKeyInZone,
+  type TimeHelpers,
+  type TimeOptions,
+  type TimeResolution,
+  type Candidate,
+  type DayKey,
+} from "./time/index.ts"
+
 export {
   scriptedBrain,
   type ScriptedBrain,

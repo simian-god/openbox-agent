@@ -492,7 +492,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     }
 
     // Step 8: a read tool runs straight away. So does a write that passed.
-    const ctx: ToolContext = toolContext({ store, clock, person })
+    const ctx: ToolContext = toolContext({ store, clock, person, config })
 
     const ranAt = clock.now().getTime()
     try {

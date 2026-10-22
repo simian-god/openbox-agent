@@ -333,6 +333,7 @@ describeDatabase("the outbox", (sql) => {
 
   test("SEND-4: one person's messages go out in order, never two at once", async () => {
     const order: string[] = []
+    const overlaps: number[] = []
     let inside = 0
     const sender: Sender = {
       capabilities: () => ({
@@ -344,7 +345,14 @@ describeDatabase("the outbox", (sql) => {
       async send(out: Outbound): Promise<SendResult> {
         inside++
         // Two sends to one person at once would put them out of order.
-        expect(inside).toBe(1)
+        //
+        // Recorded rather than thrown. A throw here is read by the outbox
+        // as a send whose outcome is unknown (SEND-2), so the message is
+        // left alone and the only sign is a short `order` further down,
+        // which looks the same as a message this sender never got. This
+        // suite has an intermittent failure here under the full run
+        // (docs/Known.md K14) and the two causes need telling apart.
+        if (inside > 1) overlaps.push(inside)
         await new Promise((r) => setTimeout(r, 20))
         order.push(out.text ?? "")
         inside--
@@ -367,6 +375,9 @@ describeDatabase("the outbox", (sql) => {
     }
     await agent.settled()
 
+    // Two sends at once, which is the guarantee.
+    expect(overlaps).toEqual([])
+    // And in the order they were queued.
     expect(order).toEqual(["first", "second", "third"])
   })
 

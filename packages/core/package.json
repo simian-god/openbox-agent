@@ -21,9 +21,14 @@
   ],
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
+    "chrono-node": "^2.10.3",
+    "luxon": "^3.7.2",
     "zod": "^4.6.7"
   },
   "bin": {
     "openbox": "./dist/cli/index.js"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.7.6"
   }
 }

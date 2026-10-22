@@ -373,7 +373,7 @@ export function createAgent(options: AgentOptions): Agent {
           sender: deps.sender,
           secret,
           toolByName: (name) => tools.get(name),
-          contextFor: (person) => toolContext({ store, clock, person }),
+          contextFor: (person) => toolContext({ store, clock, person, config }),
         })
 
   if (confirmations !== undefined) {

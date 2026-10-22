@@ -27,6 +27,7 @@ import {
 import { scriptedDecisionModel, yesno } from "../../src/testing/scripted-decision.ts"
 import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
+import { fakeToolContext } from "../../src/testing/tool-context.ts"
 import { GATE_QUESTION } from "../../src/runtime/gate.ts"
 import { buttonPayload } from "../../src/runtime/confirm.ts"
 
@@ -140,6 +141,16 @@ describeDatabase("tasks", (sql) => {
     return { agent, brain }
   }
 
+  /**
+   * TOOL-4's context, for calling one task tool directly.
+   *
+   * The task tools are the core's, so a test can reach them without a
+   * brain in the way. `fakeToolContext` rather than an object literal,
+   * because a literal breaks every time the core adds a field to `ctx`.
+   */
+  const ctxFor = (agent: Agent, personId: string) =>
+    fakeToolContext({ config: config(), db: agent.store, clock, person: { id: personId } })
+
   const says = (text: string, id: string) => ({
     channel: "whatsapp",
     channelUserId: "42",
@@ -231,19 +242,10 @@ describeDatabase("tasks", (sql) => {
       agent.store.tasks.byId(task?.id ?? "")
       const updated = await agent.tools
         .get("update_task")
-        ?.handler({ taskId: task?.id ?? "", fields: { date: "2026-10-23" } } as never, {
-          clock,
-          person: {
-            id: task?.person_id ?? "",
-            role: "end_user",
-            channel: "whatsapp",
-            channelUserId: "42",
-            displayName: null,
-            language: null,
-          },
-          db: agent.store,
-          log: () => {},
-        })
+        ?.handler(
+          { taskId: task?.id ?? "", fields: { date: "2026-10-23" } } as never,
+          ctxFor(agent, task?.person_id ?? ""),
+        )
 
       expect((updated as { task?: { missing?: string[] } }).task?.missing).toEqual(["time"])
     })
@@ -260,19 +262,10 @@ describeDatabase("tasks", (sql) => {
 
       const out = (await agent.tools
         .get("update_task")
-        ?.handler({ taskId: task?.id ?? "", fields: { favourite_colour: "green" } } as never, {
-          clock,
-          person: {
-            id: task?.person_id ?? "",
-            role: "end_user",
-            channel: "whatsapp",
-            channelUserId: "42",
-            displayName: null,
-            language: null,
-          },
-          db: agent.store,
-          log: () => {},
-        })) as { ok?: boolean; error?: string }
+        ?.handler(
+          { taskId: task?.id ?? "", fields: { favourite_colour: "green" } } as never,
+          ctxFor(agent, task?.person_id ?? ""),
+        )) as { ok?: boolean; error?: string }
 
       expect(out.ok).toBe(false)
       expect(out.error).toContain("favourite_colour")
@@ -311,19 +304,7 @@ describeDatabase("tasks", (sql) => {
       let tasks = await agent.store.tasks.list({}, { orderBy: "seq" })
       expect(tasks.map((task) => task.status)).toEqual(["open", "active"])
 
-      const ctx = {
-        clock,
-        person: {
-          id: tasks[0]?.person_id ?? "",
-          role: "end_user" as const,
-          channel: "whatsapp",
-          channelUserId: "42",
-          displayName: null,
-          language: null,
-        },
-        db: agent.store,
-        log: () => {},
-      }
+      const ctx = ctxFor(agent, tasks[0]?.person_id ?? "")
       await agent.tools.get("switch_task")?.handler({ taskId: tasks[0]?.id ?? "" } as never, ctx)
 
       tasks = await agent.store.tasks.list({}, { orderBy: "seq" })
@@ -340,19 +321,10 @@ describeDatabase("tasks", (sql) => {
 
       const out = (await agent.tools
         .get("switch_task")
-        ?.handler({ taskId: task?.id ?? "" } as never, {
-          clock,
-          person: {
-            id: "00000000-0000-0000-0000-000000000000",
-            role: "end_user",
-            channel: "whatsapp",
-            channelUserId: "stranger",
-            displayName: null,
-            language: null,
-          },
-          db: agent.store,
-          log: () => {},
-        })) as { ok?: boolean; error?: string }
+        ?.handler(
+          { taskId: task?.id ?? "" } as never,
+          ctxFor(agent, "00000000-0000-0000-0000-000000000000"),
+        )) as { ok?: boolean; error?: string }
 
       expect(out.ok).toBe(false)
       expect((await agent.store.tasks.byId(task?.id ?? ""))?.status).toBe("active")
@@ -369,19 +341,10 @@ describeDatabase("tasks", (sql) => {
 
       await agent.tools
         .get("close_task")
-        ?.handler({ taskId: task?.id ?? "", outcome: "done" } as never, {
-          clock,
-          person: {
-            id: task?.person_id ?? "",
-            role: "end_user",
-            channel: "whatsapp",
-            channelUserId: "42",
-            displayName: null,
-            language: null,
-          },
-          db: agent.store,
-          log: () => {},
-        })
+        ?.handler(
+          { taskId: task?.id ?? "", outcome: "done" } as never,
+          ctxFor(agent, task?.person_id ?? ""),
+        )
 
       expect((await agent.store.tasks.byId(task?.id ?? ""))?.status).toBe("done")
       await agent.receiveAndWait(says("thanks", "m2"))
@@ -493,19 +456,10 @@ describeDatabase("tasks", (sql) => {
       clock.advance(20 * 60 * 60 * 1000)
       await agent.tools
         .get("update_task")
-        ?.handler({ taskId, fields: { date: "2026-10-23" } } as never, {
-          clock,
-          person: {
-            id: task?.person_id ?? "",
-            role: "end_user",
-            channel: "whatsapp",
-            channelUserId: "42",
-            displayName: null,
-            language: null,
-          },
-          db: agent.store,
-          log: () => {},
-        })
+        ?.handler(
+          { taskId, fields: { date: "2026-10-23" } } as never,
+          ctxFor(agent, task?.person_id ?? ""),
+        )
 
       // The original job comes due and finds the task no longer idle.
       clock.advance(5 * 60 * 60 * 1000)
@@ -575,19 +529,10 @@ describeDatabase("tasks", (sql) => {
 
       await agent.tools
         .get("close_task")
-        ?.handler({ taskId: task?.id ?? "", outcome: "cancelled" } as never, {
-          clock,
-          person: {
-            id: person?.id ?? "",
-            role: "end_user",
-            channel: "whatsapp",
-            channelUserId: "42",
-            displayName: null,
-            language: null,
-          },
-          db: agent.store,
-          log: () => {},
-        })
+        ?.handler(
+          { taskId: task?.id ?? "", outcome: "cancelled" } as never,
+          ctxFor(agent, person?.id ?? ""),
+        )
 
       const now = await agent.store.pendingActions.byId(action.id)
       expect(now?.status).toBe("cancelled")
@@ -620,19 +565,10 @@ describeDatabase("tasks", (sql) => {
 
       await agent.tools
         .get("update_task")
-        ?.handler({ taskId: task?.id ?? "", fields: { size: 6 } } as never, {
-          clock,
-          person: {
-            id: person?.id ?? "",
-            role: "end_user",
-            channel: "whatsapp",
-            channelUserId: "42",
-            displayName: null,
-            language: null,
-          },
-          db: agent.store,
-          log: () => {},
-        })
+        ?.handler(
+          { taskId: task?.id ?? "", fields: { size: 6 } } as never,
+          ctxFor(agent, person?.id ?? ""),
+        )
 
       const now = await agent.store.pendingActions.byId(action.id)
       expect(now?.status).toBe("cancelled")
