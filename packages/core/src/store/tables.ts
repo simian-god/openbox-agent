@@ -14,6 +14,7 @@ export const CORE_TABLES = [
   "ob_tool_runs",
   "ob_decisions",
   "ob_flags",
+  "ob_pending_actions",
 ] as const
 
 export type CoreTable = (typeof CORE_TABLES)[number]
@@ -26,6 +27,19 @@ export type OutboxKind = "reply" | "proactive" | "operator_alert" | "confirm"
 /** `unknown` is not a kind of failure: the send threw, so nobody knows. */
 export type OutboxStatus = "queued" | "sending" | "sent" | "failed" | "unknown"
 export type JobStatus = "queued" | "running" | "done" | "failed"
+/**
+ * CONF-1 and CONF-5. `pending` is waiting on the person, `confirmed` is
+ * claimed and about to run, `executed` ran. Two states rather than one,
+ * because the claim is what stops a second tap running it twice.
+ */
+export type PendingActionStatus =
+  | "pending"
+  | "confirmed"
+  | "executed"
+  | "failed"
+  | "cancelled"
+  | "expired"
+
 /** DATA-2. `pending` is an irreversible call waiting on a person's confirm. */
 export type ToolRunStatus = "ok" | "error" | "blocked" | "needs_confirmation" | "pending"
 /** What the decision model was asked about. */
@@ -242,6 +256,32 @@ export interface FlagRow {
   created_at: string
 }
 
+/** CONF-1: an irreversible call, waiting for the person who asked for it. */
+export interface PendingActionRow {
+  id: string
+  seq: number
+  agent_id: string
+  person_id: string
+  turn_id: string | null
+  /** T4.2 fills this in. Null until tasks exist. */
+  task_id: string | null
+  tool: string
+  args: unknown
+  /** CONF-4: a confirmation is only for the call that was shown. */
+  args_hash: string
+  /** What the person was asked to confirm, as they were shown it. */
+  summary: string
+  /** CONF-2's fallback for a channel with no buttons. Four digits. */
+  code: string
+  status: PendingActionStatus
+  expires_at: string
+  decided_at: string | null
+  executed_at: string | null
+  result: unknown
+  error: string | null
+  created_at: string
+}
+
 /** Maps a table name to its row type. */
 export interface CoreRows {
   ob_people: PersonRow
@@ -256,6 +296,7 @@ export interface CoreRows {
   ob_tool_runs: ToolRunRow
   ob_decisions: DecisionRow
   ob_flags: FlagRow
+  ob_pending_actions: PendingActionRow
 }
 
 /** What a caller supplies when inserting: no id, no agent_id, no defaults. */

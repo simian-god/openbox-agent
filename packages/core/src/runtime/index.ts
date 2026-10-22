@@ -7,6 +7,8 @@ export * from "./outbox.ts"
 export * from "./jobs.ts"
 export * from "./worker.ts"
 export * from "./context.ts"
+export * from "./tool-context.ts"
+export * from "./confirm.ts"
 export * from "./turn.ts"
 export * from "./agent.ts"
 export {

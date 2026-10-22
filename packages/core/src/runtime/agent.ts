@@ -32,6 +32,8 @@ import { createOutbox, type Outbox } from "./outbox.ts"
 import { createWorker } from "./worker.ts"
 import type { Inbound, Sender } from "./sender.ts"
 import { runTurn, type TurnResult } from "./turn.ts"
+import { createConfirmations, EXPIRE_JOB, type Confirmations, type Resolution } from "./confirm.ts"
+import { toolContext } from "./tool-context.ts"
 import type { DecisionModel } from "../providers/decision/types.ts"
 import { ensureVersionRow, versionHash } from "./version.ts"
 
@@ -60,6 +62,15 @@ export interface AgentOptions {
   /** The static system prompt, prompt.md in a real agent (SKILL-8). */
   prompt: string
   tools?: Tool[]
+  /**
+   * CONF-3's `OPENBOX_SECRET`, which signs Confirm and Cancel payloads.
+   *
+   * Not in config, because CFG-2 keeps credentials out of it. Required
+   * only for an agent that has an irreversible tool: nothing else ever
+   * signs anything, and an agent that can only read should not need a
+   * secret to start.
+   */
+  secret?: string | undefined
   /** Told when an event could not be recorded. A turn never fails for it. */
   onEventError?: ((failure: EventFailure) => void) | undefined
   /**
@@ -112,6 +123,16 @@ export interface Agent {
   readonly outbox: Outbox
   /** The job loop, and the sweep that recovers abandoned turns. */
   readonly jobs: Jobs
+  /**
+   * CONF-1 to CONF-8, or undefined when the agent has no irreversible
+   * tool and so nothing to confirm.
+   *
+   * Exposed because CONF-5's claim can only be proven by resolving the
+   * same action twice at once, and the person lease deliberately stops
+   * that happening through `receive`. An evals adapter wanting to see a
+   * pending action resolved without a channel needs the same door.
+   */
+  readonly confirmations: Confirmations | undefined
   /** API-1: writes the message down and returns. The turn runs behind it. */
   receive(inbound: Inbound): Promise<ReceiveResult>
   /**
@@ -158,10 +179,28 @@ export function createAgent(options: AgentOptions): Agent {
   })
 
   // CFG-1's last rule needs the tools, which config alone cannot see.
-  const problems = options.tools
-    ?.filter((tool) => tool.risk === "irreversible" && tool.confirmSummary === undefined)
-    .map((tool) => `${tool.name} is irreversible but has no confirmSummary`)
-  if (problems !== undefined && problems.length > 0) {
+  const problems =
+    options.tools
+      ?.filter((tool) => tool.risk === "irreversible" && tool.confirmSummary === undefined)
+      .map((tool) => `${tool.name} is irreversible but has no confirmSummary`) ?? []
+
+  // CONF-3: an irreversible tool means signed Confirm and Cancel payloads,
+  // which means a secret. Refused at startup rather than at the moment a
+  // person is asked to confirm something, because that is the worst
+  // possible time to find out.
+  const irreversible = (options.tools ?? []).filter((tool) => tool.risk === "irreversible")
+  const secret = options.secret ?? ""
+  if (irreversible.length > 0 && secret === "") {
+    problems.push(
+      `${irreversible.map((tool) => tool.name).join(", ")} ${
+        irreversible.length === 1
+          ? "is irreversible, so it needs"
+          : "are irreversible, so they need"
+      } OPENBOX_SECRET from the environment to sign its confirm buttons (CONF-3)`,
+    )
+  }
+
+  if (problems.length > 0) {
     throw new Error(`This agent cannot start:\n${problems.map((p) => `  - ${p}`).join("\n")}`)
   }
 
@@ -292,6 +331,58 @@ export function createAgent(options: AgentOptions): Agent {
     ...(options.onWorkerError !== undefined ? { onError: options.onWorkerError } : {}),
   })
 
+  // CONF-1 to CONF-8. Built only when the agent has something to confirm,
+  // so an agent with no irreversible tools carries no confirm machinery
+  // and nothing can accidentally depend on it.
+  const confirmations: Confirmations | undefined =
+    irreversible.length === 0
+      ? undefined
+      : createConfirmations({
+          config,
+          store,
+          clock,
+          events,
+          outbox,
+          jobs,
+          sender: deps.sender,
+          secret,
+          toolByName: (name) => tools.all().find((tool) => tool.name === name),
+          contextFor: (person) => toolContext({ store, clock, person }),
+        })
+
+  if (confirmations !== undefined) {
+    jobs.on(EXPIRE_JOB, async (job) => {
+      const actionId = (job.payload as { actionId?: unknown }).actionId
+      if (typeof actionId === "string") await confirmations.expire(actionId)
+    })
+  }
+
+  /**
+   * CONF-2 and CONF-8: what the brain is told about a confirmation the core
+   * already resolved.
+   *
+   * Written as an instruction rather than a fact, because the brain's job
+   * here is to say the right thing to the person and the one mistake that
+   * matters is telling them something happened when it did not.
+   */
+  function noticeFor(resolution: Resolution): string {
+    const tool = resolution.action?.tool ?? "the action"
+    switch (resolution.kind) {
+      case "executed":
+        return `The person confirmed ${tool} and it has been done. Tell them it is done. Do not offer to do it again.`
+      case "failed":
+        return `The person confirmed ${tool} but it failed: ${resolution.error}. It did not happen. Tell them it did not go through. Do not say it is done.`
+      case "cancelled":
+        return `The person cancelled ${tool}. Nothing was done. Acknowledge it and ask what they would like instead.`
+      case "already_done":
+        return `${tool} had already gone through, so nothing changed. Tell them it already went through.`
+      case "rejected":
+        return resolution.why === "expired"
+          ? `The person's confirmation for ${tool} arrived too late and was not accepted. Nothing was done. Tell them the request expired and offer to set it up again.`
+          : `The person's confirmation for ${tool} was not accepted, because it does not match the request. Nothing was done. Tell them it does not match and offer to set it up again.`
+    }
+  }
+
   const worker = createWorker({
     config,
     store,
@@ -364,6 +455,7 @@ export function createAgent(options: AgentOptions): Agent {
     owner,
     outbox,
     jobs,
+    confirmations,
 
     receive: write,
 
@@ -530,6 +622,38 @@ export function createAgent(options: AgentOptions): Agent {
       })),
     )
 
+    // CONF-4 and CONF-8: a confirmation is not a message for the brain.
+    // It is resolved here, before the brain is asked anything, and what
+    // happened goes into the conversation as a notice so the brain can
+    // tell the person. Resolving it in the turn rather than in `receive`
+    // is deliberate: the person lease is held here, so two taps arriving
+    // at once are already serialised by the time they reach this.
+    const notices: string[] = []
+    if (confirmations !== undefined) {
+      for (const row of batch) {
+        const tapped = row.action as { payload?: unknown } | null
+        const resolution = await confirmations.resolve({
+          person,
+          ...(row.text !== null ? { text: row.text } : {}),
+          ...(typeof tapped?.payload === "string" ? { payload: tapped.payload } : {}),
+        })
+        if (resolution === null) continue
+
+        const notice = noticeFor(resolution)
+        notices.push(notice)
+        // Stored too, so the next turn's history carries it and the brain
+        // cannot claim later that nothing happened.
+        await store.messages.insert({
+          person_id: person.id,
+          turn_id: turnRow.id,
+          direction: "inbound",
+          author: "notice",
+          text: notice,
+          channel: person.channel,
+        })
+      }
+    }
+
     const result = await runTurn({
       config,
       history: [...history].reverse(),
@@ -545,6 +669,8 @@ export function createAgent(options: AgentOptions): Agent {
       prompt,
       turnId: turnRow.id,
       events: turnEvents,
+      ...(notices.length > 0 ? { notices } : {}),
+      ...(confirmations !== undefined ? { confirm: confirmations } : {}),
     })
 
     if (result.reply !== undefined) {

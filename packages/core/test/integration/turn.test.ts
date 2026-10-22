@@ -29,7 +29,10 @@ import { GATE_QUESTION } from "../../src/runtime/gate.ts"
 const started: Agent[] = []
 
 function createAgent(options: AgentOptions): Agent {
-  const agent = buildAgent(options)
+  // CONF-3: an agent with an irreversible tool needs a signing secret, so
+  // every agent here gets one. A test that wants to prove the refusal
+  // passes its own.
+  const agent = buildAgent({ secret: "test-secret", ...options })
   agent.start()
   started.push(agent)
   return agent

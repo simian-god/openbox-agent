@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** T4.1. The M3 check row stays `blocked` until T11.1.
+**Next task:** T4.2. The M3 check row stays `blocked` until T11.1.
 
 ## M0. Foundations
 
@@ -59,7 +59,7 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 
 | Task | What | Status | Date | Note |
 |---|---|---|---|---|
-| T4.1 | Pending actions, signed Confirm and Cancel payloads, codes, expiry jobs, cancellation rules… | todo | | |
+| T4.1 | Pending actions, signed Confirm and Cancel payloads, codes, expiry jobs, cancellation rules… | done | 2026-10-22 | An irreversible call now stops being a decision and becomes a question. Passing the gate creates a pending action, the core sends the confirm message itself with signed Confirm and Cancel buttons, or the four digit code on a channel without them, and the brain is told it has asked and must not say the action is done. CONF-4's four rules are each a test written as the attack: a tampered signature, a correctly signed payload for someone else's action, an arrival after expiry, and arguments changed since the person saw them. C9's "why do you keep asking, i already told you" is one of them and runs nothing. CONF-5's claim is proven by resolving the same action twice at once, which needed `agent.confirmations` on the public Agent, because the person lease stops two taps ever racing through `receive`. A resolved confirmation becomes a notice in the conversation and the brain tells the person, which was the builder's call; the notice is stored, so a later turn cannot claim nothing happened. Expiry is a job per action, conditional on still being pending. `OPENBOX_SECRET` is required only for an agent that has an irreversible tool, and refused at startup rather than when someone is first asked to confirm. Thirteen deliberate probes. Three of them failed to bite the first time, all three on rules that were only ever covered by another rule standing in front of them, and each got a test that makes it load bearing. Also deflaked an existing jobs test that waited on a proxy instead of the thing it asserts. CONF-6's second half, the brain changing a task's fields, waits for T4.2. |
 | T4.2 | Task table and built in task tools, with `missing` computed by code and idle expiry | todo | | |
 | T4.3 | Time helpers with frozen clock tests across midnight, month end and timezone; opening hours… | todo | | |
 | T4.4 | `remember` and `forget_fact`, and the full runtime block | todo | | |

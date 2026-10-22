@@ -99,6 +99,9 @@ export async function runChat(options: ChatOptions = {}): Promise<number> {
       deps: { brains, decisionModel, db, sender: channel.sender },
       prompt: project.prompt,
       tools: project.tools,
+      // CONF-3. Only an agent with an irreversible tool needs it, and
+      // createAgent says so plainly when one is missing.
+      ...(env["OPENBOX_SECRET"] !== undefined ? { secret: env["OPENBOX_SECRET"] } : {}),
     })
   } catch (error) {
     // CFG-1's tool rules and a clashing tool name both land here.

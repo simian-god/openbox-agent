@@ -20,6 +20,8 @@ import type { MessageRow } from "../store/index.ts"
 import { noEvents, type EventWriter } from "./events.ts"
 import { route, ROUTING_QUESTION, type RoutingState } from "./routing.ts"
 import { gate, type GateConversation } from "./gate.ts"
+import { toolContext } from "./tool-context.ts"
+import type { PendingActionRow } from "../store/index.ts"
 import type { DecisionModel } from "../providers/decision/types.ts"
 
 export interface TurnInput {
@@ -44,6 +46,30 @@ export interface TurnInput {
   turnId: string
   /** EVT-1: where each step records what it did. Defaults to recording nothing. */
   events?: EventWriter | undefined
+  /**
+   * CONF-2: what the brain is told happened before this turn started.
+   *
+   * A confirmation is resolved by the core before the brain is asked
+   * anything, so the brain has to be told the outcome rather than discover
+   * it. These go in after the person's messages, as notices, because that
+   * is when they happened.
+   */
+  notices?: string[] | undefined
+  /**
+   * CONF-1: makes a pending action when an irreversible call passes the
+   * gate. Absent for an agent with no irreversible tools, in which case
+   * nothing here can ever ask for one.
+   */
+  confirm?:
+    | {
+        create(request: {
+          person: PersonRow
+          turnId: string
+          tool: Tool
+          args: Record<string, unknown>
+        }): Promise<PendingActionRow>
+      }
+    | undefined
 }
 
 export interface TurnResult {
@@ -98,6 +124,11 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   // LOOP-7, then LOOP-8 step 10: this turn's own calls and results are
   // appended as the loop goes, and become the input to the next step.
   const messages: BrainMessage[] = buildMessages(history, batch)
+
+  // CONF-2 and CONF-8: what the core already did, in the order it
+  // happened, which is after the person spoke and before the brain is
+  // asked anything.
+  for (const text of input.notices ?? []) messages.push({ role: "notice", text })
 
   const system = buildSystem(prompt, buildRuntimeBlock({ config, person, now: clock.now() }))
 
@@ -383,13 +414,39 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     }
 
     if (decision.outcome !== "run") {
+      // CONF-1: an irreversible call that passed the gate becomes a
+      // pending action, and the core asks the person itself. Everything
+      // else that is not run is simply reported back to the brain.
+      let pending: PendingActionRow | undefined
+      if (decision.reason === "needs_confirm" && input.confirm !== undefined) {
+        pending = await input.confirm.create({
+          person,
+          turnId,
+          tool,
+          args: parsed.data as Record<string, unknown>,
+        })
+      }
+
       // GATE-2: not run. The brain is told, and told what to do instead,
       // because a tool result that only says no leaves it guessing.
-      const told = decision.message ?? `${tool.name} did not run.`
+      const told =
+        pending !== undefined
+          ? [
+              `${tool.name} has not run. It cannot be undone, so the person has to confirm it first.`,
+              `They have been asked to confirm: "${pending.summary}"`,
+              "Tell them you have asked, and do not say the action is done. It runs only when they confirm.",
+            ].join("\n\n")
+          : (decision.message ?? `${tool.name} did not run.`)
+
       await events.toolRun({
         tool: tool.name,
         risk: tool.risk,
-        status: decision.outcome === "block" ? "blocked" : "needs_confirmation",
+        status:
+          decision.outcome === "block"
+            ? "blocked"
+            : pending !== undefined
+              ? "pending"
+              : "needs_confirmation",
         args: parsed.data,
         error:
           decision.error !== undefined
@@ -411,19 +468,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     }
 
     // Step 8: a read tool runs straight away. So does a write that passed.
-    const ctx: ToolContext = {
-      clock,
-      person: {
-        id: person.id,
-        role: person.role,
-        channel: person.channel,
-        channelUserId: person.channel_user_id,
-        displayName: person.display_name,
-        language: person.language,
-      },
-      db: store,
-      log: () => {},
-    }
+    const ctx: ToolContext = toolContext({ store, clock, person })
 
     const ranAt = clock.now().getTime()
     try {

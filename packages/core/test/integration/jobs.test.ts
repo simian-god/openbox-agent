@@ -102,6 +102,21 @@ describeDatabase("the job loop", (sql) => {
     }
   }
 
+  /**
+   * Waits for the thing a test actually asserts, with a bound.
+   *
+   * Waiting on a proxy and then sleeping is how the DATA-4 test below came
+   * to fail once under a loaded suite and pass on a rerun. A bound rather
+   * than an open loop, so a real break fails with the assertion rather
+   * than hanging until the runner gives up.
+   */
+  async function until(what: () => boolean, ms = 3000): Promise<void> {
+    const deadline = Date.now() + ms
+    while (!what() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+  }
+
   test("JOB-1: a queued job runs, and is recorded as having run", async () => {
     const agent = agentWith()
     const ran: string[] = []
@@ -227,7 +242,10 @@ describeDatabase("the job loop", (sql) => {
     await first.jobs.queue({ kind: "once", dedupeKey: "k" })
     first.start()
     second.start()
-    await untilJobs(first, "done")
+    // Wait for the run itself, not for a row that says one happened.
+    await until(() => ran.length > 0)
+    // Then give the other process long enough to run it as well, which is
+    // the thing this test exists to prove it cannot.
     await new Promise((r) => setTimeout(r, 150))
 
     expect(ran).toHaveLength(1)
