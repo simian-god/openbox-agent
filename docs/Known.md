@@ -369,3 +369,31 @@ next one rather than guessing now.
 integration test with an unusual duration as this until it reproduces on its
 own. A batch of failures across unrelated files is K11, which is a different
 thing.
+
+**Scheduled at T5.7.** Not left to be rediscovered: the row exists, and this is
+what it should do, in this order, because each step either finds the cause or
+rules out a whole class.
+
+1. **Make a failure say more.** Today a stall prints a wrong array and a
+   duration. A failing integration test should print what the agent was waiting
+   on: `agent.inFlight()`, the outbox and job pumps' `busy()`, and the status of
+   the inbox and outbox rows for that person. Cheap, and it turns the next
+   occurrence into evidence instead of another sighting.
+
+2. **Prove no agent outlives its file.** Every integration file stops its agents
+   in `afterEach`, and the clearest remaining suspect is one escaping that: a
+   leaked agent keeps polling the shared database and would both slow everything
+   down and claim rows another file's test is waiting for. Put a registry in
+   `test/support` that every `createAgent` goes through, and assert in a global
+   `afterAll` that nothing is still running. That either finds it or removes the
+   suspect for good.
+
+3. **Separate load from logic.** If 1 and 2 come back clean, run the two suspect
+   files on their own while the database is under artificial load, and watch the
+   store's call durations. A stall that reproduces that way is PostgREST or the
+   connection pool, not the core. The suite grew from 36 files and 47 seconds to
+   47 files and about 100, and the stalls arrived with that growth.
+
+**What would resolve it.** One of the three above, or the next failure read with
+step 1 in place. Guessing further now would mean changing the pump on a
+suspicion, and the pump is what SEND-4 rests on.

@@ -198,8 +198,9 @@ Each task lists the Spec IDs it implements. **Done when** is the bar for closing
 | T5.4 | Claude Code CLI and Codex CLI brains: check the flag combinations, including spawning on Windows | BRAIN-1, Spec 23 |
 | T5.5 | Fallback chain, dropping extra tool calls, refusing CLI brains in production | BRAIN-3, BRAIN-4, BRAIN-5 |
 | T5.6 | Conformance suite: one scripted conversation run on all five brains. Live and opt in | C2 |
+| T5.7 | Suite stability: find the intermittent integration stall (Known K14). Make a failing turn say what it was waiting on, prove no agent outlives its test file, then separate load from logic | Known K14, TEST-1 |
 
-**Done when:** C2 passes.
+**Done when:** C2 passes, and three consecutive full `bun run check` runs are clean. M5 adds four brains and a conformance suite on top of a suite that already stalls now and then (K14), so this is the milestone to stop guessing about it.
 
 ### M6. Handover and operators
 
@@ -409,3 +410,4 @@ Every change to Spec made during the build goes here, with the date, the Spec ID
 | 2026-10-22 | section 10 | `remember` and `forget_fact` are built for every agent, unlike the task tools | The task tools need declared task types, so an agent with none is offered none. There is nothing to declare for a fact: every agent talks to people, and somebody saying they are allergic to peanuts has said something worth keeping whatever the agent is for |
 | 2026-10-22 | TOOL-4 | `ctx.facts` is frozen, and is the turn's view rather than a live one | One turn, one view of the person, so a step cannot behave differently depending on whether an earlier step in the same turn remembered something. Frozen, so the only way to change a fact is `remember`, which is the only path that normalises a key |
 | 2026-10-22 | TOOL-4, CONF-4 | `contextFor` is async, so a confirmed tool sees the same person a stepped tool sees | Reading the facts needs a query. A handler that saw them when run inside a step and not when run from a confirmation would differ on the one path nobody would think to test |
+| 2026-10-22 | Plan M5 | T5.7 added: K14 gets a row rather than a rerun, and M5's bar gains three clean runs | Every deliberate probe in this repo reads a failure as evidence, so a suite that fails on its own occasionally devalues all of them and trains us to rerun. It sits in M5 because M5 adds four brains and a conformance suite to a suite that already stalls, which is the worst time to still be guessing. Builder asked for it to be written down rather than fixed on the spot |

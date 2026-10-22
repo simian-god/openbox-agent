@@ -75,7 +75,8 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 | T5.4 | Claude Code CLI and Codex CLI brains: check the flag combinations, including spawning on… | todo | | |
 | T5.5 | Fallback chain, dropping extra tool calls, refusing CLI brains in production | todo | | |
 | T5.6 | Conformance suite: one scripted conversation run on all five brains | todo | | |
-| M5 check | C2 passes. | todo | | |
+| T5.7 | Suite stability: find the intermittent integration stall (Known K14) | todo | | |
+| M5 check | C2 passes, and three consecutive full checks are clean. | todo | | |
 
 ## M6. Handover and operators
 
