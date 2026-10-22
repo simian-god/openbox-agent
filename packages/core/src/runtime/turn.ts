@@ -21,7 +21,7 @@ import { noEvents, type EventWriter } from "./events.ts"
 import { route, ROUTING_QUESTION, type RoutingState } from "./routing.ts"
 import { gate, type GateConversation } from "./gate.ts"
 import { toolContext } from "./tool-context.ts"
-import type { PendingActionRow, TaskRow } from "../store/index.ts"
+import type { FactRow, PendingActionRow, TaskRow } from "../store/index.ts"
 import type { DecisionModel } from "../providers/decision/types.ts"
 
 export interface TurnInput {
@@ -60,6 +60,8 @@ export interface TurnInput {
    * routing question and the gate reason over it. Null until one is open.
    */
   activeTask?: unknown
+  /** LOOP-7 and TOOL-4: what is remembered about this person. */
+  facts?: FactRow[] | undefined
   /** LOOP-7: this person's open tasks, for the runtime block. */
   tasks?: TaskRow[] | undefined
   /** LOOP-7: what they have been asked to confirm and has not expired. */
@@ -145,6 +147,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       config,
       person,
       now: clock.now(),
+      ...(input.facts !== undefined ? { facts: input.facts } : {}),
       ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
       ...(input.pendingActions !== undefined ? { pendingActions: input.pendingActions } : {}),
     }),
@@ -186,6 +189,10 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     messages: recent(),
     activeTask: input.activeTask ?? null,
   })
+
+  // TOOL-4: by key, which is how a handler wants them.
+  const knownFacts: Record<string, string> = {}
+  for (const fact of input.facts ?? []) knownFacts[fact.key] = fact.value
 
   const brainsUsed: string[] = []
   const toolsRun: { name: string; ok: boolean }[] = []
@@ -492,7 +499,9 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     }
 
     // Step 8: a read tool runs straight away. So does a write that passed.
-    const ctx: ToolContext = toolContext({ store, clock, person, config })
+    // TOOL-4: the facts as the turn started, so every step of one turn
+    // sees the same person.
+    const ctx: ToolContext = toolContext({ store, clock, person, config, facts: knownFacts })
 
     const ranAt = clock.now().getTime()
     try {

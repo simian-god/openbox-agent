@@ -45,6 +45,14 @@ export interface ToolContext {
   readonly time: TimeHelpers
   readonly person: ToolPerson
   /**
+   * TOOL-4: what is remembered about this person, by key.
+   *
+   * Read only, and read as the turn started. A tool that wants to change
+   * one calls `remember`, so there is one path that writes a fact and one
+   * place that normalises its key.
+   */
+  readonly facts: Readonly<Record<string, string>>
+  /**
    * The agent's own tables, already scoped to this agent (DATA-1). Use
    * `ctx.db.table("menu_items")`.
    */

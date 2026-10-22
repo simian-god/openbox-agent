@@ -176,8 +176,11 @@ describeDatabase("tasks", (sql) => {
       const { agent, brain } = agentWith([{ reply: "Hello." }], [parking], { taskTypes: {} })
       await agent.receiveAndWait(says("hello", "m1"))
 
+      // BUILTIN-1: `remember` and `forget_fact` are there for every
+      // agent. The four task tools are not, because nothing is declared.
       const offered = brain.calls[0]?.tools.map((tool) => tool.name) ?? []
-      expect(offered).toEqual(["parking"])
+      // The core's own come first, as ROUTE-2 exposes them.
+      expect(offered).toEqual(["remember", "forget_fact", "parking"])
     })
 
     test("BUILTIN-1: built in tools do not count toward routingMinTools", async () => {
@@ -197,7 +200,8 @@ describeDatabase("tasks", (sql) => {
 
       expect(result.turn?.routed[0]?.reason).toBe("not_routed")
       expect(decisions.calls).toHaveLength(0)
-      expect(brain.calls[0]?.tools).toHaveLength(6)
+      // Two agent tools, four task tools, remember and forget_fact.
+      expect(brain.calls[0]?.tools).toHaveLength(8)
     })
   })
 

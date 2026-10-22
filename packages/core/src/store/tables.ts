@@ -16,6 +16,7 @@ export const CORE_TABLES = [
   "ob_flags",
   "ob_pending_actions",
   "ob_tasks",
+  "ob_facts",
 ] as const
 
 export type CoreTable = (typeof CORE_TABLES)[number]
@@ -310,6 +311,20 @@ export interface TaskRow {
   updated_at: string
 }
 
+/** LOOP-7: what the agent knows about a person, apart from what they said. */
+export interface FactRow {
+  id: string
+  seq: number
+  agent_id: string
+  person_id: string
+  key: string
+  value: string
+  turn_id: string | null
+  created_at: string
+  /** PRIV-2's sweep reads this: a fact nobody has touched goes stale. */
+  updated_at: string
+}
+
 /** Maps a table name to its row type. */
 export interface CoreRows {
   ob_people: PersonRow
@@ -326,6 +341,7 @@ export interface CoreRows {
   ob_flags: FlagRow
   ob_pending_actions: PendingActionRow
   ob_tasks: TaskRow
+  ob_facts: FactRow
 }
 
 /** What a caller supplies when inserting: no id, no agent_id, no defaults. */

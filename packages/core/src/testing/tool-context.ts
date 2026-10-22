@@ -18,6 +18,8 @@ export interface FakeToolContextOptions {
   clock?: Clock | undefined
   /** Who the tool is acting for. Only `id` usually matters to a test. */
   person?: Partial<ToolContext["person"]> | undefined
+  /** TOOL-4: what is remembered about this person. */
+  facts?: Record<string, string> | undefined
   /** Every line the tool logged, so a test can read them. */
   logged?: string[] | undefined
 }
@@ -30,6 +32,7 @@ export function fakeToolContext(options: FakeToolContextOptions): ToolContext {
   return {
     clock,
     time: createTimeHelpers({ config: options.config, clock }),
+    facts: Object.freeze({ ...options.facts }),
     person: {
       id: "00000000-0000-0000-0000-000000000001",
       role: "end_user",

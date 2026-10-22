@@ -7,7 +7,7 @@
 // prompt can stay a fixed string and be hashed for a version (LEARN-2).
 import type { OpenboxConfig } from "../config/index.ts"
 import type { BrainMessage } from "../providers/brains/types.ts"
-import type { MessageRow, PendingActionRow, PersonRow, TaskRow } from "../store/index.ts"
+import type { FactRow, MessageRow, PendingActionRow, PersonRow, TaskRow } from "../store/index.ts"
 // TIME-2 and TIME-4: the zone and hours logic lives in one place, so what
 // the brain is told about today matches what a tool decides about it.
 import { hoursLine, partsInZone } from "../time/index.ts"
@@ -18,6 +18,8 @@ export interface RuntimeBlockInput {
   config: OpenboxConfig
   person: PersonRow
   now: Date
+  /** LOOP-7: what is remembered about this person (section 10). */
+  facts?: FactRow[] | undefined
   /** LOOP-7: this person's open tasks, with the active one marked. */
   tasks?: TaskRow[] | undefined
   /** LOOP-7: what they have been asked to confirm and has not expired. */
@@ -55,6 +57,20 @@ export function buildRuntimeBlock(input: RuntimeBlockInput): string {
 
   if (person.display_name !== null) lines.push(`Name: ${person.display_name}`)
   if (person.language !== null) lines.push(`Language: ${person.language}`)
+
+  // LOOP-7: before the hours and the tasks, because this is the part that
+  // changes how to talk to them rather than what to do next. A fact is
+  // also the only thing here that outlives the 30 messages of history, so
+  // if it is not in the block it is gone.
+  const facts = input.facts ?? []
+  if (facts.length > 0) {
+    lines.push("", "# What you know about them")
+    for (const fact of facts) lines.push(`- ${fact.key}: ${fact.value}`)
+    lines.push(
+      "These came from the person. Use them without asking again, and call remember",
+      "when something here changes or they tell you something new about themselves.",
+    )
+  }
 
   lines.push(
     "",

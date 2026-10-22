@@ -121,8 +121,15 @@ export interface ConfirmOptions {
   secret: string
   /** So a confirmation can run the handler it was made for. */
   toolByName: (name: string) => Tool | undefined
-  /** TOOL-4's context for the handler, built per person. */
-  contextFor: (person: PersonRow) => ToolContext
+  /**
+   * TOOL-4's context for the handler, built per person.
+   *
+   * Async because it reads the person's facts, and a tool run from a
+   * confirmation has to see the same person a tool run inside a step sees.
+   * A handler that behaved differently depending on which path reached it
+   * is the one difference nobody would think to test for.
+   */
+  contextFor: (person: PersonRow) => Promise<ToolContext>
 }
 
 export interface CreateRequest {
@@ -419,7 +426,7 @@ export function createConfirmations(options: ConfirmOptions): Confirmations {
       try {
         const result = await tool.handler(
           tool.parse(claimed.args) as never,
-          options.contextFor(person),
+          await options.contextFor(person),
         )
         const [executed] = await store.pendingActions.update(
           { id: claimed.id },

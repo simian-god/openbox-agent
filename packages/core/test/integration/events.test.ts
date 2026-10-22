@@ -222,7 +222,10 @@ describeDatabase("events and versions", (sql) => {
     expect(await trace(agent)).toEqual(["turn_started", "unknown_tool", "turn_ended"])
     const row = (await agent.store.events.list({ name: "unknown_tool" }))[0]
     expect(row?.props).toMatchObject({ tool: "delete_everything" })
-    expect(row?.props["offered"]).toEqual(["check_availability"])
+    // BUILTIN-1: the core's own tools are offered on every step, so the
+    // list the brain was given names them too. That is the point of the
+    // event: it says what the brain could have called.
+    expect(row?.props["offered"]).toEqual(["remember", "forget_fact", "check_availability"])
   })
 
   test("EVT-2: duplicate_dropped is recorded, and no turn is", async () => {

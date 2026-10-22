@@ -42,6 +42,19 @@ afterEach(async () => {
   await Promise.all(started.splice(0).map((agent) => agent.stop()))
 })
 
+/**
+ * The agent's own tools out of what the brain was offered.
+ *
+ * BUILTIN-1: the core's tools are offered on every step whatever routing
+ * decides, so a test about routing has to look past them. Filtering by the
+ * registry rather than by a hard coded list, so the next built in does not
+ * break these again.
+ */
+const agentToolsIn = (offered: { name: string }[] | undefined, agent: Agent): string[] => {
+  const builtins = new Set(agent.tools.builtins().map((tool) => tool.name))
+  return (offered ?? []).map((tool) => tool.name).filter((name) => !builtins.has(name))
+}
+
 const PROMPT = "You are the host at a restaurant."
 
 function config(over: Record<string, unknown> = {}): OpenboxConfig {
@@ -324,7 +337,7 @@ describeDatabase("a turn", (sql) => {
     const { agent, brain } = agentWith([{ reply: "hi" }], [checkAvailability, operatorOnly])
     await agent.receiveAndWait(hello())
 
-    const offered = brain.calls[0]?.tools.map((tool) => tool.name) ?? []
+    const offered = agentToolsIn(brain.calls[0]?.tools, agent)
     expect(offered).toContain("check_availability")
     expect(offered).not.toContain("operator_report")
   })
@@ -337,8 +350,7 @@ describeDatabase("a turn", (sql) => {
     const { agent, brain } = agentWith([{ reply: "hi" }], [checkAvailability, bookTable])
     await agent.receiveAndWait(hello())
 
-    const offered = brain.calls[0]?.tools.map((tool) => tool.name) ?? []
-    expect(offered).toEqual(["check_availability", "book_table"])
+    expect(agentToolsIn(brain.calls[0]?.tools, agent)).toEqual(["check_availability", "book_table"])
   })
 
   test("LOOP-7: the brain gets the prompt, the runtime block and the message", async () => {
@@ -594,8 +606,8 @@ describeDatabase("a turn", (sql) => {
       ])
 
       // And the brain saw only what each step routed to.
-      expect(brain.calls[0]?.tools.map((tool) => tool.name)).toEqual(["look_up_one"])
-      expect(brain.calls[1]?.tools.map((tool) => tool.name)).toEqual(["look_up_four"])
+      expect(agentToolsIn(brain.calls[0]?.tools, agent)).toEqual(["look_up_one"])
+      expect(agentToolsIn(brain.calls[1]?.tools, agent)).toEqual(["look_up_four"])
     })
 
     test("ROUTE-3: every routed step records route_decided", async () => {
@@ -630,8 +642,9 @@ describeDatabase("a turn", (sql) => {
       expect(routed).toHaveLength(2)
       expect(routed[0]?.[1]["reason"]).toBe("top_pick")
       expect(routed[1]?.[1]["reason"]).toBe("no_tool")
-      // A confident no_tool means the second step was offered nothing.
-      expect(routed[1]?.[1]["exposed"]).toEqual([])
+      // A confident no_tool means the second step was offered no agent
+      // tools. The core's own are there either way (BUILTIN-1).
+      expect(routed[1]?.[1]["exposed"]).toEqual(["remember", "forget_fact"])
     })
 
     test("ROUTE-5: a decision model that is down still answers the person", async () => {
@@ -664,7 +677,7 @@ describeDatabase("a turn", (sql) => {
       expect(result.turn?.outcome).toBe("replied")
       expect(sender.sent[0]?.text).toBe("We open at 11.")
       // Every tool was offered, exactly as a below threshold answer would.
-      expect(brain.calls[0]?.tools).toHaveLength(6)
+      expect(agentToolsIn(brain.calls[0]?.tools, agent)).toHaveLength(6)
 
       const fell = captured.filter(([name]) => name === "fallback_used")
       expect(fell).toHaveLength(1)
@@ -699,7 +712,7 @@ describeDatabase("a turn", (sql) => {
 
       expect(decisions.calls).toHaveLength(0)
       expect(captured.filter(([name]) => name === "route_decided")).toHaveLength(0)
-      expect(brain.calls[0]?.tools.map((tool) => tool.name)).toEqual(["check_availability"])
+      expect(agentToolsIn(brain.calls[0]?.tools, agent)).toEqual(["check_availability"])
     })
   })
 

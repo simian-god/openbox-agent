@@ -313,18 +313,33 @@ re-run in one command rather than rebuilt from the Plan.
 
 ---
 
-## K14. SEND-4's ordering test fails about one full run in six
+## K14. The integration suite stalls intermittently under the full run
 
 **Status:** open, not root caused. Not reproducible on its own.
 
-**What happens.** `outbox.test.ts`'s "SEND-4: one person's messages go out in
-order, never two at once" fails intermittently, only under the whole suite.
-Eight runs of that file on its own were clean. Roughly one full `bun run check`
-in six fails it, and the run after is green.
+**What happens.** Two different integration tests have failed intermittently,
+only under the whole suite, and only ever one at a time:
 
-**What it costs.** Confidence in a real guarantee. SEND-4 says one person's
-messages go out one at a time in order, and this test is the only thing proving
-it, so a flake here is the most expensive kind: it trains you to rerun.
+- `outbox.test.ts`'s "SEND-4: one person's messages go out in order, never two
+  at once". Eight runs of that file alone were clean.
+- `turn.test.ts`'s "LOOP-8: a reply ends the turn and goes out through the
+  sender", which took 13.6 seconds before it failed. A turn that normally
+  finishes in milliseconds.
+
+Both pass on a rerun. Over the last six full runs, four were clean. The 13.6
+seconds is the useful detail: this looks like something stalling under load
+rather than a wrong answer, which is also why it moves around.
+
+**What it costs.** More than the two tests. Every deliberate probe in this
+repo reads a failure as evidence, so a suite that fails on its own occasionally
+makes every probe a little less trustworthy, and it trains you to rerun. SEND-4
+in particular is the only thing proving a real delivery guarantee.
+
+**What changed around it.** The suite has grown from 36 files to 47 and from
+about 47 seconds to about 100, and four of the new files are integration files
+that each migrate, wait for PostgREST and reset the database. Both stalls
+appeared as that grew, so load is the obvious suspect and was not the thing
+tested.
 
 **What was ruled out.** The pump serialises by person: `active` is keyed on
 `person_id`, the key is set in the same synchronous block as the check that reads
@@ -346,4 +361,11 @@ overlaps and asserts on them separately, so a failure says "two at once" or "a
 message never arrived" rather than leaving both open.
 
 **What would resolve it.** The next failure, read with those two assertions
-apart. Worth doing then rather than guessing now.
+apart, plus the duration. A stall points at the database or at an agent from an
+earlier file still polling; an overlap points at the pump. Worth reading the
+next one rather than guessing now.
+
+**What to do meanwhile.** Believe a clean run, and treat a single failing
+integration test with an unusual duration as this until it reproduces on its
+own. A batch of failures across unrelated files is K11, which is a different
+thing.

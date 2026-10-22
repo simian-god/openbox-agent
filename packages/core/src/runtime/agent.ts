@@ -24,6 +24,7 @@ import {
 } from "../store/index.ts"
 import { createToolRegistry, type Tool, type ToolRegistry } from "../tools/index.ts"
 import { taskTools, openTasks, TASK_EXPIRE_JOB } from "../tools/tasks.ts"
+import { factTools, factsFor } from "../tools/facts.ts"
 import type { TaskRow } from "../store/index.ts"
 import type { Clock } from "../testing/clock.ts"
 import { systemClock } from "../testing/clock.ts"
@@ -187,6 +188,11 @@ export function createAgent(options: AgentOptions): Agent {
 
   const tools = createToolRegistry([
     ...(options.tools ?? []),
+    // Section 10: `remember` and `forget_fact`, for every agent. Unlike
+    // the task tools there is nothing to declare: every agent talks to
+    // people, and a person who says they are allergic to peanuts has said
+    // something worth keeping whatever the agent is for.
+    ...factTools({ store, clock: deps.clock ?? systemClock }),
     ...(hasTaskTypes
       ? taskTools({
           config,
@@ -373,7 +379,16 @@ export function createAgent(options: AgentOptions): Agent {
           sender: deps.sender,
           secret,
           toolByName: (name) => tools.get(name),
-          contextFor: (person) => toolContext({ store, clock, person, config }),
+          contextFor: async (person) =>
+            toolContext({
+              store,
+              clock,
+              person,
+              config,
+              facts: Object.fromEntries(
+                (await factsFor(store, person.id)).map((fact) => [fact.key, fact.value]),
+              ),
+            }),
         })
 
   if (confirmations !== undefined) {
@@ -733,6 +748,7 @@ export function createAgent(options: AgentOptions): Agent {
     // LOOP-7: read before the turn, so the brain sees where the
     // conversation got to rather than having to work it out from thirty
     // messages. BUILTIN-2's `missing` is the part it must not work out.
+    const facts = await factsFor(store, person.id)
     const tasks = hasTaskTypes ? await openTasks(store, person) : []
     const active = tasks.find((task) => task.status === "active")
     const pending =
@@ -757,6 +773,7 @@ export function createAgent(options: AgentOptions): Agent {
       events: turnEvents,
       ...(notices.length > 0 ? { notices } : {}),
       ...(confirmations !== undefined ? { confirm: confirmations } : {}),
+      ...(facts.length > 0 ? { facts } : {}),
       ...(tasks.length > 0 ? { tasks } : {}),
       ...(pending.length > 0 ? { pendingActions: pending } : {}),
       ...(active !== undefined
