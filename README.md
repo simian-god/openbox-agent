@@ -1,12 +1,13 @@
 # openbox-agent
 
-A reusable core for building conversational agents, plus the `/openboxagent`
-skill that builds agents on it.
+A core for conversational agents, built around two promises. An irreversible
+action runs only if that person confirmed that exact action. A message is
+never lost, never answered twice, and never answered by two servers at once.
 
-The core handles the parts every agent needs and most get wrong: reliable
-message handling, routing, gating risky actions, confirmation, handover to a
-human, scheduled messages, spend caps and personal data rules. You bring the
-tools and the channel.
+The core handles the rest of what every agent needs and most get wrong:
+routing, gating risky actions, handover to a human, scheduled messages, spend
+caps and personal data rules. You bring the tools and the channel. The
+`/openboxagent` skill builds an agent on it.
 
 Status: early. You can talk to an agent from a terminal, and that is about
 it. See `docs/Progress.md` for where the build has got to.

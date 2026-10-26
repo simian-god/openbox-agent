@@ -1,7 +1,7 @@
 {
   "name": "openbox-agent",
   "version": "0.0.0",
-  "description": "A reusable core for building conversational agents.",
+  "description": "A core for conversational agents. An irreversible action runs only if that person confirmed that exact action.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

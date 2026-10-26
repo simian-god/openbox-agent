@@ -1,6 +1,6 @@
 # openbox-agent
 
-A reusable core for building conversational agents, plus the `/openboxagent` skill that builds agents on it.
+A core for conversational agents. An irreversible action runs only if that person confirmed that exact action, and a message is never lost, never answered twice, and never answered by two servers at once. Plus the `/openboxagent` skill that builds agents on it.
 
 This file is the single source of rules for coding agents. Codex reads it directly, and Claude Code reads it through CLAUDE.md. Edit this file, never CLAUDE.md.
 
