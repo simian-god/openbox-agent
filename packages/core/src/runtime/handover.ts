@@ -1,5 +1,6 @@
-// HAND-1 to HAND-7: opening a handover, taking it, the two directions a
-// message travels while it is open, and the two clocks that end it.
+// HAND-1 to HAND-8: opening a handover, taking it, the two directions a
+// message travels while it is open, the two clocks that end it, and what
+// the agent learns from it.
 //
 // A handover is the one state in this core where the agent stops being the
 // thing that answers. Everything here is therefore written so that the
@@ -35,11 +36,19 @@
 // operators are reminded every hour they are open. The second says what
 // happens when a colleague walks away mid conversation, and it hands the
 // person back to the agent rather than leaving them with nobody.
+//
+// HAND-8 is the point of all of it. A handover is the agent failing to
+// answer something and a person answering it instead, which makes that
+// exchange the most valuable thing here: a real question, with a real
+// answer, from somebody who knows. Thrown away, the agent fails the same
+// question next week. Kept, it is a candidate, and nothing more until an
+// operator approves it (LEARN-6).
 import type { OpenboxConfig } from "../config/index.ts"
 import {
   isUniqueViolation,
   type HandoverReason,
   type HandoverRow,
+  type MessageRow,
   type PersonRow,
   type Store,
 } from "../store/index.ts"
@@ -707,6 +716,19 @@ export function createHandovers(options: HandoverOptions): Handovers {
     if (sent > 0 && request.handover.status === "active") {
       await scheduleIdle(request.handover)
     }
+
+    // HAND-8: what they just answered, for an operator to approve. After
+    // the send and inside a try, because a person is waiting on those
+    // words and nothing about learning is worth delaying them.
+    for (const item of request.items) {
+      try {
+        await capture({ handover: request.handover, answer: item.text })
+      } catch {
+        // Losing a candidate costs the agent a lesson. Losing the relay
+        // costs the person their answer.
+      }
+    }
+
     return sent
   }
 
@@ -755,6 +777,65 @@ export function createHandovers(options: HandoverOptions): Handovers {
     // hour starts again from here.
     if (handover.status === "active") await scheduleIdle(handover)
     return sent
+  }
+
+  /**
+   * HAND-8: the question a colleague just answered, and their answer,
+   * saved for an operator to approve (LEARN-6).
+   *
+   * The question is the last thing the person said, and it has to have
+   * been said inside this handover. That rules out the message that
+   * caused it: "get me a manager" is not a question anybody wants in a
+   * knowledge base, and it arrives before the handover exists.
+   *
+   * Judging whether the answer is reusable is deliberately not done
+   * here. It was typed to one person in one conversation and may be
+   * wrong for everyone else, which is exactly what approval is for, and
+   * a core that guessed would throw away the good ones silently.
+   *
+   * Never allowed to break a relay. A person is waiting on those words.
+   */
+  async function capture(request: { handover: HandoverRow; answer: string }): Promise<void> {
+    const { handover, answer } = request
+    if (answer.trim() === "") return
+
+    const [asked] = (await store.messages.list(
+      { person_id: handover.person_id, author: "person" },
+      { orderBy: "seq", ascending: false, limit: 1 },
+    )) as MessageRow[]
+
+    const question = asked?.text ?? ""
+    if (asked === undefined || question.trim() === "") return
+
+    // The message that caused this handover, which a colleague is not
+    // answering: "get me a manager" is not a question for a knowledge
+    // base. Told apart by the turn rather than by the clock, because the
+    // trigger and the handover happen in the same instant and a rule
+    // that rested on which millisecond won would be a coin toss.
+    if (handover.turn_id !== null && asked.turn_id === handover.turn_id) return
+
+    // Said before the handover existed, so the colleague is not
+    // answering it either: they are starting something of their own,
+    // which happens when an operator opens one themselves.
+    if (new Date(asked.created_at).getTime() < new Date(handover.opened_at).getTime()) return
+
+    try {
+      await store.knowledge.insert({
+        question,
+        answer,
+        status: "candidate",
+        source: "handover",
+        handover_id: handover.id,
+        person_id: handover.person_id,
+        ...(handover.operator_id !== null ? { operator_id: handover.operator_id } : {}),
+        question_message_id: asked.id,
+      })
+    } catch (error) {
+      // HAND-8: one candidate per question, decided by the unique index.
+      // A second answer to the same question is the colleague saying
+      // more, not a second thing to review.
+      if (!isUniqueViolation(error)) throw error
+    }
   }
 
   /**

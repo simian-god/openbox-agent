@@ -696,7 +696,7 @@ export default defineConfig({
   limits: { messagesPerWindow: 20, windowMinutes: 10, dailySpendUsd: 5 },  // dailySpendUsd required
   pricing: { "model-id": { inputPerM: 0, outputPerM: 0 } },
 
-  handover: { noOperatorMinutes: 10, idleMinutes: 30, wantsHumanThreshold: 0.8 },
+  handover: { noOperatorMinutes: 10, idleMinutes: 30, alertRepeatMinutes: 60, wantsHumanThreshold: 0.8 },  // HAND-6
   pendingActionMinutes: 15,
   quietHours: ["21:00", "09:00"],
   taskTypes: { booking: { fields: { date: "required", time: "required", size: "required", notes: "optional" }, idleHours: 24 } },

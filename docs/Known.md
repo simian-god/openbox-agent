@@ -382,6 +382,56 @@ changes they imply. Before M9, which is five milestones out.
 
 ---
 
+## K18. Knowledge candidates have nobody to approve them until T8.4
+
+**Status:** open, scheduled. Not a workaround.
+
+**What happens.** T6.5 saves the question and answer from every exchange
+in a handover as a `candidate`. LEARN-6 says a candidate is not searchable
+until an operator approves it, and `approve_knowledge` and
+`reject_knowledge` are T8.4, with the index. So candidates accumulate and
+nobody can act on them.
+
+**What it costs.** Nothing is wrong, and nothing is lost: the rows are the
+point, and a candidate that cannot be searched is exactly what LEARN-6
+asks for. What is missing is the operator's half, so the agent does not
+yet get any better for having learned something.
+
+**What would resolve it.** T8.4, which is `search_knowledge`, the two
+approval tools and KNOW-2's live indexing.
+
+**What to do meanwhile.** Read `ob_knowledge` in the database to see what
+the agent would have learned. Nothing has to be cleaned up first: an
+approval tool arriving later finds the candidates waiting.
+
+---
+
+## K19. PRIV-3's erasure list predates knowledge entries
+
+**Status:** open, and waiting on the builder. Needed before M9 is built.
+
+**What happens.** PRIV-3 names the tables erasure clears: messages, facts,
+tasks, pending actions, handovers, flags and the person row. Knowledge is
+not among them, because knowledge did not exist when that line was
+written, and a candidate holds the person's own words.
+
+**What we did.** `ob_knowledge.person_id` cascades, so erasing a person
+takes their candidates with them. That is the safe half, and a test proves
+it. The open half is an entry that has already been approved: deleting it
+loses an answer the shop now relies on, and keeping it keeps a sentence
+the person asked to be forgotten.
+
+**What it costs.** Nothing yet. Approval is T8.4, so no approved entry can
+exist before then, and erasure is M9. The question cannot bite until both
+are built.
+
+**What would resolve it.** The builder deciding, before M9: delete the
+entry with the person, keep it, or have the operator rewrite it as general
+knowledge on approval so no personal words survive. Then one line in
+PRIV-3 saying so.
+
+---
+
 ## K16. Four brains ship, not the five Intent names
 
 **Status:** open by decision. Resolved by building T5.3, which now sits in After

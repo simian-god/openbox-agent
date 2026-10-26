@@ -18,11 +18,14 @@ export const CORE_TABLES = [
   "ob_tasks",
   "ob_facts",
   "ob_handovers",
+  "ob_knowledge",
 ] as const
 
 export type CoreTable = (typeof CORE_TABLES)[number]
 
 export type PersonRole = "end_user" | "operator"
+/** LEARN-6: nothing is searchable until an operator has approved it. */
+export type KnowledgeStatus = "candidate" | "approved" | "rejected"
 export type InboxStatus = "pending" | "merged" | "done" | "failed"
 export type MessageDirection = "inbound" | "outbound"
 export type MessageAuthor = "person" | "agent" | "operator" | "notice"
@@ -363,6 +366,28 @@ export interface HandoverRow {
   created_at: string
 }
 
+/**
+ * HAND-8: a question the agent could not answer and the answer a
+ * colleague gave, waiting for an operator to approve it (LEARN-6).
+ */
+export interface KnowledgeRow {
+  id: string
+  seq: number
+  agent_id: string
+  question: string
+  answer: string
+  status: KnowledgeStatus
+  source: "handover" | "operator"
+  handover_id: string | null
+  person_id: string | null
+  operator_id: string | null
+  /** HAND-8: the message the answer answered. One candidate per question. */
+  question_message_id: string | null
+  decided_at: string | null
+  decided_by: string | null
+  created_at: string
+}
+
 export interface FactRow {
   id: string
   seq: number
@@ -394,6 +419,7 @@ export interface CoreRows {
   ob_tasks: TaskRow
   ob_facts: FactRow
   ob_handovers: HandoverRow
+  ob_knowledge: KnowledgeRow
 }
 
 /** What a caller supplies when inserting: no id, no agent_id, no defaults. */

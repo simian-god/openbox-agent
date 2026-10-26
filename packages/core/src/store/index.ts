@@ -136,6 +136,7 @@ export interface Store {
   tasks: TableStore<CoreRows["ob_tasks"]>
   facts: TableStore<CoreRows["ob_facts"]>
   handovers: TableStore<CoreRows["ob_handovers"]>
+  knowledge: TableStore<CoreRows["ob_knowledge"]>
   /** For a table with no typed accessor yet. Still scoped. */
   table<T = Record<string, unknown>>(name: string): TableStore<T>
 }
@@ -272,6 +273,7 @@ export function createStore(db: SupabaseClient, agentId: string): Store {
     tasks: forTable("ob_tasks"),
     facts: forTable("ob_facts"),
     handovers: forTable("ob_handovers"),
+    knowledge: forTable("ob_knowledge"),
     table: <T = Record<string, unknown>>(name: string) => scoped<T>(name),
   }
 }

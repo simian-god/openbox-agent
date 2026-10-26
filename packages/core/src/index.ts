@@ -104,6 +104,8 @@ export {
   type TaskStatus,
   type FactRow,
   type HandoverRow,
+  type KnowledgeRow,
+  type KnowledgeStatus,
   type HandoverStatus,
   type HandoverReason,
   type OutboxRow,
