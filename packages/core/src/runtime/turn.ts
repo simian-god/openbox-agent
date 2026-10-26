@@ -19,6 +19,7 @@ import { buildMessages, buildRuntimeBlock, buildSystem } from "./context.ts"
 import type { MessageRow } from "../store/index.ts"
 import { noEvents, type EventWriter } from "./events.ts"
 import { route, ROUTING_QUESTION, type RoutingState } from "./routing.ts"
+import { WANTS_HUMAN, wantsHumanQuestion } from "./handover.ts"
 import { gate, type GateConversation } from "./gate.ts"
 import { toolContext } from "./tool-context.ts"
 import type { FactRow, PendingActionRow, TaskRow } from "../store/index.ts"
@@ -113,16 +114,31 @@ export interface TurnResult {
    * ended in a way the core did not plan for, so a caller of
    * `receiveAndWait` gets a result rather than a rejection.
    *
-   * Nor is `blocked`. LOOP-5's first check runs before anything in this
-   * file, so a blocked person's turn never reaches it (ROLE-4).
+   * Nor are `blocked` and `handover`. Both are LOOP-5 checks, which run
+   * before anything in this file, so neither turn reaches it (ROLE-4,
+   * HAND-5).
    */
-  outcome: "replied" | "no_reply" | "step_cap" | "brains_failed" | "failed" | "blocked"
+  outcome: "replied" | "no_reply" | "step_cap" | "brains_failed" | "failed" | "blocked" | "handover"
   /** Set only when the outcome is `failed`. */
   error?: string | undefined
 }
 
-/** GATE-3's two triggers, named so a later milestone can act on them. */
-export type HandoverTrigger = "gate_block_repeat" | "low_confidence_repeat"
+/**
+ * HAND-1's repeat triggers, as the turn notices them.
+ *
+ * GATE-3 has two: two Blocks in a row, and two routing picks below the
+ * threshold in a row. LOOP-10 has the third: the same tool failing
+ * twice in a row for the same person, in this turn or across turns.
+ * And the decision model's own answer on step 1 is the fourth.
+ *
+ * The names match `HandoverReason`, so nothing has to translate, and
+ * `escalate` is not here: that one is a tool, which opens it itself.
+ */
+export type HandoverTrigger =
+  | "gate_block_repeat"
+  | "low_confidence_repeat"
+  | "tool_failed_repeat"
+  | "wants_human"
 
 /** LOOP-8 step 5: the brain called something it was not offered. */
 function unknownToolResult(name: string, offered: Tool[]): string {
@@ -173,6 +189,19 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   // routing decides, and they do not count toward routingMinTools. An
   // agent with four tools and the task tools is still a small agent.
   const builtins = tools.builtinsForRole(person.role)
+
+  /**
+   * LOOP-10: whether this tool's last two runs for this person both
+   * failed. Called straight after recording a failure, so the newest
+   * row is the one that just happened.
+   */
+  async function failedTwice(name: string): Promise<boolean> {
+    const last = await store.toolRuns.list(
+      { person_id: person.id, tool: name },
+      { orderBy: "seq", ascending: false, limit: 2 },
+    )
+    return last.length === 2 && last.every((row) => row.status === "error")
+  }
 
   /** The last 6 messages, which both routing and the gate reason over. */
   const recent = (): { role: string; text: string }[] =>
@@ -227,6 +256,12 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       minTools: config.routingMinTools,
       threshold: config.decisionModel.routeThreshold,
       timeoutMs: config.decisionTimeoutMs,
+      // LOOP-8 step 1: on the first step the same request also asks
+      // whether this person wants a human (HAND-1). DM-2 is why it
+      // rides along rather than being asked on its own.
+      ...(steps === 1 && person.role === "end_user"
+        ? { also: { [WANTS_HUMAN]: wantsHumanQuestion() } }
+        : {}),
     })
     const offered = routing.exposed
     costUsd += routing.costUsd
@@ -235,6 +270,24 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       reason: routing.reason,
       ...(routing.choice !== undefined ? { choice: routing.choice } : {}),
     })
+
+    // HAND-1: at or above the threshold is a handover trigger. Recorded
+    // either way, because a question that was asked and paid for is
+    // worth reading later whichever way it went.
+    const human = routing.also?.[WANTS_HUMAN]
+    if (human !== undefined && human.type === "yesno") {
+      const wants = human.p >= config.handover.wantsHumanThreshold
+      await events.decision({
+        kind: "wants_human",
+        outcome: wants ? "handover" : "no",
+        answers: { [WANTS_HUMAN]: human },
+        model: decisionModel.id,
+        step: steps,
+        durationMs: clock.now().getTime() - routedAt,
+        costUsd: 0,
+      })
+      if (wants) handoverDue.push("wants_human")
+    }
 
     if (routing.reason !== "not_routed") {
       await events.record("route_decided", {
@@ -571,7 +624,14 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     // Step 8: a read tool runs straight away. So does a write that passed.
     // TOOL-4: the facts as the turn started, so every step of one turn
     // sees the same person.
-    const ctx: ToolContext = toolContext({ store, clock, person, config, facts: knownFacts })
+    const ctx: ToolContext = toolContext({
+      store,
+      clock,
+      person,
+      config,
+      facts: knownFacts,
+      turnId,
+    })
 
     const ranAt = clock.now().getTime()
     try {
@@ -622,6 +682,16 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         step: steps,
         durationMs,
       })
+
+      // LOOP-10: the same tool failing twice in a row for this person,
+      // in this turn or across turns, is a handover trigger. Read from
+      // the rows rather than kept in memory, because "across turns"
+      // means a different process may have seen the first one.
+      //
+      // The run just recorded is the first row back, so two errors at
+      // the top is twice in a row. Anything else in between, including a
+      // success, breaks the run.
+      if (await failedTwice(tool.name)) handoverDue.push("tool_failed_repeat")
       messages.push({
         role: "tool_result",
         id: call.id,

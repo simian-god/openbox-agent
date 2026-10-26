@@ -382,6 +382,31 @@ changes they imply. Before M9, which is five milestones out.
 
 ---
 
+## K17. A handover has no timeout yet, so only an operator ends one
+
+**Status:** open, scheduled. Not a workaround.
+
+**What happens.** T6.2 opens handovers and lets an operator take one and give
+it back. HAND-6's ten minute wait and HAND-7's thirty minute idle timeout are
+T6.4, so until then nothing ends a handover except an operator saying so.
+
+**What it costs.** A person whose conversation is handed over and never picked
+up is never answered again by the agent. Their messages are stored and the
+operators were alerted, so nothing is lost, but nobody is told twice and the
+agent will not take the conversation back on its own.
+
+**What we did.** Implemented `resume` at T6.2 rather than leaving it for T6.4,
+so the state machine has a way out at all. The Plan had it later.
+
+**What would resolve it.** T6.4, which is both timeouts as jobs. It is two rows
+away.
+
+**What to do meanwhile.** On a real agent, keep an eye on `ob_handovers` for
+rows that stay `waiting`, and have an operator say "take over" and then "done"
+to clear one.
+
+---
+
 ## K16. Four brains ship, not the five Intent names
 
 **Status:** open by decision. Resolved by building T5.3, which now sits in After

@@ -18,6 +18,7 @@ import {
 import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
 import { GATE_QUESTION } from "../../src/runtime/gate.ts"
+import { WANTS_HUMAN } from "../../src/runtime/handover.ts"
 
 // LOOP-2: nothing is handled until a worker runs, and a worker left running
 // keeps its poll timer alive after the test. Every agent built here is
@@ -638,8 +639,9 @@ describeDatabase("a turn", (sql) => {
       expect(routed[0]?.[1]["reason"]).toBe("top_pick")
       expect(routed[1]?.[1]["reason"]).toBe("no_tool")
       // A confident no_tool means the second step was offered no agent
-      // tools. The core's own are there either way (BUILTIN-1).
-      expect(routed[1]?.[1]["exposed"]).toEqual(["remember", "forget_fact"])
+      // tools. The core's own are there either way (BUILTIN-1), and for
+      // an end user those are the two fact tools and `escalate`.
+      expect(routed[1]?.[1]["exposed"]).toEqual(["remember", "forget_fact", "escalate"])
     })
 
     test("ROUTE-5: a decision model that is down still answers the person", async () => {
@@ -705,7 +707,11 @@ describeDatabase("a turn", (sql) => {
 
       await agent.receiveAndWait(hello())
 
-      expect(decisions.calls).toHaveLength(0)
+      // One request, and routing is not in it. LOOP-8 step 1 asks
+      // `wants_human` on every first step (HAND-1), so the question is
+      // not whether a request was made but what was in it.
+      expect(decisions.calls).toHaveLength(1)
+      expect(Object.keys(decisions.calls[0]?.questions ?? {})).toEqual([WANTS_HUMAN])
       expect(captured.filter(([name]) => name === "route_decided")).toHaveLength(0)
       expect(agentToolsIn(brain.calls[0]?.tools, agent)).toEqual(["check_availability"])
     })
@@ -970,12 +976,15 @@ describeDatabase("a turn", (sql) => {
         change,
         { reply: "no again" },
       ])
-      // Block, then pass, then block.
-      const decisions = scriptedDecisionModel([
-        { [GATE_QUESTION]: yesno(0.1) },
-        { [GATE_QUESTION]: yesno(0.9) },
-        { [GATE_QUESTION]: yesno(0.1) },
-      ])
+      // Block, then pass, then block. Two requests per turn: LOOP-8
+      // step 1 asks `wants_human` before the brain is called at all,
+      // and the gate asks its own once there is a call to judge.
+      const decisions = scriptedDecisionModel(
+        [0.1, 0.9, 0.1].flatMap((p) => [
+          { [WANTS_HUMAN]: yesno(0) },
+          { [GATE_QUESTION]: yesno(p) },
+        ]),
+      )
       sender = fakeSender()
       const agent = createAgent({
         config: config(),
@@ -1013,9 +1022,15 @@ describeDatabase("a turn", (sql) => {
       const second = await agent.receiveAndWait(hello({ channelMessageId: "msg-2" }))
       expect(second.turn?.handoverDue).toEqual(["low_confidence_repeat"])
 
-      // LEARN-1: and each of them raised a low_confidence flag.
+      // LEARN-1: each of them raised a low_confidence flag, and the
+      // second one opened a handover, which is a flag of its own
+      // (section 17: any handover starts).
       const flags = await agent.store.flags.list({}, { orderBy: "seq" })
-      expect(flags.map((flag) => flag.kind)).toEqual(["low_confidence", "low_confidence"])
+      expect(flags.map((flag) => flag.kind)).toEqual([
+        "low_confidence",
+        "low_confidence",
+        "handover",
+      ])
       expect(flags[0]?.detail).toMatchObject({ choice: "look_up_one", threshold: 0.6 })
     })
 

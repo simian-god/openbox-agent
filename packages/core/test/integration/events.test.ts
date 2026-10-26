@@ -214,7 +214,12 @@ describeDatabase("events and versions", (sql) => {
     // BUILTIN-1: the core's own tools are offered on every step, so the
     // list the brain was given names them too. That is the point of the
     // event: it says what the brain could have called.
-    expect(row?.props["offered"]).toEqual(["remember", "forget_fact", "check_availability"])
+    expect(row?.props["offered"]).toEqual([
+      "remember",
+      "forget_fact",
+      "escalate",
+      "check_availability",
+    ])
   })
 
   test("EVT-2: duplicate_dropped is recorded, and no turn is", async () => {

@@ -18,6 +18,7 @@ export function toolContext(input: {
   config: OpenboxConfig
   /** TOOL-4: read once when the turn started, so every step agrees. */
   facts?: Record<string, string> | undefined
+  turnId?: string | undefined
 }): ToolContext {
   const { store, clock, person, config } = input
   return {
@@ -26,6 +27,7 @@ export function toolContext(input: {
     // the clock and a frozen clock in a test must stay frozen.
     time: createTimeHelpers({ config, clock }),
     facts: Object.freeze({ ...input.facts }),
+    ...(input.turnId !== undefined ? { turnId: input.turnId } : {}),
     person: {
       id: person.id,
       role: person.role,

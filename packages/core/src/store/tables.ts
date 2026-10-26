@@ -17,6 +17,7 @@ export const CORE_TABLES = [
   "ob_pending_actions",
   "ob_tasks",
   "ob_facts",
+  "ob_handovers",
 ] as const
 
 export type CoreTable = (typeof CORE_TABLES)[number]
@@ -312,6 +313,54 @@ export interface TaskRow {
 }
 
 /** LOOP-7: what the agent knows about a person, apart from what they said. */
+/**
+ * HAND-1 and HAND-2: why a handover opened, from one short list.
+ *
+ * Named rather than free text because the review digest counts them, and
+ * "the brain asked" and "the gate blocked twice" are different problems.
+ * What was actually said goes in `detail`.
+ */
+export type HandoverReason =
+  | "escalate"
+  | "wants_human"
+  | "gate_block_repeat"
+  | "low_confidence_repeat"
+  | "tool_failed_repeat"
+  | "spend_cap"
+  | "step_cap"
+  | "brains_failed"
+  | "operator"
+
+/**
+ * HAND-2, HAND-3, HAND-6 and HAND-7.
+ *
+ * `waiting` is nobody yet, `active` is an operator replying, `unanswered`
+ * is waiting for longer than anyone meant it to and still open, `closed`
+ * is back with the bot.
+ */
+export type HandoverStatus = "waiting" | "active" | "unanswered" | "closed"
+
+export interface HandoverRow {
+  id: string
+  seq: number
+  agent_id: string
+  person_id: string
+  turn_id: string | null
+  status: HandoverStatus
+  reason: HandoverReason
+  detail: string | null
+  /** HAND-2's three lines. Null when no brain could write them. */
+  summary: string | null
+  operator_id: string | null
+  ended_reason: string | null
+  opened_at: string
+  taken_at: string | null
+  /** HAND-6: when the operators were last told, so a reminder is not doubled. */
+  alerted_at: string | null
+  ended_at: string | null
+  created_at: string
+}
+
 export interface FactRow {
   id: string
   seq: number
@@ -342,6 +391,7 @@ export interface CoreRows {
   ob_pending_actions: PendingActionRow
   ob_tasks: TaskRow
   ob_facts: FactRow
+  ob_handovers: HandoverRow
 }
 
 /** What a caller supplies when inserting: no id, no agent_id, no defaults. */

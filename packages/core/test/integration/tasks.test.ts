@@ -26,6 +26,7 @@ import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
 import { fakeToolContext } from "../../src/testing/tool-context.ts"
 import { GATE_QUESTION } from "../../src/runtime/gate.ts"
+import { WANTS_HUMAN } from "../../src/runtime/handover.ts"
 import { buttonPayload } from "../../src/runtime/confirm.ts"
 
 const SECRET = "test-secret-long-enough-to-look-real"
@@ -169,8 +170,9 @@ describeDatabase("tasks", (sql) => {
       // BUILTIN-1: `remember` and `forget_fact` are there for every
       // agent. The four task tools are not, because nothing is declared.
       const offered = brain.calls[0]?.tools.map((tool) => tool.name) ?? []
-      // The core's own come first, as ROUTE-2 exposes them.
-      expect(offered).toEqual(["remember", "forget_fact", "parking"])
+      // The core's own come first, as ROUTE-2 exposes them: the two fact
+      // tools and `escalate`, which every end user has (section 10).
+      expect(offered).toEqual(["remember", "forget_fact", "escalate", "parking"])
     })
 
     test("BUILTIN-1: built in tools do not count toward routingMinTools", async () => {
@@ -189,9 +191,12 @@ describeDatabase("tasks", (sql) => {
       const result = await agent.receiveAndWait(says("hello", "m1"))
 
       expect(result.turn?.routed[0]?.reason).toBe("not_routed")
-      expect(decisions.calls).toHaveLength(0)
-      // Two agent tools, four task tools, remember and forget_fact.
-      expect(brain.calls[0]?.tools).toHaveLength(8)
+      // One request, which is LOOP-8 step 1 asking `wants_human` (HAND-1),
+      // and routing is not one of its questions.
+      expect(decisions.calls).toHaveLength(1)
+      expect(Object.keys(decisions.calls[0]?.questions ?? {})).toEqual([WANTS_HUMAN])
+      // Two agent tools, four task tools, remember, forget_fact, escalate.
+      expect(brain.calls[0]?.tools).toHaveLength(9)
     })
   })
 

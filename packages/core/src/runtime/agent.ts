@@ -26,11 +26,13 @@ import { createToolRegistry, type Tool, type ToolRegistry } from "../tools/index
 import { taskTools, openTasks, TASK_EXPIRE_JOB } from "../tools/tasks.ts"
 import { factTools, factsFor } from "../tools/facts.ts"
 import { operatorTools } from "../tools/operator.ts"
+import { handoverTools } from "../tools/handover.ts"
 import type { TaskRow } from "../store/index.ts"
 import type { Clock } from "../testing/clock.ts"
 import { systemClock } from "../testing/clock.ts"
 import { createEvents, type EventFailure, type EventSink, type EventWriter } from "./events.ts"
 import { createLeases, FREE } from "./lease.ts"
+import { createHandovers, type Handovers } from "./handover.ts"
 import { createJobs, type Jobs } from "./jobs.ts"
 import { createOutbox, type Outbox } from "./outbox.ts"
 import { createWorker } from "./worker.ts"
@@ -137,6 +139,11 @@ export interface Agent {
    * pending action resolved without a channel needs the same door.
    */
   readonly confirmations: Confirmations | undefined
+  /**
+   * HAND-1 to HAND-3, for a glue or an evals adapter that has to open
+   * or take one without a conversation to do it in.
+   */
+  readonly handovers: Handovers
   /** API-1: writes the message down and returns. The turn runs behind it. */
   receive(inbound: Inbound): Promise<ReceiveResult>
   /**
@@ -170,6 +177,16 @@ export interface Agent {
  * `no_reply` is not one of them: the brain chose to say nothing, which is
  * a handled turn. `replied` obviously is not.
  */
+/** HAND-2: how much of the conversation the summary is written from. */
+const SUMMARY_MESSAGES = 12
+
+/** HAND-2: three lines, for a colleague who is about to take it over. */
+const SUMMARY_PROMPT = [
+  "A colleague is about to take over this conversation from you.",
+  "Write exactly three short lines, one per line, with no greeting and no advice:",
+  "1. what this person wants, 2. what has happened so far, 3. what is unresolved.",
+].join(" ")
+
 const UNANSWERED = new Set<TurnResult["outcome"]>(["failed", "brains_failed", "step_cap"])
 
 /**
@@ -178,7 +195,7 @@ const UNANSWERED = new Set<TurnResult["outcome"]>(["failed", "brains_failed", "s
  * Not in UNANSWERED above: the message was handled correctly by not
  * being answered, so the recovery sweep must leave it alone.
  */
-const blockedTurn = (): TurnResult => ({
+const nothingHappened = (outcome: TurnResult["outcome"]): TurnResult => ({
   steps: 0,
   costUsd: 0,
   brainsUsed: [],
@@ -186,7 +203,7 @@ const blockedTurn = (): TurnResult => ({
   routed: [],
   droppedCalls: [],
   handoverDue: [],
-  outcome: "blocked",
+  outcome,
 })
 
 /** One reply per set of messages answered, however many turns it takes. */
@@ -212,14 +229,91 @@ export function createAgent(options: AgentOptions): Agent {
   let taskChanged: ((task: TaskRow, why: string) => Promise<void>) | undefined
   let scheduleTaskExpiry: ((task: TaskRow) => Promise<void>) | undefined
 
-  // Before the tools, because an operator tool writes a flag (LEARN-1)
-  // and nothing here depends on the tools in return.
+  // First of all: everything below records events, and nothing here
+  // depends on the tools, so there is no reason for it to be later.
   const events = createEvents({
     store,
     clock,
     sink: deps.events,
     onError: options.onEventError,
   })
+
+  // LOOP-2: how this process names itself on everything it claims.
+  const owner = `${config.name}:${Math.random().toString(36).slice(2, 10)}`
+
+  const leases = createLeases({
+    store,
+    clock,
+    owner,
+    seconds: config.leaseSeconds,
+  })
+
+  const outbox = createOutbox({
+    config,
+    store,
+    clock,
+    sender: deps.sender,
+    events,
+    ...(options.onWorkerError !== undefined ? { onError: options.onWorkerError } : {}),
+  })
+
+  // HAND-1 to HAND-3. Above the tools as well, because `escalate`,
+  // `take_over` and `resume` are three thin wrappers around this and
+  // the rules about states and races belong in one place.
+  const handovers = createHandovers({
+    config,
+    store,
+    clock,
+    events,
+    outbox,
+    summarise,
+  })
+
+  /**
+   * HAND-2: the three lines an operator reads first.
+   *
+   * Writing the summary is the brain's only job in a handover, so this
+   * is a plain one shot call rather than a turn: no tools, no routing,
+   * no gate. It walks the brains in order like BRAIN-5 does, and gives
+   * up rather than retrying, because the alert has to go out either
+   * way and the person has already been told somebody will reply.
+   *
+   * Its cost is on the `handover_started` event. T7.3's spend cap has
+   * to count it: it is the one brain call that happens outside a turn.
+   */
+  async function summarise(request: {
+    person: PersonRow
+  }): Promise<{ text: string; costUsd: number } | undefined> {
+    const recent = await store.messages.list(
+      { person_id: request.person.id },
+      { orderBy: "seq", ascending: false, limit: SUMMARY_MESSAGES },
+    )
+    if (recent.length === 0) return undefined
+
+    const transcript = [...recent]
+      .reverse()
+      .map((row) => `${row.author}: ${row.text}`)
+      .join("\n")
+
+    let costUsd = 0
+    for (const [index, brain] of deps.brains.entries()) {
+      try {
+        const output = await brain.complete({
+          model: models[index] ?? (models[0] as string),
+          system: SUMMARY_PROMPT,
+          messages: [{ role: "person", text: transcript }],
+          tools: [],
+        })
+        costUsd += output.usage.costUsd ?? 0
+        const text = output.text?.trim() ?? ""
+        if (text !== "") return { text, costUsd }
+      } catch {
+        // The next brain, and then nothing. HAND-2 is explicit that the
+        // alert does not wait on this.
+      }
+    }
+    return undefined
+  }
 
   const tools = createToolRegistry([
     ...(options.tools ?? []),
@@ -233,6 +327,9 @@ export function createAgent(options: AgentOptions): Agent {
     // operators yet is an agent whose builder has not run
     // `openbox operator add` yet, which is not something to decide here.
     ...operatorTools({ store, events }),
+    // Section 10: `escalate` for the person's side, `take_over` and
+    // `resume` for the operator's. ROLE-3 keeps them apart.
+    ...handoverTools({ store, handovers }),
     ...(hasTaskTypes
       ? taskTools({
           config,
@@ -370,23 +467,6 @@ export function createAgent(options: AgentOptions): Agent {
   }
 
   /** LOOP-2: this process, as the lease records it. */
-  const owner = `${config.name}:${Math.random().toString(36).slice(2, 10)}`
-
-  const leases = createLeases({
-    store,
-    clock,
-    owner,
-    seconds: config.leaseSeconds,
-  })
-
-  const outbox = createOutbox({
-    config,
-    store,
-    clock,
-    sender: deps.sender,
-    events,
-    ...(options.onWorkerError !== undefined ? { onError: options.onWorkerError } : {}),
-  })
 
   const jobs = createJobs({
     config,
@@ -581,6 +661,7 @@ export function createAgent(options: AgentOptions): Agent {
     outbox,
     jobs,
     confirmations,
+    handovers,
 
     receive: write,
 
@@ -776,7 +857,18 @@ export function createAgent(options: AgentOptions): Agent {
     // has since been blocked, and a blocked person costs no brain call,
     // no decision request and no context reads at all.
     if (person.blocked) {
-      return finish(blockedTurn(), turnRow, turnEvents, startedAt, batch.length)
+      return finish(nothingHappened("blocked"), turnRow, turnEvents, startedAt, batch.length)
+    }
+
+    // LOOP-5 step 5: a person in a handover belongs to a colleague, so
+    // the agent does not answer them. Their messages are stored, and
+    // forwarding them to the operator is HAND-5 at T6.3.
+    //
+    // Not applied to an operator. Their messages are the control
+    // channel: an operator who could be silenced by a row of their own
+    // would have no way left to say `resume`.
+    if (person.role === "end_user" && (await handovers.openFor(person)) !== undefined) {
+      return finish(nothingHappened("handover"), turnRow, turnEvents, startedAt, batch.length)
     }
 
     // CONF-4 and CONF-8: a confirmation is not a message for the brain.
@@ -856,6 +948,19 @@ export function createAgent(options: AgentOptions): Agent {
 
     if (result.reply !== undefined) {
       await deliver(person, turnRow.id, inboxIds, result.reply)
+    }
+
+    // HAND-1: the triggers this turn noticed, in the order it noticed
+    // them. The first one is the reason recorded; a second trigger in
+    // the same turn is the same handover, which the unique index
+    // decides rather than this code.
+    //
+    // After the reply, not instead of it. The brain was told what
+    // happened and may well have said something sensible, and the
+    // person should hear that before being told a colleague is coming.
+    const trigger = result.handoverDue[0]
+    if (trigger !== undefined) {
+      await handovers.open({ person, reason: trigger, turnId: turnRow.id })
     }
 
     return finish(result, turnRow, turnEvents, startedAt, batch.length)

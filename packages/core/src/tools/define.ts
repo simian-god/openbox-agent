@@ -45,6 +45,12 @@ export interface ToolContext {
   readonly time: TimeHelpers
   readonly person: ToolPerson
   /**
+   * The turn this call is part of, for a tool that writes a row of
+   * its own and has to say what caused it. Absent only where there
+   * is no turn, which is a test calling a handler directly.
+   */
+  readonly turnId?: string | undefined
+  /**
    * TOOL-4: what is remembered about this person, by key.
    *
    * Read only, and read as the turn started. A tool that wants to change

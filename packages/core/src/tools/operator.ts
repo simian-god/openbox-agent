@@ -25,8 +25,8 @@ export interface OperatorToolOptions {
   events: EventWriter
 }
 
-/** The two fields all three take: who, and on which channel. */
-const WHO = {
+/** The two fields every tool that names a person takes. */
+export const WHO = {
   user_id: z
     .string()
     .min(1)
@@ -38,23 +38,24 @@ const WHO = {
     .describe("Only when they are on a different channel from you"),
 }
 
-export function operatorTools(options: OperatorToolOptions): Tool[] {
-  const { store, events } = options
+/** What `personFinder` answers with: the person, or why there is none. */
+export type Found = { person: PersonRow } | { error: string }
 
-  /**
-   * The person an operator named, or why there is nobody to act on.
-   *
-   * The channel defaults to the operator's own, because an operator on
-   * WhatsApp saying "block 9812345678" means the WhatsApp person, and
-   * making them say so every time is how a tool gets called wrongly.
-   *
-   * Nothing is created here. A name that has never written is a mistake
-   * worth reporting, not a new person to block.
-   */
-  async function find(
-    args: { user_id: string; channel?: string | undefined },
-    ctx: ToolContext,
-  ): Promise<{ person: PersonRow } | { error: string }> {
+/**
+ * The person an operator named, or why there is nobody to act on.
+ *
+ * The channel defaults to the operator's own, because an operator on
+ * WhatsApp saying "block 9812345678" means the WhatsApp person, and making
+ * them say so every time is how a tool gets called wrongly.
+ *
+ * Nothing is created here. An id that has never written is a mistake worth
+ * reporting, not a new person to act on. Shared with the handover tools,
+ * which name a person exactly the same way.
+ */
+export function personFinder(
+  store: Store,
+): (args: { user_id: string; channel?: string | undefined }, ctx: ToolContext) => Promise<Found> {
+  return async (args, ctx) => {
     const channel = args.channel ?? ctx.person.channel
     const person = await store.people.find({ channel, channel_user_id: args.user_id })
 
@@ -65,6 +66,11 @@ export function operatorTools(options: OperatorToolOptions): Tool[] {
     }
     return { person }
   }
+}
+
+export function operatorTools(options: OperatorToolOptions): Tool[] {
+  const { store, events } = options
+  const find = personFinder(store)
 
   const block = defineBuiltinTool({
     name: "block",

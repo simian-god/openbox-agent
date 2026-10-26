@@ -58,6 +58,15 @@ export interface RouteOptions {
   threshold: number
   /** config.decisionTimeoutMs (ROUTE-5). */
   timeoutMs: number
+  /**
+   * DM-2: the step's other questions, which ride along in the same
+   * request because the state is paid for once.
+   *
+   * LOOP-8 step 1: on the first step that is `wants_human` (HAND-1).
+   * They are asked even when routing does not run, because the step
+   * still has to ask them and one request is one request either way.
+   */
+  also?: Record<string, Question> | undefined
 }
 
 export interface RouteDecision {
@@ -80,6 +89,8 @@ export interface RouteDecision {
   probabilities?: Record<string, number> | undefined
   /** Why routing fell back, when it did. */
   error?: string | undefined
+  /** The answers to `also`, when there were any to ask. */
+  also?: Record<string, Answer> | undefined
   /** Decision requests made. 2 when DM-3 had to split the options. */
   requests: number
   costUsd: number
@@ -164,8 +175,26 @@ export function topTools(picked: Picked, tools: Tool[]): Tool[] {
   return chosen
 }
 
+/**
+ * ROUTE-1 to ROUTE-5, and whatever else this step has to ask (DM-2).
+ *
+ * The extra answers are collected on the way through and attached
+ * here, rather than threaded through six return paths that are all
+ * about routing and none about them.
+ */
 export async function route(options: RouteOptions): Promise<RouteDecision> {
+  const extra: Record<string, Answer> = {}
+  const decision = await decide(options, extra)
+  return Object.keys(extra).length > 0 ? { ...decision, also: extra } : decision
+}
+
+async function decide(
+  options: RouteOptions,
+  extra: Record<string, Answer>,
+): Promise<RouteDecision> {
   const { decisionModel, tools, state, minTools, threshold, timeoutMs } = options
+  const also = options.also ?? {}
+  const alsoNames = Object.keys(also)
   const builtins = options.builtins ?? []
   const everything = (
     reason: RouteDecision["reason"],
@@ -183,7 +212,24 @@ export async function route(options: RouteOptions): Promise<RouteDecision> {
   // ROUTE-1: routing runs only above config.routingMinTools agent tools.
   // Built in tools do not count: they are exposed either way, so they
   // cannot make a short tool list worth narrowing.
-  if (tools.length <= minTools) return everything("not_routed")
+  if (tools.length <= minTools) {
+    // DM-2: the step's other questions still have to be asked, and a
+    // small agent is exactly the case where this is the only request.
+    if (alsoNames.length === 0) return everything("not_routed")
+    try {
+      const only = await within(decisionModel.ask(state, also), timeoutMs)
+      Object.assign(extra, only.answers)
+      return { ...everything("not_routed"), requests: 1, costUsd: only.usage.costUsd ?? 0 }
+    } catch (error) {
+      // The same trade as ROUTE-5: an optimisation and a hint, neither
+      // worth spending the person's wait on a retry.
+      return {
+        ...everything("not_routed"),
+        error: error instanceof Error ? error.message : String(error),
+        requests: 1,
+      }
+    }
+  }
 
   const byName = new Map(tools.map((tool) => [tool.name, tool]))
   const groups = split(tools)
@@ -193,7 +239,7 @@ export async function route(options: RouteOptions): Promise<RouteDecision> {
   try {
     // DM-2: the groups are independent, so they go in one request. Only
     // the runoff has to wait for their answers.
-    const questions: Record<string, Question> = {}
+    const questions: Record<string, Question> = { ...also }
     const groupNames = groups.map((_, index) =>
       groups.length === 1 ? ROUTING_QUESTION : `tool_group_${index}`,
     )
@@ -204,6 +250,10 @@ export async function route(options: RouteOptions): Promise<RouteDecision> {
     const first = await within(decisionModel.ask(state, questions), timeoutMs)
     requests++
     costUsd += first.usage.costUsd ?? 0
+    for (const name of alsoNames) {
+      const answer = first.answers[name]
+      if (answer !== undefined) extra[name] = answer
+    }
 
     let picked: Picked
     if (groups.length === 1) {
