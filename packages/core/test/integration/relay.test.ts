@@ -313,6 +313,29 @@ describeDatabase("relay", (sql) => {
       ])
     })
 
+    test("HAND-5: a message with no words forwards nothing", async () => {
+      // A voice note or an image, which MEDIA-1 transcribes at T8.1.
+      // Until then there is nothing to forward, and a forward saying
+      // only "From Riya:" would be worse than silence.
+      const { agent } = build([
+        { tool: "escalate", input: { why: "they asked" } },
+        { reply: "Someone will be with you." },
+      ])
+      await operator(agent, "op-1", "Asha")
+      const { person, handover } = await waiting(agent)
+      sender.reset()
+
+      const sent = await agent.handovers.forward({
+        handover,
+        person,
+        items: [{ id: "inbox-row-1", text: "" }],
+      })
+
+      expect(sent).toBe(0)
+      await agent.outbox.pump.drain()
+      expect(to("op-1")).toEqual([])
+    })
+
     test("HAND-5: with no operators, nothing is sent and nothing is lost", async () => {
       const { agent } = build([
         { tool: "escalate", input: { why: "they asked" } },
@@ -365,6 +388,32 @@ describeDatabase("relay", (sql) => {
       expect(calls).toHaveLength(before)
       expect(result.turn?.costUsd).toBe(0)
       expect(await agent.store.decisions.count()).toBe(decisions)
+    })
+
+    test("HAND-4: relaying the same message twice says it once", async () => {
+      // A turn abandoned by a dying process is handed back by the
+      // recovery sweep, so this really happens. The outbox drops the
+      // second send on its own; the history row has no key of its own,
+      // so a brain would otherwise read the same sentence twice.
+      const { agent, person } = await active()
+      const handover = await agent.handovers.openFor(person)
+      const items = [{ id: "inbox-row-1", text: "7pm is fine" }]
+
+      const first = await agent.handovers.relay({
+        handover: handover as HandoverRow,
+        items,
+      })
+      const again = await agent.handovers.relay({
+        handover: handover as HandoverRow,
+        items,
+      })
+
+      expect(first).toBe(1)
+      expect(again).toBe(0)
+      await agent.outbox.pump.drain()
+      expect(to("9")).toEqual(["7pm is fine"])
+      const theirs = await agent.store.messages.list({ person_id: person.id })
+      expect(theirs.filter((row) => row.author === "operator")).toHaveLength(1)
     })
 
     test("HAND-4: the operator hears nothing back from the agent", async () => {
