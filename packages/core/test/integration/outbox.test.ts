@@ -4,17 +4,13 @@
 // one is the interesting one: a send that threw may already have arrived,
 // so it is `unknown` rather than failed, and saying it again is worse than
 // not knowing.
-import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, beforeAll, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
+import { check } from "../support/waiting.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import {
-  createAgent as buildAgent,
-  backoffMs,
-  type Agent,
-  type AgentOptions,
-  type Deps,
-} from "../../src/runtime/index.ts"
+import { backoffMs, type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { scriptedBrain } from "../../src/testing/scripted-brain.ts"
 import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
@@ -23,18 +19,11 @@ import type { Outbound, SendResult, Sender } from "../../src/runtime/sender.ts"
 
 const PROMPT = "You are the host at a restaurant."
 
-const started: Agent[] = []
+const agents = trackAgents("outbox.test.ts")
 
 function createAgent(options: AgentOptions): Agent {
-  const agent = buildAgent(options)
-  agent.start()
-  started.push(agent)
-  return agent
+  return agents.create(options)
 }
-
-afterEach(async () => {
-  await Promise.all(started.splice(0).map((agent) => agent.stop()))
-})
 
 function config(over: Record<string, unknown> = {}): OpenboxConfig {
   return defineConfig({
@@ -375,10 +364,16 @@ describeDatabase("the outbox", (sql) => {
     }
     await agent.settled()
 
-    // Two sends at once, which is the guarantee.
-    expect(overlaps).toEqual([])
-    // And in the order they were queued.
-    expect(order).toEqual(["first", "second", "third"])
+    // A failure here says what the agent was holding, because this is one
+    // of the two tests that have stalled under the full run (Known K14).
+    // A row still pending points somewhere different from a row sent once
+    // by somebody else.
+    await check(agent, person.id, () => {
+      // Two sends at once, which is the guarantee.
+      expect(overlaps).toEqual([])
+      // And in the order they were queued.
+      expect(order).toEqual(["first", "second", "third"])
+    })
   })
 
   test("DATA-4: two processes cannot both send the same message", async () => {

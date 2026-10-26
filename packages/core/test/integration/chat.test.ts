@@ -5,15 +5,11 @@
 import { test, expect, beforeAll, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { join } from "node:path"
-import { afterEach, describe } from "bun:test"
+import { describe } from "bun:test"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import {
-  createAgent as buildAgent,
-  type Agent,
-  type AgentOptions,
-  type Deps,
-} from "../../src/runtime/index.ts"
+import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { createStore } from "../../src/store/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import {
@@ -28,18 +24,11 @@ import { chatConfig, runChat } from "../../src/cli/chat.ts"
 import { loadProject } from "../../src/cli/project.ts"
 
 // See the note in turn.test.ts: every agent is started and stopped here.
-const started: Agent[] = []
+const agents = trackAgents("chat.test.ts")
 
 function createAgent(options: AgentOptions): Agent {
-  const agent = buildAgent(options)
-  agent.start()
-  started.push(agent)
-  return agent
+  return agents.create(options)
 }
-
-afterEach(async () => {
-  await Promise.all(started.splice(0).map((agent) => agent.stop()))
-})
 
 const DEMO = join(import.meta.dir, "..", "..", "..", "..", "examples", "demo-agent")
 

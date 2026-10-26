@@ -7,15 +7,12 @@
 // has been collected is thirty messages of history, and a brain re-reading
 // them after a detour about parking will sometimes decide it already has
 // the party size. The task is what makes that a question with an answer.
-import { test, expect, describe, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import {
-  createAgent as buildAgent,
-  type Agent,
-  type AgentOptions,
-} from "../../src/runtime/index.ts"
+import { type Agent, type AgentOptions } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { defineTool, type Tool } from "../../src/tools/index.ts"
 import { TASK_EXPIRE_JOB } from "../../src/tools/tasks.ts"
@@ -34,18 +31,11 @@ import { buttonPayload } from "../../src/runtime/confirm.ts"
 const SECRET = "test-secret-long-enough-to-look-real"
 const PROMPT = "You are the host at a restaurant."
 
-const started: Agent[] = []
+const agents = trackAgents("tasks.test.ts")
 
 function createAgent(options: AgentOptions): Agent {
-  const agent = buildAgent({ secret: SECRET, ...options })
-  agent.start()
-  started.push(agent)
-  return agent
+  return agents.create({ secret: SECRET, ...options })
 }
-
-afterEach(async () => {
-  await Promise.all(started.splice(0).map((agent) => agent.stop()))
-})
 
 const TASK_TYPES = {
   booking: {

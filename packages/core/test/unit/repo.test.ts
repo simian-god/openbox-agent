@@ -134,3 +134,32 @@ test("PKG-1: a heavy brain's package is optional, and nothing imports it eagerly
   expect(brain).toContain(`await import("${heavy}")`)
   expect(brain).not.toContain(`from "${heavy}"`)
 })
+
+test("K14: every integration test builds its agents through the registry", () => {
+  // Step 2 of Known K14. The suspect for the intermittent stall is an
+  // agent escaping its file's cleanup and carrying on polling the shared
+  // database, where it both slows everything down and claims rows another
+  // file is waiting for. Every file used to keep its own `started` array,
+  // so nothing could see across them.
+  //
+  // The registry fixes that by construction rather than by vigilance, but
+  // only for the files that use it. This is the rule that keeps the next
+  // one from quietly going back.
+  const files = sourceFiles("packages/core/test/integration").filter((file) =>
+    file.endsWith(".test.ts"),
+  )
+  expect(files.length).toBeGreaterThan(10)
+
+  const untracked: string[] = []
+  const handRolled: string[] = []
+  for (const file of files) {
+    const body = read(file)
+    if (!body.includes("createAgent")) continue
+    if (!body.includes('from "../support/agents.ts"')) untracked.push(file)
+    // The old shape, which a copied file would bring back with it.
+    if (body.includes("started.splice(")) handRolled.push(file)
+  }
+
+  expect(untracked).toEqual([])
+  expect(handRolled).toEqual([])
+})

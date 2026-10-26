@@ -8,9 +8,10 @@
 // Every one of those four is a test here, written as the attack rather
 // than as the feature. A confirmation flow that only gets tested happy
 // path is a confirmation flow that does not work.
-import { test, expect, describe, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import {
   createAgent as buildAgent,
@@ -29,18 +30,11 @@ import { buttonPayload, argsHash } from "../../src/runtime/confirm.ts"
 const SECRET = "test-secret-long-enough-to-look-real"
 const PROMPT = "You are the host at a restaurant."
 
-const started: Agent[] = []
+const agents = trackAgents("confirm.test.ts")
 
 function createAgent(options: AgentOptions): Agent {
-  const agent = buildAgent({ secret: SECRET, ...options })
-  agent.start()
-  started.push(agent)
-  return agent
+  return agents.create({ secret: SECRET, ...options })
 }
-
-afterEach(async () => {
-  await Promise.all(started.splice(0).map((agent) => agent.stop()))
-})
 
 function config(over: Record<string, unknown> = {}): OpenboxConfig {
   return defineConfig({

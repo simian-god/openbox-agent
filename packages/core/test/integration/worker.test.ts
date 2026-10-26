@@ -3,11 +3,12 @@
 // These are the tests that have to hold for two processes, not one, so most
 // of them build a second agent against the same database and make the two
 // compete. Nothing sleeps where a gate will do.
-import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, beforeAll, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import { createAgent, createLeases, FREE, type Agent, type Deps } from "../../src/runtime/index.ts"
+import { createLeases, FREE, type Agent, type Deps } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { scriptedBrain, type ScriptedBrain } from "../../src/testing/scripted-brain.ts"
 import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
@@ -16,6 +17,15 @@ import { createStore } from "../../src/store/index.ts"
 import type { Brain, BrainOutput } from "../../src/providers/brains/types.ts"
 
 const PROMPT = "You are the host at a restaurant."
+
+// Every agent that was started has to be stopped, or its poll timer keeps
+// the test runner alive. Gates are opened first: a brain still waiting on
+// one would keep `stop()` waiting for ever.
+const agents = trackAgents("worker.test.ts", {
+  beforeStop: () => {
+    for (const open of gates.splice(0)) open()
+  },
+})
 
 function config(over: Record<string, unknown> = {}): OpenboxConfig {
   return defineConfig({
@@ -69,7 +79,6 @@ function gatedBrain(opened: Promise<void>, text = "We open at 11."): Brain {
 }
 
 describeDatabase("the worker", (sql) => {
-  const started: Agent[] = []
   let sender: FakeSender
 
   beforeAll(async () => {
@@ -80,15 +89,6 @@ describeDatabase("the worker", (sql) => {
 
   beforeEach(async () => {
     await resetDatabase(sql())
-  })
-
-  // Every agent that was started has to be stopped, or its poll timer keeps
-  // the test runner alive.
-  afterEach(async () => {
-    // Gates first: a brain still waiting on one would keep `stop()` here
-    // for ever.
-    for (const open of gates.splice(0)) open()
-    await Promise.all(started.splice(0).map((agent) => agent.stop()))
   })
 
   /** An agent with the worker running, cleaned up after the test. */
@@ -105,10 +105,7 @@ describeDatabase("the worker", (sql) => {
       sender,
       clock,
     }
-    const agent = createAgent({ config: config(over), deps, prompt: PROMPT, tools: [] })
-    agent.start()
-    started.push(agent)
-    return agent
+    return agents.create({ config: config(over), deps, prompt: PROMPT, tools: [] })
   }
 
   /**
@@ -154,7 +151,7 @@ describeDatabase("the worker", (sql) => {
   test("LOOP-2: nothing is handled until the worker is started", async () => {
     sender = fakeSender()
     const brain = scriptedBrain([{ reply: "hi" }])
-    const idle = createAgent({
+    const idle = agents.build({
       config: config(),
       deps: {
         decisionModel: scriptedDecisionModel([]),
@@ -183,7 +180,7 @@ describeDatabase("the worker", (sql) => {
 
   test("LOOP-2: receiveAndWait says so rather than hanging with no worker", async () => {
     sender = fakeSender()
-    const idle = createAgent({
+    const idle = agents.build({
       config: config(),
       deps: {
         decisionModel: scriptedDecisionModel([]),
@@ -227,7 +224,7 @@ describeDatabase("the worker", (sql) => {
     // A second process, on the same database, with work apparently waiting.
     const secondSender = fakeSender()
     const secondBrain = scriptedBrain([{ reply: "from the second" }])
-    const second = createAgent({
+    const second = agents.build({
       config: config(),
       deps: {
         decisionModel: scriptedDecisionModel([]),
@@ -240,7 +237,6 @@ describeDatabase("the worker", (sql) => {
       tools: [],
     })
     second.start()
-    started.push(second)
 
     await new Promise((r) => setTimeout(r, 150))
     // It cannot have the person, so it has nothing to do.
@@ -317,7 +313,7 @@ describeDatabase("the worker", (sql) => {
     const brain = scriptedBrain([{ reply: "All three, noted." }])
     sender = fakeSender()
     // The worker is not running yet, so all three land in the inbox first.
-    const writer = createAgent({
+    const writer = agents.build({
       config: config(),
       deps: {
         decisionModel: scriptedDecisionModel([]),
@@ -335,7 +331,6 @@ describeDatabase("the worker", (sql) => {
     await writer.receive(hello({ channelMessageId: "c", text: "tonight I mean" }))
 
     writer.start()
-    started.push(writer)
     await writer.settled()
 
     // One turn, one reply, and the brain saw the whole burst.
@@ -351,7 +346,7 @@ describeDatabase("the worker", (sql) => {
   test("LOOP-3: every message in the burst is stored and tied to the turn", async () => {
     const brain = scriptedBrain([{ reply: "Noted." }])
     sender = fakeSender()
-    const writer = createAgent({
+    const writer = agents.build({
       config: config(),
       deps: {
         decisionModel: scriptedDecisionModel([]),
@@ -367,7 +362,6 @@ describeDatabase("the worker", (sql) => {
     await writer.receive(hello({ channelMessageId: "b", text: "two" }))
 
     writer.start()
-    started.push(writer)
     await writer.settled()
 
     const turn = (await writer.store.turns.list())[0]
@@ -382,7 +376,7 @@ describeDatabase("the worker", (sql) => {
   test("EVT-2: a merged burst is recorded, a single message is not", async () => {
     const brain = scriptedBrain([{ reply: "Noted." }])
     sender = fakeSender()
-    const writer = createAgent({
+    const writer = agents.build({
       config: config(),
       deps: {
         decisionModel: scriptedDecisionModel([]),
@@ -397,7 +391,6 @@ describeDatabase("the worker", (sql) => {
     await writer.receive(hello({ channelMessageId: "a", text: "one" }))
     await writer.receive(hello({ channelMessageId: "b", text: "two" }))
     writer.start()
-    started.push(writer)
     await writer.settled()
 
     const merged = (await writer.store.events.list({ name: "burst_merged" }))[0]
@@ -561,7 +554,7 @@ describeDatabase("the worker", (sql) => {
 
   test("DATA-1: a worker never sees another agent's waiting messages", async () => {
     sender = fakeSender()
-    const other = createAgent({
+    const other = agents.build({
       config: config({ name: "dentist" }),
       deps: {
         decisionModel: scriptedDecisionModel([]),
@@ -574,7 +567,6 @@ describeDatabase("the worker", (sql) => {
       tools: [],
     })
     other.start()
-    started.push(other)
 
     const mine = agentWith([scriptedBrain([{ reply: "right agent" }])])
     await mine.receiveAndWait(hello())

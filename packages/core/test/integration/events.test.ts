@@ -2,17 +2,13 @@
 //
 // Events and versions are built in from the start rather than bolted on at
 // the end, so every later feature records itself as it lands.
-import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, beforeAll, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import {
-  createAgent as buildAgent,
-  type Agent,
-  type AgentOptions,
-  type Deps,
-} from "../../src/runtime/index.ts"
+import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { defineTool, type Tool } from "../../src/tools/index.ts"
 import { scriptedBrain, type ScriptedStep } from "../../src/testing/scripted-brain.ts"
@@ -24,18 +20,11 @@ import type { Brain } from "../../src/providers/brains/types.ts"
 // keeps its poll timer alive after the test. Every agent built here is
 // therefore started on the way in and stopped on the way out, by shadowing
 // the import rather than touching three dozen call sites.
-const started: Agent[] = []
+const agents = trackAgents("events.test.ts")
 
 function createAgent(options: AgentOptions): Agent {
-  const agent = buildAgent(options)
-  agent.start()
-  started.push(agent)
-  return agent
+  return agents.create(options)
 }
-
-afterEach(async () => {
-  await Promise.all(started.splice(0).map((agent) => agent.stop()))
-})
 
 const PROMPT = "You are the host at a restaurant."
 

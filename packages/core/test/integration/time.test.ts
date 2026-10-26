@@ -4,15 +4,12 @@
 // The brain here is scripted to do the wrong thing on purpose, because
 // that is the only way to prove the tool is what refuses. A test where the
 // brain behaves itself proves nothing about who is holding the line.
-import { test, expect, describe, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import {
-  createAgent as buildAgent,
-  type Agent,
-  type AgentOptions,
-} from "../../src/runtime/index.ts"
+import { type Agent, type AgentOptions } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { defineTool } from "../../src/tools/index.ts"
 import { scriptedBrain, type ScriptedBrain } from "../../src/testing/scripted-brain.ts"
@@ -22,18 +19,11 @@ import { fixedClock } from "../../src/testing/clock.ts"
 
 const PROMPT = "You are the host at a restaurant."
 
-const started: Agent[] = []
+const agents = trackAgents("time.test.ts")
 
 function createAgent(options: AgentOptions): Agent {
-  const agent = buildAgent({ secret: "test-secret", ...options })
-  agent.start()
-  started.push(agent)
-  return agent
+  return agents.create({ secret: "test-secret", ...options })
 }
-
-afterEach(async () => {
-  await Promise.all(started.splice(0).map((agent) => agent.stop()))
-})
 
 function config(over: Record<string, unknown> = {}): OpenboxConfig {
   return defineConfig({

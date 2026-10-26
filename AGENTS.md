@@ -56,6 +56,11 @@ Database, needing Docker:
 
 Integration tests use that database and reset it per file. With no database running they skip, so `bun test` stays green without Docker.
 
+- `bun run scripts/dbload.ts --clients 24 --seconds 200` - loads the local
+  database on purpose, so a test that only fails under load can be made to
+  fail. It reports its own latency: a suite that stalls while those numbers
+  stay flat is stalling on our side. This is what found the T5.7 stall.
+
 Milestone checks that are scripted rather than run by hand:
 
 - `bun run m3-check` - M3's four items, pass or fail each. One fails on

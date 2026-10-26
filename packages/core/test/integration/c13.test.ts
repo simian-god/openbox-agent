@@ -10,16 +10,12 @@
 // This file is about the claims as a whole, and above all about the one
 // that cannot be checked a piece at a time: two processes, one database,
 // and nobody handled twice.
-import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, beforeAll, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import {
-  createAgent as buildAgent,
-  type Agent,
-  type AgentOptions,
-  type Deps,
-} from "../../src/runtime/index.ts"
+import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { systemClock } from "../../src/testing/clock.ts"
 import { fakeSender } from "../../src/testing/fake-sender.ts"
@@ -27,17 +23,11 @@ import type { Brain, BrainOutput } from "../../src/providers/brains/types.ts"
 import type { Outbound, SendResult, Sender } from "../../src/runtime/sender.ts"
 
 const PROMPT = "You are the host at a restaurant."
-const started: Agent[] = []
+const agents = trackAgents("c13.test.ts")
 
 function createAgent(options: AgentOptions): Agent {
-  const agent = buildAgent(options)
-  started.push(agent)
-  return agent
+  return agents.build(options)
 }
-
-afterEach(async () => {
-  await Promise.all(started.splice(0).map((agent) => agent.stop()))
-})
 
 function config(over: Record<string, unknown> = {}): OpenboxConfig {
   return defineConfig({

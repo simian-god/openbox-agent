@@ -605,12 +605,22 @@ export function createAgent(options: AgentOptions): Agent {
         await worker.drain()
         await outbox.pump.drain()
         await jobs.pump.drain()
+        const ready = await readyCount()
+        const due = await dueCount()
+        // The counts first, then what is in flight, and never the other
+        // way round. A pass that started while those two reads were in
+        // the air has already claimed its rows, so the counts can be zero
+        // while a message is on its way out. `sweeping()` is the half of
+        // that which `busy()` cannot see (Known K14).
         const quiet =
+          ready === 0 &&
+          due === 0 &&
+          !worker.sweeping() &&
+          !outbox.pump.sweeping() &&
+          !jobs.pump.sweeping() &&
           worker.busy() === 0 &&
           outbox.pump.busy() === 0 &&
-          jobs.pump.busy() === 0 &&
-          (await readyCount()) === 0 &&
-          (await dueCount()) === 0
+          jobs.pump.busy() === 0
         if (quiet) return
         worker.nudge()
         outbox.pump.nudge()

@@ -17,20 +17,16 @@
 // duplicate paths against the real database, with the client's errors
 // rewritten into the shape the shim reports, so the core cannot quietly go
 // back to depending on a Postgres error code.
-import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, beforeAll, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
 import { code, tsFiles } from "../support/source.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import {
-  createAgent as buildAgent,
-  type Agent,
-  type AgentOptions,
-  type Deps,
-} from "../../src/runtime/index.ts"
+import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { isUniqueViolation, StoreError } from "../../src/store/index.ts"
 import { scriptedBrain } from "../../src/testing/scripted-brain.ts"
@@ -38,17 +34,11 @@ import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { systemClock } from "../../src/testing/clock.ts"
 
 const PROMPT = "You are the host at a restaurant."
-const started: Agent[] = []
+const agents = trackAgents("evals-world.test.ts")
 
 function createAgent(options: AgentOptions): Agent {
-  const agent = buildAgent(options)
-  started.push(agent)
-  return agent
+  return agents.build(options)
 }
-
-afterEach(async () => {
-  await Promise.all(started.splice(0).map((agent) => agent.stop()))
-})
 
 function config(over: Record<string, unknown> = {}): OpenboxConfig {
   return defineConfig({

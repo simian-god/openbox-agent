@@ -5,15 +5,12 @@
 // are written as the outage rather than as the feature: a brain that
 // throws, a brain that cannot produce the shape, a brain that is simply a
 // bug, and every brain gone at once.
-import { test, expect, describe, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import {
-  createAgent as buildAgent,
-  type Agent,
-  type AgentOptions,
-} from "../../src/runtime/index.ts"
+import { type Agent, type AgentOptions } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { defineTool } from "../../src/tools/index.ts"
 import { scriptedBrain } from "../../src/testing/scripted-brain.ts"
@@ -24,18 +21,11 @@ import { structuredBrain } from "../../src/providers/brains/structured.ts"
 import { BrainError, type Brain } from "../../src/providers/brains/types.ts"
 
 const PROMPT = "You are the host at a restaurant."
-const started: Agent[] = []
+const agents = trackAgents("fallback.test.ts")
 
 function createAgent(options: AgentOptions): Agent {
-  const agent = buildAgent({ secret: "test-secret", ...options })
-  agent.start()
-  started.push(agent)
-  return agent
+  return agents.create({ secret: "test-secret", ...options })
 }
-
-afterEach(async () => {
-  await Promise.all(started.splice(0).map((agent) => agent.stop()))
-})
 
 function config(over: Record<string, unknown> = {}): OpenboxConfig {
   return defineConfig({

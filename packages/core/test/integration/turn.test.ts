@@ -1,16 +1,13 @@
 // Turn v0 end to end: a message arrives, a person is created, the brain
 // runs its steps, and a reply goes out through the sender.
-import { test, expect, describe, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
 import { scriptedDecisionModel, choice, yesno } from "../../src/testing/scripted-decision.ts"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
+import { check } from "../support/waiting.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import {
-  createAgent as buildAgent,
-  type Agent,
-  type AgentOptions,
-  type Deps,
-} from "../../src/runtime/index.ts"
+import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { defineTool, type Tool } from "../../src/tools/index.ts"
 import {
@@ -26,21 +23,14 @@ import { GATE_QUESTION } from "../../src/runtime/gate.ts"
 // keeps its poll timer alive after the test. Every agent built here is
 // therefore started on the way in and stopped on the way out, by shadowing
 // the import rather than touching three dozen call sites.
-const started: Agent[] = []
+const agents = trackAgents("turn.test.ts")
 
 function createAgent(options: AgentOptions): Agent {
   // CONF-3: an agent with an irreversible tool needs a signing secret, so
   // every agent here gets one. A test that wants to prove the refusal
   // passes its own.
-  const agent = buildAgent({ secret: "test-secret", ...options })
-  agent.start()
-  started.push(agent)
-  return agent
+  return agents.create({ secret: "test-secret", ...options })
 }
-
-afterEach(async () => {
-  await Promise.all(started.splice(0).map((agent) => agent.stop()))
-})
 
 /**
  * The agent's own tools out of what the brain was offered.
@@ -250,12 +240,17 @@ describeDatabase("a turn", (sql) => {
     const { agent } = agentWith([{ reply: "We open at 11." }])
     const result = await agent.receiveAndWait(hello())
 
-    expect(result.turn?.outcome).toBe("replied")
-    expect(result.turn?.steps).toBe(1)
-    expect(sender.texts()).toEqual(["We open at 11."])
-    expect(sender.sent[0]?.channel).toBe("whatsapp")
-    expect(sender.sent[0]?.channelUserId).toBe("42")
-    expect(sender.sent[0]?.idempotencyKey).toBeTruthy()
+    // Wrapped in `check` because this is one of the two tests that have
+    // stalled under the full run (Known K14). A failure here says what the
+    // agent was holding, which is what tells a stall from a wrong answer.
+    await check(agent, undefined, () => {
+      expect(result.turn?.outcome).toBe("replied")
+      expect(result.turn?.steps).toBe(1)
+      expect(sender.texts()).toEqual(["We open at 11."])
+      expect(sender.sent[0]?.channel).toBe("whatsapp")
+      expect(sender.sent[0]?.channelUserId).toBe("42")
+      expect(sender.sent[0]?.idempotencyKey).toBeTruthy()
+    })
   })
 
   test("LOOP-8: a read tool runs, and its result goes back to the brain", async () => {

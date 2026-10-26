@@ -3,12 +3,12 @@
 // The sweep is the one that matters. It closes the last way a message can
 // be lost outright: a process killed mid turn leaves the messages it had
 // taken marked `merged`, and nothing else ever looks at those.
-import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, beforeAll, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import {
-  createAgent as buildAgent,
   replyKey,
   FREE,
   type Agent,
@@ -21,17 +21,11 @@ import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { systemClock } from "../../src/testing/clock.ts"
 
 const PROMPT = "You are the host at a restaurant."
-const started: Agent[] = []
+const agents = trackAgents("jobs.test.ts")
 
 function createAgent(options: AgentOptions): Agent {
-  const agent = buildAgent(options)
-  started.push(agent)
-  return agent
+  return agents.build(options)
 }
-
-afterEach(async () => {
-  await Promise.all(started.splice(0).map((agent) => agent.stop()))
-})
 
 function config(over: Record<string, unknown> = {}): OpenboxConfig {
   return defineConfig({

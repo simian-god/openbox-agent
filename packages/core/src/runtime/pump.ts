@@ -39,7 +39,18 @@ export interface Pump {
   nudge(): void
   /** Waits for the work in flight, without stopping. */
   drain(): Promise<void>
+  /** How many items are being worked on. */
   busy(): number
+  /**
+   * True while a pass is looking for work.
+   *
+   * A pass that is inside `candidates` has already claimed its rows in the
+   * database and has not put them in `active` yet, so `busy()` is zero and
+   * there is nothing to wait for. Anything asking "is this quiet?" has to
+   * ask this as well, or it can answer yes while a message is on its way
+   * out (Known K14).
+   */
+  sweeping(): boolean
   readonly running: boolean
 }
 
@@ -49,8 +60,12 @@ export function createPump<Item>(options: PumpOptions<Item>): Pump {
   const active = new Map<string, Promise<void>>()
   let running = false
   let timer: ReturnType<typeof setTimeout> | undefined
-  /** Set while a sweep is in progress, so two never overlap. */
-  let sweeping = false
+  /**
+   * The sweep in progress, so two never overlap and anything waiting for
+   * the pump to be quiet can wait for this one to finish. A boolean was
+   * enough for the first half and not for the second (Known K14).
+   */
+  let inSweep: Promise<void> | undefined
   /** True when a nudge arrived during a sweep, so one more is owed. */
   let again = false
 
@@ -62,13 +77,8 @@ export function createPump<Item>(options: PumpOptions<Item>): Pump {
     }
   }
 
-  async function sweep(): Promise<void> {
-    if (sweeping) {
-      again = true
-      return
-    }
-    sweeping = true
-
+  /** One pass, start to finish. Only ever called by `sweep`. */
+  async function pass(): Promise<void> {
     try {
       do {
         again = false
@@ -93,9 +103,25 @@ export function createPump<Item>(options: PumpOptions<Item>): Pump {
       } while (again)
     } catch (error) {
       report(error)
-    } finally {
-      sweeping = false
     }
+  }
+
+  /**
+   * Looks for work, unless a pass is already looking.
+   *
+   * Returns the pass in flight either way, so a caller that wants to wait
+   * for the pump to be quiet can.
+   */
+  function sweep(): Promise<void> {
+    if (inSweep !== undefined) {
+      again = true
+      return inSweep
+    }
+    const started = pass().finally(() => {
+      inSweep = undefined
+    })
+    inSweep = started
+    return started
   }
 
   function schedule(): void {
@@ -108,6 +134,28 @@ export function createPump<Item>(options: PumpOptions<Item>): Pump {
   function nudge(): void {
     if (!running) return
     void sweep()
+  }
+
+  /**
+   * Waits until nothing is in flight: no pass looking, no item being
+   * worked on.
+   *
+   * Both, in a loop, because each can produce the other. A pass hands work
+   * to `active`, and a finished item nudges another pass. A caller that
+   * waited for only one of them could return while a row it claimed was
+   * still on its way out, which is the bug this shape exists to stop.
+   */
+  async function quiet(): Promise<void> {
+    for (;;) {
+      await inSweep
+      await Promise.all([...active.values()])
+      if (inSweep === undefined && active.size === 0) return
+      // Yields rather than going straight round again. A pass waiting on
+      // a database read must not be starved by this loop, and an edit that
+      // stopped awaiting one should time a test out rather than lock the
+      // whole runner up, which is a failure nobody can read.
+      await wait(0)
+    }
   }
 
   return {
@@ -128,16 +176,16 @@ export function createPump<Item>(options: PumpOptions<Item>): Pump {
       running = false
       if (timer !== undefined) clearTimeout(timer)
       timer = undefined
-      while (active.size > 0) await Promise.all([...active.values()])
+      await quiet()
     },
 
     nudge,
 
-    async drain(): Promise<void> {
-      while (active.size > 0) await Promise.all([...active.values()])
-    },
+    drain: quiet,
 
     busy: () => active.size,
+
+    sweeping: () => inSweep !== undefined,
   }
 }
 

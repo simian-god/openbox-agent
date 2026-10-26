@@ -7,16 +7,12 @@
 //
 // Nothing here sleeps. A brain held on a gate makes "the turn is still
 // running" an exact statement rather than a race.
-import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
+import { test, expect, beforeAll, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
+import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
-import {
-  createAgent as buildAgent,
-  type Agent,
-  type AgentOptions,
-  type Deps,
-} from "../../src/runtime/index.ts"
+import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { scriptedBrain } from "../../src/testing/scripted-brain.ts"
 import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
@@ -27,21 +23,18 @@ import type { Brain, BrainOutput } from "../../src/providers/brains/types.ts"
 // keeps its poll timer alive after the test. Every agent built here is
 // therefore started on the way in and stopped on the way out, by shadowing
 // the import rather than touching three dozen call sites.
-const started: Agent[] = []
+// Gates are opened before the agents are stopped: a brain still waiting on
+// one would keep `stop()` waiting for ever (K14 step 2 moved the stopping
+// into the registry, so the order is declared rather than implied).
+const agents = trackAgents("receive.test.ts", {
+  beforeStop: () => {
+    for (const open of gates.splice(0)) open()
+  },
+})
 
 function createAgent(options: AgentOptions): Agent {
-  const agent = buildAgent(options)
-  agent.start()
-  started.push(agent)
-  return agent
+  return agents.create(options)
 }
-
-afterEach(async () => {
-  // Gates first: a brain still waiting on one would keep `stop()` here
-  // for ever.
-  for (const open of gates.splice(0)) open()
-  await Promise.all(started.splice(0).map((agent) => agent.stop()))
-})
 
 const PROMPT = "You are the host at a restaurant."
 
