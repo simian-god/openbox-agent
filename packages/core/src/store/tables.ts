@@ -352,6 +352,8 @@ export interface HandoverRow {
   /** HAND-2's three lines. Null when no brain could write them. */
   summary: string | null
   operator_id: string | null
+  /** HAND-4: when this operator last turned to this conversation. */
+  focused_at: string | null
   ended_reason: string | null
   opened_at: string
   taken_at: string | null

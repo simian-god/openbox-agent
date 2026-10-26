@@ -32,7 +32,7 @@ import type { Clock } from "../testing/clock.ts"
 import { systemClock } from "../testing/clock.ts"
 import { createEvents, type EventFailure, type EventSink, type EventWriter } from "./events.ts"
 import { createLeases, FREE } from "./lease.ts"
-import { createHandovers, type Handovers } from "./handover.ts"
+import { asCommand, createHandovers, isCommand, nameOf, type Handovers } from "./handover.ts"
 import { createJobs, type Jobs } from "./jobs.ts"
 import { createOutbox, type Outbox } from "./outbox.ts"
 import { createWorker } from "./worker.ts"
@@ -329,7 +329,7 @@ export function createAgent(options: AgentOptions): Agent {
     ...operatorTools({ store, events }),
     // Section 10: `escalate` for the person's side, `take_over` and
     // `resume` for the operator's. ROLE-3 keeps them apart.
-    ...handoverTools({ store, handovers }),
+    ...handoverTools({ store, handovers, clock }),
     ...(hasTaskTypes
       ? taskTools({
           config,
@@ -834,7 +834,6 @@ export function createAgent(options: AgentOptions): Agent {
       { orderBy: "seq", ascending: false, limit: config.history },
     )) as MessageRow[]
 
-    const texts = batch.map((row) => row.text ?? "")
     await store.messages.insertMany(
       batch.map((row) => ({
         person_id: person.id,
@@ -860,16 +859,58 @@ export function createAgent(options: AgentOptions): Agent {
       return finish(nothingHappened("blocked"), turnRow, turnEvents, startedAt, batch.length)
     }
 
+    // One Relayed per message, whichever direction this turn is. The
+    // inbox row id is what keys the send, so a turn that runs twice
+    // does not send the same words twice.
+    const items = batch.map((row) => ({ id: row.id, text: row.text ?? "" }))
+
     // LOOP-5 step 5: a person in a handover belongs to a colleague, so
     // the agent does not answer them. Their messages are stored, and
-    // forwarding them to the operator is HAND-5 at T6.3.
+    // HAND-5 forwards them to whoever is on it.
     //
     // Not applied to an operator. Their messages are the control
     // channel: an operator who could be silenced by a row of their own
     // would have no way left to say `resume`.
-    if (person.role === "end_user" && (await handovers.openFor(person)) !== undefined) {
-      return finish(nothingHappened("handover"), turnRow, turnEvents, startedAt, batch.length)
+    if (person.role === "end_user") {
+      const theirs = await handovers.openFor(person)
+      if (theirs !== undefined) {
+        await handovers.forward({ handover: theirs, person, items, turnId: turnRow.id })
+        return finish(nothingHappened("handover"), turnRow, turnEvents, startedAt, batch.length)
+      }
     }
+
+    // HAND-4: while an operator's focus is on an active handover, what
+    // they type belongs to the person in it, word for word, with no
+    // brain and no routing. A slash is how they reach the agent
+    // instead, and it is the only way out of the relay, so it is read
+    // per message rather than per turn: three sentences and one
+    // command in a burst are four things with two destinations.
+    const focus = person.role === "operator" ? await handovers.focusOf(person) : undefined
+    let forBrain = batch
+    if (focus !== undefined) {
+      const words = items.filter((item) => !isCommand(item.text))
+      if (words.length > 0) {
+        await handovers.relay({ handover: focus, items: words, turnId: turnRow.id })
+      }
+      forBrain = batch.filter((row) => isCommand(row.text ?? ""))
+      // Nothing was addressed to the agent, so there is no turn to
+      // run: no brain call, no decision request, nothing spent. An
+      // operator typing to a customer should cost what typing costs.
+      if (forBrain.length === 0) {
+        return finish(nothingHappened("relayed"), turnRow, turnEvents, startedAt, batch.length)
+      }
+    }
+
+    // HAND-4: the slash is addressing, not content, so the brain reads
+    // the sentence without it.
+    const texts = forBrain.map((row) =>
+      focus === undefined ? (row.text ?? "") : asCommand(row.text ?? ""),
+    )
+
+    // HAND-4: who this operator is replying to, for the runtime block.
+    // Read here rather than in `runTurn`, which knows nothing about
+    // handovers and should not start now.
+    const focused = focus === undefined ? null : await store.people.byId(focus.person_id)
 
     // CONF-4 and CONF-8: a confirmation is not a message for the brain.
     // It is resolved here, before the brain is asked anything, and what
@@ -879,11 +920,14 @@ export function createAgent(options: AgentOptions): Agent {
     // at once are already serialised by the time they reach this.
     const notices: string[] = []
     if (confirmations !== undefined) {
-      for (const row of batch) {
+      // HAND-4: only what was addressed to the agent. A sentence an
+      // operator relayed to a customer is not an answer to a question the
+      // agent asked them, even if it happens to read like one.
+      for (const [index, row] of forBrain.entries()) {
         const tapped = row.action as { payload?: unknown } | null
         const resolution = await confirmations.resolve({
           person,
-          ...(row.text !== null ? { text: row.text } : {}),
+          ...(row.text !== null ? { text: texts[index] ?? row.text } : {}),
           ...(typeof tapped?.payload === "string" ? { payload: tapped.payload } : {}),
         })
         if (resolution === null) continue
@@ -934,6 +978,7 @@ export function createAgent(options: AgentOptions): Agent {
       ...(facts.length > 0 ? { facts } : {}),
       ...(tasks.length > 0 ? { tasks } : {}),
       ...(pending.length > 0 ? { pendingActions: pending } : {}),
+      ...(focused !== null ? { focus: { who: nameOf(focused) } } : {}),
       ...(active !== undefined
         ? {
             activeTask: {

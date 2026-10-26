@@ -1,5 +1,5 @@
 // Section 10's handover tools: `escalate` for the person's side, and
-// `take_over` and `resume` for the operator's.
+// `take_over`, `resume` and `list_handovers` for the operator's.
 //
 // Three tools, and almost no logic: all three hand straight to the
 // handover module, because the rules about states and races belong in one
@@ -10,14 +10,17 @@
 // `escalate` that will not fire on a vague complaint, and a `take_over`
 // that says plainly when somebody else already has it.
 import { z } from "zod"
-import type { PersonRow, Store } from "../store/index.ts"
-import type { Handovers } from "../runtime/handover.ts"
+import type { HandoverRow, PersonRow, Store } from "../store/index.ts"
+import { nameOf, type Handovers } from "../runtime/handover.ts"
+import type { Clock } from "../testing/clock.ts"
 import { defineBuiltinTool, type Tool, type ToolContext } from "./define.ts"
 import { personFinder, WHO } from "./operator.ts"
 
 export interface HandoverToolOptions {
   store: Store
   handovers: Handovers
+  /** TIME-1: how long something has waited, by the injected clock. */
+  clock: Clock
 }
 
 /** Naming a person is optional for an operator: most of the time it is obvious. */
@@ -31,7 +34,7 @@ const WHO_OPTIONAL = {
 }
 
 export function handoverTools(options: HandoverToolOptions): Tool[] {
-  const { store, handovers } = options
+  const { store, handovers, clock } = options
   const find = personFinder(store)
 
   /** An operator's optional person argument, resolved. */
@@ -112,19 +115,25 @@ export function handoverTools(options: HandoverToolOptions): Tool[] {
   const takeOver = defineBuiltinTool({
     name: "take_over",
     description:
-      "Takes a handover, so you are the one replying to that person. Takes whoever has waited longest unless you name someone.",
+      "Takes a handover, so you are the one replying to that person. Takes whoever has waited longest unless you name someone. Naming one you already hold moves you to it.",
     input: z.object(WHO_OPTIONAL),
     risk: "read",
     roles: ["operator"],
     conditions: {
-      callWhen: ["An operator has said they are taking a handover, or taking a named person"],
+      callWhen: [
+        "An operator has said they are taking a handover, or taking a named person",
+        // HAND-4: an operator holding two conversations has to be able
+        // to say which one they are typing into, and section 10 has no
+        // other tool for it.
+        "An operator holding more than one has said which of them they are on now",
+      ],
       dontCallWhen: [
         "They are asking what is waiting rather than taking it",
-        "They are already the one on it",
+        "They are already on that one and have not asked to move",
       ],
     },
     examples: {
-      should: ["take over", "I'll take 919812345678"],
+      should: ["take over", "I'll take 919812345678", "back to 919812345678"],
       shouldNot: ["what is waiting?", "give them back to the bot"],
     },
     handler: async (
@@ -209,5 +218,59 @@ export function handoverTools(options: HandoverToolOptions): Tool[] {
     },
   })
 
-  return [escalate, takeOver, resume]
+  /**
+   * Section 10's `list_handovers`, which is what makes focus usable: an
+   * operator cannot say which conversation they are on without seeing
+   * what there is. Read only, and the one operator tool that names
+   * nobody, so it cannot be called wrongly.
+   */
+  const list = defineBuiltinTool({
+    name: "list_handovers",
+    description:
+      "Lists the handovers that are open: who they are from, why, how long they have waited, and who is on each.",
+    input: z.object({}),
+    risk: "read",
+    roles: ["operator"],
+    conditions: {
+      callWhen: [
+        "An operator has asked what is waiting, what is open, or who is on what",
+        "You are about to tell an operator about a handover and do not have it in front of you",
+      ],
+      dontCallWhen: [
+        "They have told you to take one. That is take_over, which takes the longest waiting on its own",
+      ],
+    },
+    examples: {
+      should: ["what is waiting?", "who is on what?"],
+      shouldNot: ["take over", "block 919812345678"],
+    },
+    handler: async (_args: unknown, ctx: ToolContext) => {
+      const open = (await store.handovers.list({}, { orderBy: "seq" })).filter(
+        (row: HandoverRow) => row.status !== "closed",
+      )
+
+      const rows = []
+      for (const row of open) {
+        const person = await store.people.byId(row.person_id)
+        const holder = row.operator_id === null ? null : await store.people.byId(row.operator_id)
+        rows.push({
+          who: person === null ? row.person_id : nameOf(person),
+          user_id: person?.channel_user_id ?? null,
+          status: row.status,
+          reason: row.reason,
+          waiting_minutes: Math.floor(
+            (clock.now().getTime() - new Date(row.opened_at).getTime()) / 60_000,
+          ),
+          // Said as `you` rather than as a name, because an operator
+          // reading a list of names has to find their own in it.
+          with:
+            holder === null ? "nobody yet" : holder.id === ctx.person.id ? "you" : nameOf(holder),
+        })
+      }
+
+      return { ok: true, open: rows.length, handovers: rows }
+    },
+  })
+
+  return [escalate, takeOver, resume, list]
 }

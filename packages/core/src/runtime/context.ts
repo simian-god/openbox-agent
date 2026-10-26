@@ -24,6 +24,8 @@ export interface RuntimeBlockInput {
   tasks?: TaskRow[] | undefined
   /** LOOP-7: what they have been asked to confirm and has not expired. */
   pendingActions?: PendingActionRow[] | undefined
+  /** HAND-4: the handover this operator is on, if they are on one. */
+  focus?: { who: string } | undefined
 }
 
 /**
@@ -98,6 +100,23 @@ export function buildRuntimeBlock(input: RuntimeBlockInput): string {
     lines.push(
       "Use update_task to record anything new. What is still missing is worked out",
       "for you: never decide a task is complete yourself.",
+    )
+  }
+
+  // HAND-4: an operator in the middle of a handover, asking the agent
+  // something. Said plainly, because the brain is about to be offered
+  // `resume` and `take_over` and has no other way to know which
+  // conversation this operator means.
+  if (input.focus !== undefined) {
+    lines.push(
+      "",
+      "# The handover you are on",
+      `You are replying to ${input.focus.who} yourself, in this thread.`,
+      "Anything they write arrives here, and anything you type without a",
+      "leading slash goes to them word for word. This message had one, so",
+      "it came to the agent instead.",
+      "Use resume to give them back to the agent, and take over to move to",
+      "one of your other handovers.",
     )
   }
 

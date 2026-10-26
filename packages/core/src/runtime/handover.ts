@@ -1,4 +1,5 @@
-// HAND-1 to HAND-3: opening a handover, and the first operator to take it.
+// HAND-1 to HAND-5: opening a handover, taking it, and the two directions
+// a message travels while it is open.
 //
 // A handover is the one state in this core where the agent stops being the
 // thing that answers. Everything here is therefore written so that the
@@ -20,6 +21,12 @@
 // Taking it is a conditional claim, like every other claim here (DATA-4).
 // Two operators saying "take over" at the same moment is the normal case
 // in a busy shop, and exactly one of them has to win.
+//
+// HAND-4 and HAND-5 are the two directions. Word for word is the whole
+// point of the operator's: a colleague who types a price, a date or an
+// apology has to see those words arrive, not a brain's idea of them. So
+// `relay` touches nothing, and the only question the core asks is which
+// conversation the words belong to, which is the operator's focus.
 import type { OpenboxConfig } from "../config/index.ts"
 import {
   isUniqueViolation,
@@ -55,6 +62,32 @@ export function wantsHumanQuestion(): Extract<Question, { type: "yesno" }> {
   }
 }
 
+/**
+ * HAND-4: what makes an operator's message a command rather than words
+ * for the person.
+ *
+ * One character, and it decides who hears what, so the test is as dull
+ * as it can be: a leading slash, after any space a phone keyboard added.
+ * Nothing clever about where else a slash appears, because "we close 2/3
+ * of the year" is a sentence somebody will send.
+ */
+export const COMMAND = "/"
+
+/** HAND-4: whether this is for the agent instead of the person. */
+export function isCommand(text: string): boolean {
+  return text.trimStart().startsWith(COMMAND)
+}
+
+/**
+ * The command with its slash taken off, which is what the brain reads.
+ *
+ * Stripped because `/resume` should reach a brain that has a `resume`
+ * tool as the word resume. The slash is addressing, not content.
+ */
+export function asCommand(text: string): string {
+  return text.trimStart().slice(COMMAND.length).trim()
+}
+
 /** HAND-2: what the person is told, once, the moment it opens. */
 export const PERSON_TOLD = "I am passing this to a colleague. Somebody will reply here shortly."
 
@@ -73,6 +106,38 @@ const WHY: Record<HandoverReason, string> = {
   step_cap: "the agent went round in circles",
   brains_failed: "the agent could not answer at all",
   operator: "an operator started it",
+}
+
+/** The name an operator will recognise, which is not always a name. */
+export function nameOf(person: PersonRow): string {
+  return person.display_name === null
+    ? `${person.channel} ${person.channel_user_id}`
+    : `${person.display_name} (${person.channel} ${person.channel_user_id})`
+}
+
+/**
+ * HAND-5: the person's words, as the operator sees them.
+ *
+ * Not word for word, and deliberately: this is the one direction whose
+ * reader has many conversations in a single thread, and words with no
+ * name on them are words answered to the wrong person. The other
+ * direction is untouched, because the person has only this one.
+ */
+export function forwardText(person: PersonRow, text: string): string {
+  return `From ${nameOf(person)}:\n${text}`
+}
+
+/** One message on its way across a handover. */
+export interface Relayed {
+  /**
+   * The inbox row it came from, which is what keys the send.
+   *
+   * A turn abandoned by a dying process is handed back by the recovery
+   * sweep, so the same words can be relayed twice. Keyed by the message
+   * rather than by the turn, the second attempt is dropped.
+   */
+  id: string
+  text: string
 }
 
 export interface HandoverOptions {
@@ -121,6 +186,26 @@ export interface Handovers {
     detail?: string | undefined
     turnId?: string | undefined
   }): Promise<Opened>
+  /**
+   * HAND-4: the handover this operator is talking into, if any.
+   *
+   * One of theirs, active, with the latest stamp. An operator holding
+   * two says `take over` again to move between them.
+   */
+  focusOf(operator: { id: string }): Promise<HandoverRow | undefined>
+  /** HAND-4: the operator's words to the person, untouched. */
+  relay(request: {
+    handover: HandoverRow
+    items: Relayed[]
+    turnId?: string | undefined
+  }): Promise<number>
+  /** HAND-5: the person's words to whoever is on it. */
+  forward(request: {
+    handover: HandoverRow
+    person: PersonRow
+    items: Relayed[]
+    turnId?: string | undefined
+  }): Promise<number>
   /** HAND-3: the first operator to ask for it gets it. */
   takeOver(request: { operator: PersonRow; person?: PersonRow | undefined }): Promise<Taken>
   /** HAND-7's first half: back to the bot. Its timeout is T6.4. */
@@ -145,12 +230,6 @@ export function createHandovers(options: HandoverOptions): Handovers {
     const rows = await store.handovers.list({ person_id: person.id }, { orderBy: "seq" })
     return rows.find((row) => OPEN.includes(row.status))
   }
-
-  /** The name an operator will recognise, which is not always a name. */
-  const nameOf = (person: PersonRow): string =>
-    person.display_name === null
-      ? `${person.channel} ${person.channel_user_id}`
-      : `${person.display_name} (${person.channel} ${person.channel_user_id})`
 
   /** HAND-2: everything an operator needs to decide whether to pick it up. */
   function alertText(handover: HandoverRow, person: PersonRow): string {
@@ -290,9 +369,17 @@ export function createHandovers(options: HandoverOptions): Handovers {
 
     if (wanted.status === "active") {
       const by = wanted.operator_id === null ? null : await store.people.byId(wanted.operator_id)
-      return wanted.operator_id === request.operator.id
-        ? { kind: "taken", handover: wanted }
-        : { kind: "already_taken", handover: wanted, by }
+      if (wanted.operator_id !== request.operator.id) {
+        return { kind: "already_taken", handover: wanted, by }
+      }
+      // HAND-4: theirs already, so this is an operator saying which of
+      // their conversations they are on now. Section 10 has no tool for
+      // moving focus, and this is the sentence they would say anyway.
+      const [again] = await store.handovers.update(
+        { id: wanted.id },
+        { focused_at: clock.now().toISOString() },
+      )
+      return { kind: "taken", handover: again ?? wanted }
     }
 
     // HAND-3: one conditional update, so of two operators asking together
@@ -303,6 +390,9 @@ export function createHandovers(options: HandoverOptions): Handovers {
         status: "active",
         operator_id: request.operator.id,
         taken_at: clock.now().toISOString(),
+        // HAND-4: taking one is turning to it, so an operator who holds
+        // only this one can start typing without a second step.
+        focused_at: clock.now().toISOString(),
       },
       { isIn: { status: ["waiting", "unanswered"] } },
     )
@@ -387,5 +477,122 @@ export function createHandovers(options: HandoverOptions): Handovers {
     return { kind: "resumed", handover: closed }
   }
 
-  return { openFor, open, takeOver, resume, operators }
+  /**
+   * HAND-4: which of this operator's conversations their words go to.
+   *
+   * Read from the handovers rather than from the operator's own row, so
+   * a focus cannot point at a handover that has been closed or at one
+   * somebody else has taken: the row that carries the focus is the row
+   * that carries `status` and `operator_id`.
+   *
+   * Falling back to `taken_at` matters for a handover claimed by
+   * anything that does not stamp the focus.
+   */
+  async function focusOf(operator: { id: string }): Promise<HandoverRow | undefined> {
+    const held = await store.handovers.list({ operator_id: operator.id, status: "active" })
+    const turnedTo = (row: HandoverRow): number =>
+      new Date(row.focused_at ?? row.taken_at ?? row.opened_at).getTime()
+    // `seq` breaks a tie, so two stamps in the same millisecond still
+    // decide the same way every time rather than by whatever order
+    // the rows came back in. The newer handover wins.
+    return [...held].sort((a, b) => turnedTo(b) - turnedTo(a) || b.seq - a.seq)[0]
+  }
+
+  /**
+   * HAND-4: the operator's words, as they typed them.
+   *
+   * Nothing is added, not even a name: the person asked for a human and
+   * is now talking to one, and a core that prefixed every line would be
+   * putting itself back in the middle of it.
+   *
+   * Stored under the person's conversation as the operator, which is
+   * what HAND-7 means by the operator's messages being in the history.
+   */
+  async function relay(request: {
+    handover: HandoverRow
+    items: Relayed[]
+    turnId?: string | undefined
+  }): Promise<number> {
+    const person = await store.people.byId(request.handover.person_id)
+    if (person === null) return 0
+
+    let sent = 0
+    for (const item of request.items) {
+      const key = `handover:${request.handover.id}:relay:${item.id}`
+      // The outbox would drop a second send on its own. This read is
+      // here for the history row, which has no key of its own: without
+      // it, a turn that ran twice would leave the same sentence in the
+      // conversation twice and the brain would read it twice.
+      if ((await store.outbox.find({ idempotency_key: key })) !== null) continue
+
+      await store.messages.insert({
+        person_id: person.id,
+        ...(request.turnId !== undefined ? { turn_id: request.turnId } : {}),
+        direction: "outbound",
+        author: "operator",
+        text: item.text,
+        channel: person.channel,
+        created_at: clock.now().toISOString(),
+      })
+      await outbox.queue({
+        personId: person.id,
+        ...(request.turnId !== undefined ? { turnId: request.turnId } : {}),
+        kind: "reply",
+        channel: person.channel,
+        channelUserId: person.channel_user_id,
+        text: item.text,
+        idempotencyKey: key,
+        // A person is waiting on a colleague who is typing right now.
+        urgent: true,
+      })
+      sent++
+    }
+    return sent
+  }
+
+  /**
+   * HAND-5: the person's words, to the operator who has it, or to all
+   * of them while nobody has.
+   *
+   * Keyed by the message, so the same words are never forwarded twice,
+   * and not urgent: a person who writes three times while they wait
+   * must not push the alert that said a handover opened out of sight.
+   */
+  async function forward(request: {
+    handover: HandoverRow
+    person: PersonRow
+    items: Relayed[]
+    turnId?: string | undefined
+  }): Promise<number> {
+    const { handover, person } = request
+    const to =
+      handover.operator_id === null
+        ? await operators()
+        : // Only the one on it. The others were told who took it
+          // (HAND-3), and a conversation two people are typing into is
+          // worse than one the wrong people are not reading.
+          [await store.people.byId(handover.operator_id)].filter(
+            (one): one is PersonRow => one !== null,
+          )
+
+    let sent = 0
+    for (const item of request.items) {
+      if (item.text === "") continue
+      for (const operator of to) {
+        await outbox.queue({
+          personId: operator.id,
+          ...(request.turnId !== undefined ? { turnId: request.turnId } : {}),
+          kind: "operator_alert",
+          channel: operator.channel,
+          channelUserId: operator.channel_user_id,
+          text: forwardText(person, item.text),
+          idempotencyKey: `handover:${handover.id}:fwd:${item.id}:${operator.id}`,
+        })
+        sent++
+      }
+    }
+    return sent
+  }
+
+  return { openFor, open, takeOver, resume, operators, focusOf, relay, forward }
 }

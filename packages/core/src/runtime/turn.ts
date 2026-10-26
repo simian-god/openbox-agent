@@ -68,6 +68,15 @@ export interface TurnInput {
   /** LOOP-7: what they have been asked to confirm and has not expired. */
   pendingActions?: PendingActionRow[] | undefined
   /**
+   * HAND-4: the handover this operator is on, when they are on one.
+   *
+   * Only a `/` command gets this far while they are focused, so the
+   * brain is being asked something by an operator in the middle of a
+   * conversation of their own. Without this it would not know which
+   * one, and `resume` would be a guess.
+   */
+  focus?: { who: string } | undefined
+  /**
    * CONF-1: makes a pending action when an irreversible call passes the
    * gate. Absent for an agent with no irreversible tools, in which case
    * nothing here can ever ask for one.
@@ -114,11 +123,19 @@ export interface TurnResult {
    * ended in a way the core did not plan for, so a caller of
    * `receiveAndWait` gets a result rather than a rejection.
    *
-   * Nor are `blocked` and `handover`. Both are LOOP-5 checks, which run
-   * before anything in this file, so neither turn reaches it (ROLE-4,
-   * HAND-5).
+   * Nor are `blocked`, `handover` and `relayed`. All three are decided
+   * before anything in this file runs, so none of those turns reaches
+   * it (ROLE-4, HAND-5, HAND-4).
    */
-  outcome: "replied" | "no_reply" | "step_cap" | "brains_failed" | "failed" | "blocked" | "handover"
+  outcome:
+    | "replied"
+    | "no_reply"
+    | "step_cap"
+    | "brains_failed"
+    | "failed"
+    | "blocked"
+    | "handover"
+    | "relayed"
   /** Set only when the outcome is `failed`. */
   error?: string | undefined
 }
@@ -175,6 +192,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       ...(input.facts !== undefined ? { facts: input.facts } : {}),
       ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
       ...(input.pendingActions !== undefined ? { pendingActions: input.pendingActions } : {}),
+      ...(input.focus !== undefined ? { focus: input.focus } : {}),
     }),
   )
 
