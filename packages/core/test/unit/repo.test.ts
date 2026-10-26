@@ -105,3 +105,32 @@ test("TIME-1: only the clock itself reads the system clock", () => {
 
   expect(reads).toEqual([])
 })
+
+test("PKG-1: a heavy brain's package is optional, and nothing imports it eagerly", () => {
+  // The Claude Agent SDK ships a platform binary of about 289 MB. As a
+  // plain dependency, every agent built on this core downloads it to run
+  // on OpenRouter. So it is an optional peer dependency.
+  //
+  // Both halves are checked, because either one alone is useless. The
+  // package.json decides whether it is downloaded. A static import would
+  // make it load at startup and fail the whole core when it is absent,
+  // whatever package.json says.
+  const pkg = JSON.parse(read("packages/core/package.json")) as {
+    dependencies?: Record<string, string>
+    peerDependencies?: Record<string, string>
+    peerDependenciesMeta?: Record<string, { optional?: boolean }>
+  }
+  const heavy = "@anthropic-ai/claude-agent-sdk"
+
+  expect(Object.keys(pkg.dependencies ?? {})).not.toContain(heavy)
+  expect(pkg.peerDependencies?.[heavy]).toBeDefined()
+  expect(pkg.peerDependenciesMeta?.[heavy]?.optional).toBe(true)
+
+  // And only the brain that needs it mentions it, dynamically.
+  const importers = sourceFiles("packages/core/src").filter((file) => read(file).includes(heavy))
+  expect(importers).toEqual(["packages/core/src/providers/brains/claude-agent-sdk.ts"])
+
+  const brain = read(importers[0] as string)
+  expect(brain).toContain(`await import("${heavy}")`)
+  expect(brain).not.toContain(`from "${heavy}"`)
+})

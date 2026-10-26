@@ -3,6 +3,11 @@
 // Checked against the installed package before any of this was written
 // (Spec section 23), and four of its defaults turned out to matter.
 //
+// It is an optional peer dependency, not a dependency, because the package
+// ships a platform binary of about 289 MB. The import below is lazy and
+// the error names the install command, so an agent on another brain pays
+// neither the download nor the load.
+//
 // It spawns a subprocess. The SDK ships its own Claude Code executable and
 // starts one per call, so this is an `api` brain by BRAIN-1's table and a
 // process by behaviour. That is the Plan's own risk row about latency, now
@@ -97,11 +102,19 @@ export function claudeAgentSdkBrain(options: ClaudeAgentSdkOptions): Brain {
       query = sdk.query
       return query
     } catch (error) {
+      // An optional peer dependency, so this is the expected state for an
+      // agent that has not asked for this brain. The message is the whole
+      // value of that choice: the package is ~289 MB with its platform
+      // binary, and nobody should download it to run on OpenRouter.
       throw new BrainError(
         "claude-agent-sdk",
-        `the @anthropic-ai/claude-agent-sdk package could not be loaded: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        [
+          "the claude-agent-sdk brain needs a package that is not installed.",
+          "Run: bun add @anthropic-ai/claude-agent-sdk",
+          "It is an optional peer dependency because it ships a platform binary of",
+          "about 289 MB, so only an agent that names this brain pays for it.",
+          `The loader said: ${error instanceof Error ? error.message : String(error)}`,
+        ].join(" "),
         false,
       )
     }
