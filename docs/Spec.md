@@ -721,7 +721,7 @@ export default defineConfig({
 
 **SKILL-3.** `new` works like this:
 1. Checks the grilling skill is installed, and stops with the install command if it isn't.
-2. Grills the builder using grilling's rounds. The top branches of the question tree are the prompt template's headings, the tools, the data, the channels, and the operators. It asks for API docs whenever a tool touches an outside system.
+2. Grills the builder using grilling's rounds. The top branches of the question tree are the prompt template's headings, the tools, the data, the channels, the operators, and personal data (SKILL-11). It asks for API docs whenever a tool touches an outside system.
 3. Writes nothing until the frontier is empty and the builder confirms shared understanding.
 4. Writes the full project (PKG-3). That includes every tool with its risk, roles, conditions, `confirmSummary` and at least 5 `should` and 5 `shouldNot` examples, plus the end user and operator channel glue with confirm buttons.
 5. Runs the checklist over its own output and shows the result.
@@ -760,6 +760,18 @@ export default defineConfig({
 - every agent table has RLS on, and any policy matches a reader the builder named
 
 **SKILL-10.** The skill ships channel glue templates for WhatsApp Cloud API, Telegram Bot API, Discord and a generic web webhook. Each implements `Inbound` mapping and `Sender` with honest `capabilities`.
+
+**SKILL-11.** `new` asks about personal data before it writes config, because `notice` and `retentionDays` are required and have no defaults, so there is no number to fall back on. It asks:
+
+1. What this agent will end up holding about a person, read back from the tools and tables already discussed rather than asked cold.
+2. How long conversations, audit records and stored facts should be kept.
+3. What the first contact notice should say. The skill drafts one from the answers above and the builder edits it.
+4. How somebody asks to be erased or to get a copy, and which operator can do it.
+5. Whether any of this is health, financial, government ID or children's data.
+
+A yes to 5 stops the flow: the skill says plainly that this is a stricter category, that it cannot tell the builder what the rules require, and that the answer belongs to a lawyer. It then writes the project with the builder's own numbers and carries on.
+
+**SKILL-12.** Whatever the builder answered goes into `docs/privacy.md` in the agent's project, with the date, the numbers chosen, the categories named in SKILL-11.5, and one line saying these were the builder's decisions and have not been reviewed by a lawyer. The skill never writes a number the builder did not give it, and never says an agent is compliant.
 
 ---
 

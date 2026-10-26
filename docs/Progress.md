@@ -14,7 +14,7 @@ more expensive the later they happen.
 | What | Why it matters | When it bites |
 |---|---|---|
 | Run the live tests once: `OPENBOX_LIVE=1 bun test packages/core/test/live` | Settles whether the OpenAI Decisions API reports a `usage` object at all (Known K9). Until then an agent on that route may spend money the spend cap cannot see. Also exercises the Jev route that can be reached (Known K8) | T7.3, the spend cap. A cap that cannot see a cost is not a cap |
-| Have the DPDP conversation with a lawyer, with the six questions in Known K15 | PRIV-1 to PRIV-4 are my reading of the rules, not a lawyer's. Erasure deletes rows and is the one thing here that cannot be walked back | M9. Before it is built, not after |
+| Have the DPDP conversation with a lawyer, with the seven questions in Known K15 | PRIV-1 to PRIV-4 are my reading of the rules, not a lawyer's. Erasure deletes rows and is the one thing here that cannot be walked back | M9. Before it is built, not after |
 
 ## M0. Foundations
 
@@ -136,7 +136,7 @@ more expensive the later they happen.
 | Task | What | Status | Date | Note |
 |---|---|---|---|---|
 | T10.1 | `best-practices.md`, `checklist.md`, `prompt-template.md`, condensed from Anthropic's and… | todo | | |
-| T10.2 | `SKILL.md`: commands, the grilling dependency check, the `new` flow | todo | | |
+| T10.2 | `SKILL.md`: commands, the grilling dependency check, the `new` flow, and the personal data round | todo | | |
 | T10.3 | Templates for config, tool, migration (RLS on by default), seed and `main.ts` | todo | | |
 | T10.4 | Channel glue for WhatsApp, Telegram, Discord, web and terminal, with buttons and operator… | todo | | |
 | T10.5 | `add-tool`, `swap` and `chat` | todo | | |

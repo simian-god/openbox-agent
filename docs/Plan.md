@@ -254,7 +254,7 @@ Each task lists the Spec IDs it implements. **Done when** is the bar for closing
 | Task | What | Spec |
 |---|---|---|
 | T10.1 | `best-practices.md`, `checklist.md`, `prompt-template.md`, condensed from Anthropic's and OpenAI's guides | SKILL-2, SKILL-8, SKILL-9 |
-| T10.2 | `SKILL.md`: commands, the grilling dependency check, the `new` flow | SKILL-1, SKILL-3 |
+| T10.2 | `SKILL.md`: commands, the grilling dependency check, the `new` flow, and the personal data round | SKILL-1, SKILL-3, SKILL-11, SKILL-12 |
 | T10.3 | Templates for config, tool, migration (RLS on by default), seed and `main.ts` | PKG-3, DATA-5 |
 | T10.4 | Channel glue for WhatsApp, Telegram, Discord, web and terminal, with buttons and operator channels | SKILL-10, CONF-7 |
 | T10.5 | `add-tool`, `swap` and `chat` | SKILL-4 to SKILL-6 |
@@ -417,3 +417,4 @@ Every change to Spec made during the build goes here, with the date, the Spec ID
 | 2026-10-26 | BRAIN-2 | The reader reads past fences, prose and an array wrapper | Models fence JSON, apologise before it and explain after it however firmly they are told not to. Refusing those would mean falling back to another brain over formatting, which costs a person their answer for nothing. The object is found by balancing braces, so a nested object survives and a brace inside a string does not end it early |
 | 2026-10-26 | BRAIN-2, BRAIN-5 | A tool name that was not offered is a shape failure, not an unknown tool | The brain was handed an enum of exactly what it could call, so getting it wrong says the shape was not followed. LOOP-8 step 5 exists for a brain that calls what it was not shown, and this never reaches it. One retry carries the reason, which is what makes BRAIN-5's "twice in a row" twice rather than once |
 | 2026-10-26 | LIMIT-3 | Both attempts are counted when the shape fails once | Both were paid for. A turn that reported only the successful call would understate what it cost, and the spend cap reads that number |
+| 2026-10-26 | SKILL-3, SKILL-11, SKILL-12 | `new` asks about personal data, and writes down that it was the builder's answer | `notice` and `retentionDays` are required with no defaults, so the skill cannot write a config without asking and the Spec never said what it asks. The grilling session is also the only moment a human is certainly present and thinking about this agent's domain. Health, financial, ID and children's data get a stop and a plain sentence that the answer belongs to a lawyer, because a skill that quietly accepted a number would leave the builder feeling they had discharged a duty. `docs/privacy.md` records what was decided and that nobody checked it, so the lawyer conversation has something to read. Builder's idea |

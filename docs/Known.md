@@ -449,6 +449,20 @@ is currently a guess, and each changes what gets built.
 6. **Does anything change if a person is a child, or outside India?** Neither
    is in the Spec at all, which is either correct or a gap.
 
-**What would resolve it.** One conversation with a lawyer, with the six
+7. **One retention period, or one per kind of data?** Config has a single
+   `retentionDays` today, covering conversation text, audit records and stored
+   facts alike. Should those differ, and is there an outer limit we must
+   enforce rather than offer? This decides whether retention is a config field
+   or a validation rule.
+
+**What the skill does meanwhile.** SKILL-11 makes `new` ask the builder these
+questions in its own words before it writes a config, and stop with a plain
+warning when the answer involves health, financial, ID or children's data.
+SKILL-12 writes the answers into the agent's own `docs/privacy.md` with a line
+saying nobody has reviewed them. That captures a decision and a date. It is not
+a substitute for the conversation below, and the answers to questions 2 and 7
+change what the skill is allowed to accept.
+
+**What would resolve it.** One conversation with a lawyer, with the seven
 questions above, and then a decisions log row per answer and whatever Spec
 changes they imply. Before M9, which is five milestones out.
