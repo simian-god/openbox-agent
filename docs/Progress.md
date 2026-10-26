@@ -6,6 +6,16 @@ Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only
 
 **Next task:** T5.1. The M3 check row stays `blocked` until T11.1.
 
+## Waiting on you
+
+Two things only the builder can do. Neither blocks the next row, and both get
+more expensive the later they happen.
+
+| What | Why it matters | When it bites |
+|---|---|---|
+| Run the live tests once: `OPENBOX_LIVE=1 bun test packages/core/test/live` | Settles whether the OpenAI Decisions API reports a `usage` object at all (Known K9). Until then an agent on that route may spend money the spend cap cannot see. Also exercises the Jev route that can be reached (Known K8) | T7.3, the spend cap. A cap that cannot see a cost is not a cap |
+| Have the DPDP conversation with a lawyer, with the six questions in Known K15 | PRIV-1 to PRIV-4 are my reading of the rules, not a lawyer's. Erasure deletes rows and is the one thing here that cannot be walked back | M9. Before it is built, not after |
+
 ## M0. Foundations
 
 | Task | What | Status | Date | Note |

@@ -397,3 +397,58 @@ rules out a whole class.
 **What would resolve it.** One of the three above, or the next failure read with
 step 1 in place. Guessing further now would mean changing the pump on a
 suspicion, and the pump is what SEND-4 rests on.
+
+---
+
+## K15. The privacy design is one reading of the DPDP rules, not a lawyer's
+
+**Status:** open, and waiting on the builder. Needed before M9 is built, not
+after.
+
+**What happens.** Intent goal 21 says the design is "to be confirmed with a
+lawyer", and it has not been. So PRIV-1 to PRIV-4 in the Spec are a careful
+reading of India's DPDP Rules, written by someone who is not a lawyer. M9 turns
+that reading into code.
+
+**What it costs.** Everything in M9 except one thing is only a rewrite if the
+reading is wrong. The exception is erasure, which deletes rows: PRIV-3 is the
+one operation in this system that cannot be walked back. Finding out afterwards
+that something had to be kept means it is already gone, from the test agent and
+from anything running.
+
+The obligations that matter apply from 13 May 2027, so there is time. This is
+about order, not urgency: the answer wants to arrive before the code.
+
+**The questions to take into that conversation.** Each one is a place the Spec
+is currently a guess, and each changes what gets built.
+
+1. **What may be kept after someone is erased?** PRIV-3 keeps a hashed
+   reference to the person, when it happened and who did it, in `erasure_log`,
+   and clears all text from their inbox rows and events while keeping the ids,
+   timestamps and event names. Is that the right minimum, and does a hashed
+   reference count as erased?
+
+2. **Is the retention period entirely the builder's choice?** Config requires
+   `retentionDays` and accepts any number. If the rules set an outer limit for a
+   category of data, config should refuse a longer one, and that is a validation
+   rule rather than a document.
+
+3. **What must the first contact notice actually say?** PRIV-1 requires a notice
+   string and records that it was shown. Is one plain sentence enough, or must
+   specific items be listed? If the latter, the notice stops being free text and
+   becomes a template with required fields.
+
+4. **Does export have a required shape or deadline?** PRIV-4 returns one JSON
+   document with everything stored. A required format or a time limit would make
+   it a job rather than a tool call.
+
+5. **Is consent needed for anything the core does beyond the notice?** The
+   agent stores conversations, facts about people and transcripts of voice
+   notes. The Spec treats the notice as sufficient for all of it.
+
+6. **Does anything change if a person is a child, or outside India?** Neither
+   is in the Spec at all, which is either correct or a gap.
+
+**What would resolve it.** One conversation with a lawyer, with the six
+questions above, and then a decisions log row per answer and whatever Spec
+changes they imply. Before M9, which is five milestones out.

@@ -16,7 +16,9 @@ Read only the parts your task needs, not every doc in full.
 
 ## How to work
 
-- **Start of every session:** open `docs/Progress.md`. Unless I name a task, take the first row that isn't `done`. A row marked `doing` or `blocked` comes first: tell me its note before carrying on. Mark your row `doing`.
+- **Start of every session:** open `docs/Progress.md`. Its "Waiting on you"
+  section lists what only the builder can do; mention anything there that the
+  row you are about to start depends on. Unless I name a task, take the first row that isn't `done`. A row marked `doing` or `blocked` comes first: tell me its note before carrying on. Mark your row `doing`.
 - Do one row at a time. Read that task's row in Plan.md and every Spec ID it lists.
 - Write tests first. Name each test after the Spec ID it proves, like `test("CONF-4: rejects a confirm from another person", ...)`.
 - A task is done when its tests pass and the typecheck, format check and full test suite are green.
