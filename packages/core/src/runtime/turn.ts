@@ -96,6 +96,12 @@ export interface TurnResult {
   /** One entry per step: what routing decided, for the trace and tests. */
   routed: { step: number; reason: string; choice?: string | undefined }[]
   /**
+   * BRAIN-3: every tool call a brain asked for beyond the first, in order.
+   * Named rather than counted, because which one was dropped is the part
+   * worth reading.
+   */
+  droppedCalls: string[]
+  /**
    * GATE-3: a trigger this turn noticed, in the order it noticed them.
    * Two Blocks in a row, or two routing picks below the threshold in a
    * row, for the same person. Opening the handover is T6.2, so for now the
@@ -198,6 +204,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   const toolsRun: { name: string; ok: boolean }[] = []
   const routed: TurnResult["routed"] = []
   const handoverDue: HandoverTrigger[] = []
+  /** BRAIN-3: tool calls a brain asked for beyond the first. */
+  const droppedCalls: string[] = []
   let costUsd = 0
   let steps = 0
 
@@ -289,7 +297,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     let answered = false
     let output: Awaited<ReturnType<Brain["complete"]>> | undefined
     let lastError: unknown
-    const brainsFailed: string[] = []
+    const brainsFailed: { brain: string; error: string }[] = []
 
     for (const [index, brain] of brains.entries()) {
       try {
@@ -307,6 +315,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         answered = true
         if (index > 0) {
           await events.record("fallback_used", {
+            what: "brain",
             brain: brain.id,
             failed: [...brainsFailed],
             step: steps,
@@ -314,28 +323,85 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         }
         break
       } catch (error) {
+        // BRAIN-5: a timeout, an error, or output that failed the shape
+        // twice. Any throw moves to the next brain, including one that is
+        // not a `BrainError`.
+        //
+        // That last part is deliberate and was not always so. An adapter
+        // that threw a plain `TypeError` used to end the turn, on the
+        // reasoning that a bug should not be masked by a fallback. But the
+        // person loses their answer either way, and the bug is not hidden:
+        // the brain, the error and the fallback are all in the trace. A
+        // slower answer beats no answer.
         lastError = error
-        brainsFailed.push(brain.id)
-        if (!(error instanceof BrainError)) throw error
+        brainsFailed.push({
+          brain: brain.id,
+          error: error instanceof Error ? error.message : String(error),
+        })
       }
     }
 
     if (!answered || output === undefined) {
-      // LOOP-12 proper, with its holding message, is T2.x. Here the turn
-      // simply ends and says so, rather than pretending it replied.
-      void lastError
-      return { steps, costUsd, brainsUsed, toolsRun, routed, handoverDue, outcome: "brains_failed" }
+      // BRAIN-5 has run out of brains. LOOP-12's holding message and the
+      // operator alert are M7; here the turn ends and the trace says which
+      // brains were tried and what each of them said.
+      await events.record("fallback_used", {
+        what: "brain",
+        brain: null,
+        failed: [...brainsFailed],
+        step: steps,
+        error: lastError instanceof Error ? lastError.message : String(lastError),
+      })
+      return {
+        steps,
+        costUsd,
+        brainsUsed,
+        toolsRun,
+        routed,
+        handoverDue,
+        droppedCalls,
+        outcome: "brains_failed",
+      }
     }
 
     costUsd += output.usage.costUsd ?? 0
+
+    // BRAIN-3: more than one tool call means the first is taken and the
+    // rest are recorded as dropped.
+    //
+    // Not run in parallel, and not queued for later. A brain that asks for
+    // two things at once has not seen the result of the first, so the
+    // second was decided without it: LOOP-8 step 10 exists to give it that
+    // result and let it decide again. Running both would act on a guess.
+    const dropped = (output.toolCalls ?? []).slice(1).map((extra) => extra.name)
+    if (dropped.length > 0) droppedCalls.push(...dropped)
 
     // Step 4: a reply ends the turn.
     const call = output.toolCalls?.[0]
     if (call === undefined) {
       const reply = output.text?.trim()
       return reply === undefined || reply === ""
-        ? { steps, costUsd, brainsUsed, toolsRun, routed, handoverDue, outcome: "no_reply" }
-        : { reply, steps, costUsd, brainsUsed, toolsRun, routed, handoverDue, outcome: "replied" }
+        ? {
+            steps,
+            costUsd,
+            brainsUsed,
+            toolsRun,
+            routed,
+            handoverDue,
+            droppedCalls,
+            outcome: "no_reply",
+          }
+        : {
+            reply,
+            steps,
+            costUsd,
+            brainsUsed,
+            toolsRun,
+            routed,
+            handoverDue,
+            droppedCalls,
+            outcome: "replied",
+          }
     }
 
     messages.push({ role: "tool_call", id: call.id, name: call.name, input: call.input })
@@ -375,6 +441,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         ok: false,
         ran: false,
         error,
+        ...(dropped.length > 0 ? { dropped } : {}),
       })
       // The arguments are recorded as the brain sent them, unvalidated,
       // which is the only form they exist in. A review of a tool nobody
@@ -515,6 +582,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         ok: true,
         ran: true,
         durationMs,
+        // BRAIN-3: what the brain asked for alongside this and did not get.
+        ...(dropped.length > 0 ? { dropped } : {}),
       })
       await events.toolRun({
         tool: tool.name,
@@ -539,6 +608,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         ran: true,
         durationMs,
         error: message,
+        ...(dropped.length > 0 ? { dropped } : {}),
       })
       await events.toolRun({
         tool: tool.name,
@@ -561,5 +631,14 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
 
   // LOOP-9's fixed reply, flag and operator alert are M7. v0 reports it.
   void turnId
-  return { steps, costUsd, brainsUsed, toolsRun, routed, handoverDue, outcome: "step_cap" }
+  return {
+    steps,
+    costUsd,
+    brainsUsed,
+    toolsRun,
+    routed,
+    handoverDue,
+    droppedCalls,
+    outcome: "step_cap",
+  }
 }

@@ -255,8 +255,13 @@ describeDatabase("events and versions", (sql) => {
 
     expect(await trace(agent)).toEqual(["turn_started", "fallback_used", "turn_ended"])
     const row = (await agent.store.events.list({ name: "fallback_used" }))[0]
-    expect(row?.props).toMatchObject({ brain: "second", step: 1 })
-    expect(row?.props["failed"]).toEqual(["first"])
+    expect(row?.props).toMatchObject({ what: "brain", brain: "second", step: 1 })
+    // BRAIN-5: what each brain that failed actually said, not just that it
+    // did. Without the reason this event tells you a fallback happened and
+    // nothing about why, which is the question you have when you read it.
+    expect(row?.props["failed"]).toEqual([
+      { brain: "first", error: expect.stringContaining("overloaded") },
+    ])
   })
 
   test("EVT-1: the primary brain answering records no fallback", async () => {

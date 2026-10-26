@@ -174,7 +174,7 @@ offers. `id` ties a result to the call that asked for it.
 
 **BRAIN-4.** CLI brains are for building and local testing only. `createAgent` refuses a config with `mode: "production"` that lists a CLI brain.
 
-**BRAIN-5.** Fallback. On a timeout, an error, or output that fails BRAIN-2's shape twice in a row, the step moves to the next brain in the list. The turn records which brain answered.
+**BRAIN-5.** Fallback. On a timeout, an error, or output that fails BRAIN-2's shape twice in a row, the step moves to the next brain in the list. Any error, including one that is not a `BrainError`: an adapter with a bug costs the person their answer exactly as an outage does, and the brain, the error and the fallback are all recorded either way. The turn records which brain answered, and the fallback is per step, so a provider that was down for a moment does not cost the rest of the turn. A turn that runs out of brains leaves its inbox rows findable rather than done (LOOP-12).
 
 ### Decision model
 
@@ -812,4 +812,4 @@ A yes to 5 stops the flow: the skill says plainly that this is a stricter catego
 - ~~Which Claude Code flags combine cleanly~~. Checked at T5.4 against `claude 2.1.306` and the installed `codex`. `--bare` does more than this Spec claimed: it also skips CLAUDE.md auto-discovery, plugins, LSP and auto-memory. It also says "Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper (OAuth and keychain are never read)", so a CLI brain needs a key and cannot run on a logged in subscription. `--tools ""` is documented as disabling all tools, and `--json-schema` takes inline JSON; both need `-p`. Codex is a different shape: its schema is a file, its answer is written to a file, and it has no way to turn its tools off, so `--sandbox read-only` is the most that can be done and it still reads the filesystem. That no built in tool leaks in is checked by a live test rather than by reading, since only running it can tell.
 - WhatsApp template and button rules at build time.
 - sqlite-vec support in evals-agent's world, before any agent relies on the pgvector retriever.
-- Whether evals-agent's SQLite world handles the conditional `UPDATE ... RETURNING` claims in DATA-4.
+- ~~Whether evals-agent's SQLite world handles the conditional `UPDATE ... RETURNING` claims in DATA-4.~~ Answered at T2.6: its shim builds the statement with every filter the core uses, so DATA-4's claims hold there. The line should have been struck then.

@@ -163,6 +163,14 @@ export interface Agent {
   settled(): Promise<void>
 }
 
+/**
+ * Outcomes where nobody was answered, so the inbox row stays findable.
+ *
+ * `no_reply` is not one of them: the brain chose to say nothing, which is
+ * a handled turn. `replied` obviously is not.
+ */
+const UNANSWERED = new Set<TurnResult["outcome"]>(["failed", "brains_failed", "step_cap"])
+
 /** One reply per set of messages answered, however many turns it takes. */
 export function replyKey(inboxIds: string[]): string {
   const of = [...inboxIds].sort().join(",")
@@ -631,6 +639,15 @@ export function createAgent(options: AgentOptions): Agent {
       let handled: "done" | "failed" = "done"
       try {
         result = await attemptTurn(person, batch, startedAt, where)
+        // A turn can end without anyone being answered and without
+        // throwing. BRAIN-5 running out of brains is one way, and the step
+        // cap is the other. Both leave a person waiting, so both leave the
+        // row findable rather than marked done.
+        //
+        // LOOP-12 and LOOP-9 both say these should also send a holding
+        // message and alert an operator. That is T7.3. Until then the
+        // status is the only thing that says nobody was answered.
+        if (UNANSWERED.has(result.outcome)) handled = "failed"
       } catch (error) {
         handled = "failed"
         result = await turnFailed({ person, batch, turnId: where.turnId, startedAt, error })
@@ -866,6 +883,7 @@ export function createAgent(options: AgentOptions): Agent {
       brainsUsed: [],
       routed: [],
       handoverDue: [],
+      droppedCalls: [],
       toolsRun: [],
       outcome: "failed",
       error: message,

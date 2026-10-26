@@ -285,7 +285,9 @@ describeDatabase("receive", (sql) => {
       id: "broken",
       kind: "api",
       supportsImages: false,
-      // Not a BrainError: this stands for a bug, not a provider outage.
+      // Not a BrainError: this stands for a bug in an adapter rather than
+      // a provider outage. BRAIN-5 falls back on either, so with one
+      // brain in the list the turn runs out of brains.
       complete: () => Promise.reject(new TypeError("undefined is not a function")),
     }
     const agent = createAgent({
@@ -307,8 +309,14 @@ describeDatabase("receive", (sql) => {
     expect(result.duplicate).toBe(false)
     await agent.settled()
 
-    expect(problems).toHaveLength(1)
-    expect(String(problems[0])).toContain("undefined is not a function")
+    // BRAIN-5 handles this, so it is not an unplanned failure and
+    // onTurnError is not called. The turn says it ran out of brains, and
+    // the trace says which one failed and what it said.
+    expect(problems).toEqual([])
+
+    const fell = await agent.store.events.list({ name: "fallback_used" })
+    expect(fell).toHaveLength(1)
+    expect(JSON.stringify(fell[0]?.props)).toContain("undefined is not a function")
   })
 
   test("API-1: a failed turn is recorded as failed, not left pending", async () => {
@@ -322,14 +330,15 @@ describeDatabase("receive", (sql) => {
 
     const result = await agent.receiveAndWait(hello())
 
-    expect(result.turn?.outcome).toBe("failed")
-    expect(result.turn?.error).toContain("boom")
+    // BRAIN-5: any throw moves to the next brain, and there is no next
+    // one, so the turn ran out rather than crashed.
+    expect(result.turn?.outcome).toBe("brains_failed")
 
     // The inbox row says what happened to it, so a sweep can find it.
     const row = await agent.store.inbox.byId(result.inboxId)
     expect(row?.status).toBe("failed")
     const turn = (await agent.store.turns.list())[0]
-    expect(turn?.outcome).toBe("failed")
+    expect(turn?.outcome).toBe("brains_failed")
     expect(turn?.ended_at).not.toBeNull()
     // The person is told nothing rather than told a lie (LOOP-12 is T2.3).
     expect(sender.sent).toEqual([])
