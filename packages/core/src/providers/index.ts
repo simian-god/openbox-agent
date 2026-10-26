@@ -7,12 +7,25 @@ import type { OpenboxConfig } from "../config/index.ts"
 import type { Brain } from "./brains/types.ts"
 import { openRouterBrain } from "./brains/openrouter.ts"
 import { claudeAgentSdkBrain } from "./brains/claude-agent-sdk.ts"
+import { claudeCodeCliBrain, codexCliBrain } from "./brains/cli.ts"
 import type { DecisionModel } from "./decision/types.ts"
 import { jevDecisionModel, type JevRoute } from "./decision/jev.ts"
 import { openaiDecisionsModel } from "./decision/openai-decisions.ts"
 
 export * from "./brains/types.ts"
 export { openRouterBrain, toWireMessages, readResponse } from "./brains/openrouter.ts"
+export {
+  claudeCodeCliBrain,
+  codexCliBrain,
+  runCommand,
+  unwrap,
+  DEFAULT_CLAUDE_CLI_MODEL,
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_CLI_TIMEOUT_MS,
+  type CliBrainOptions,
+  type RunCommand,
+  type RunResult,
+} from "./brains/cli.ts"
 export {
   claudeAgentSdkBrain,
   DEFAULT_CLAUDE_MODEL,
@@ -47,6 +60,15 @@ export const ENV_KEYS = {
   openrouter: "OPENROUTER_API_KEY",
   "claude-agent-sdk": "ANTHROPIC_API_KEY",
   "openai-agents": "OPENAI_API_KEY",
+  // BRAIN-1: `claude --bare` says "Anthropic auth is strictly
+  // ANTHROPIC_API_KEY or apiKeyHelper (OAuth and keychain are never
+  // read)", so this brain needs a key and does not run on a logged in
+  // subscription.
+  "claude-code-cli": "ANTHROPIC_API_KEY",
+  // Codex is the other way round: it keeps its own login, and a key is
+  // only used when one is there. Reflected rather than made uniform,
+  // because that is what the two commands actually do.
+  "codex-cli": "OPENAI_API_KEY",
   // Jev's own route. Jev through OpenRouter uses the OpenRouter key above.
   typesafe: "TYPESAFE_API_KEY",
 } as const
@@ -103,8 +125,24 @@ function buildBrain(id: string, env: Env, problems: string[]): Brain | undefined
       return claudeAgentSdkBrain({ apiKey })
     }
 
+    case "claude-code-cli": {
+      const apiKey = env[ENV_KEYS["claude-code-cli"]]
+      if (apiKey === undefined || apiKey === "") {
+        problems.push(
+          `brain claude-code-cli needs ${ENV_KEYS["claude-code-cli"]} in the environment. It runs \`claude --bare\`, which never reads a logged in session (BRAIN-1)`,
+        )
+        return undefined
+      }
+      return claudeCodeCliBrain({ apiKey })
+    }
+
+    case "codex-cli":
+      // No key required: Codex keeps its own login, and one is passed only
+      // when it is there.
+      return codexCliBrain({ apiKey: env[ENV_KEYS["codex-cli"]] ?? "" })
+
     default:
-      // The other three brains arrive later in M5. Config already rejects an id
+      // The OpenAI Agents SDK is parked, see Known K16. Config already rejects an id
       // that is not one of the five (CFG-1), so this is a gap in the
       // build, not a typo by the builder.
       problems.push(`brain ${id} is named in config but its adapter is not built yet`)
