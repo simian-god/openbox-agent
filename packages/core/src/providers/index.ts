@@ -12,6 +12,20 @@ import { openaiDecisionsModel } from "./decision/openai-decisions.ts"
 
 export * from "./brains/types.ts"
 export { openRouterBrain, toWireMessages, readResponse } from "./brains/openrouter.ts"
+export {
+  structuredBrain,
+  structuredSchema,
+  structuredInstructions,
+  toTranscript,
+  readStructured,
+  extractObject,
+  REPLY,
+  TOOL,
+  type StructuredOptions,
+  type StructuredRequest,
+  type StructuredAnswer,
+  type Read,
+} from "./brains/structured.ts"
 export { supabaseFromEnv, DB_ENV_KEYS } from "./db.ts"
 export type { FetchLike } from "./http.ts"
 export * from "./decision/types.ts"

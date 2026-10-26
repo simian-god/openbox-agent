@@ -272,6 +272,15 @@ describeDatabase("time on a real turn", (sql) => {
     await here.agent.receiveAndWait(says("tomorrow at 8", "m1"))
     const inKolkata = accepted[0]?.at
 
+    // Stopped before the next one starts, and this is not tidiness.
+    // Two agents on one database both answer whoever is waiting, which is
+    // exactly what C13 is for: more processes is how throughput is added.
+    // So a test that needs one particular agent to answer has to be the
+    // only agent running, whatever person the message is from. Without
+    // this the Kolkata agent sometimes answered London's message and the
+    // test failed on an answer that was correct for the wrong agent.
+    await here.agent.stop()
+
     accepted = []
     const london = agentWith(
       [{ tool: "request_table", input: { when: "tomorrow 8pm", size: 2 } }, { reply: "ok" }],

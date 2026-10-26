@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** T5.1. The M3 check row stays `blocked` until T11.1.
+**Next task:** T5.2. The M3 check row stays `blocked` until T11.1.
 
 ## Waiting on you
 
@@ -79,7 +79,7 @@ more expensive the later they happen.
 
 | Task | What | Status | Date | Note |
 |---|---|---|---|---|
-| T5.1 | Shared structured output adapter for brains without native tool calling | todo | | |
+| T5.1 | Shared structured output adapter for brains without native tool calling | done | 2026-10-26 | `structuredBrain` turns a function that produces text into a whole `Brain`, so T5.2 to T5.4 each supply one call and inherit the schema, the prompt block, the reader and the retry. BRAIN-2's `tool` is an enum of the offered names, which gets C8's first bar from the provider for free, and `args` is left a free object because a union is not portable and LOOP-8 step 6 checks it against the tool's own schema a step later anyway. The reader is the part that meets what models actually send: fences, apologies before the JSON, explanations after it, an answer wrapped in an array, a nested object, a brace inside a string. All read. A tool that was not offered is a shape failure rather than an unknown tool, because the brain was handed an enum. One retry carries the reason, which is what makes BRAIN-5's "twice in a row" twice, and both attempts are counted because both were paid for. Eighteen probes, all caught; one found that the fence handling was untested, since it only matters when there are braces in the prose before the fence. Also found and fixed a real race in a test of my own from T4.3: two agents on one database both answer whoever is waiting, which is C13 working as designed, so a test that needs one particular agent to answer has to be the only one running. |
 | T5.2 | Claude Agent SDK brain: check one turn structured output with no built in tools | todo | | |
 | T5.3 | OpenAI Agents SDK brain | todo | | |
 | T5.4 | Claude Code CLI and Codex CLI brains: check the flag combinations, including spawning on… | todo | | |
