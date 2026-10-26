@@ -36,6 +36,36 @@ describe("DEP-3: building providers from config", () => {
     expect(brains[0]?.id).toBe("openrouter")
   })
 
+  test("C2: every brain that ships is built by naming it in config", () => {
+    // The offline half of C2: "switching by config only". The live
+    // conformance run proves the four brains behave; nothing proved that
+    // config alone reaches all four of them, which the M5 check turned up.
+    //
+    // `codex-cli` takes no key on purpose: it keeps its own login, and one
+    // is passed only when it is there (BRAIN-1).
+    const ships = [
+      { id: "openrouter", env: { [ENV_KEYS.openrouter]: "sk-or" }, kind: "api" },
+      { id: "claude-agent-sdk", env: { [ENV_KEYS["claude-agent-sdk"]]: "sk-ant" }, kind: "api" },
+      { id: "claude-code-cli", env: { [ENV_KEYS["claude-code-cli"]]: "sk-ant" }, kind: "cli" },
+      { id: "codex-cli", env: {}, kind: "cli" },
+    ] as const
+
+    for (const ship of ships) {
+      const named = config({ brain: { id: ship.id, model: "a/b" } })
+      // The decision model is passed in, so a missing Jev key cannot be
+      // mistaken for a brain that would not build.
+      const { brains } = providersFromConfig(
+        named,
+        { decisionModel: scriptedDecisionModel([]) },
+        ship.env,
+      )
+
+      expect(brains.map((brain) => brain.id)).toEqual([ship.id])
+      // BRAIN-4 rests on this: a CLI brain has to say that it is one.
+      expect(brains[0]?.kind).toBe(ship.kind)
+    }
+  })
+
   test("CFG-2: a missing key is a clear error naming the variable to set", () => {
     let problems: string[] = []
     try {
