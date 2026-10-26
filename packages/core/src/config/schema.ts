@@ -141,11 +141,20 @@ const LIMITS = z
   })
   .strict()
 
-/** HAND-1 and HAND-7. */
+/** HAND-1, HAND-6 and HAND-7. */
 const HANDOVER = z
   .object({
     noOperatorMinutes: z.number().positive().default(10),
     idleMinutes: z.number().positive().default(30),
+    /**
+     * HAND-6: how often the operators are reminded about a handover
+     * nobody has taken, during opening hours.
+     *
+     * Section 19's example does not list this key. HAND-6 says hourly
+     * and marks it a default, and in this core every default is a
+     * config field, so it is one.
+     */
+    alertRepeatMinutes: z.number().positive().default(60),
     wantsHumanThreshold: z.number().min(0).max(1).default(0.8),
   })
   .strict()

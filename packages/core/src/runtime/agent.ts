@@ -32,7 +32,15 @@ import type { Clock } from "../testing/clock.ts"
 import { systemClock } from "../testing/clock.ts"
 import { createEvents, type EventFailure, type EventSink, type EventWriter } from "./events.ts"
 import { createLeases, FREE } from "./lease.ts"
-import { asCommand, createHandovers, isCommand, nameOf, type Handovers } from "./handover.ts"
+import {
+  asCommand,
+  createHandovers,
+  isCommand,
+  nameOf,
+  HANDOVER_IDLE_JOB,
+  HANDOVER_WAITING_JOB,
+  type Handovers,
+} from "./handover.ts"
 import { createJobs, type Jobs } from "./jobs.ts"
 import { createOutbox, type Outbox } from "./outbox.ts"
 import { createWorker } from "./worker.ts"
@@ -267,7 +275,38 @@ export function createAgent(options: AgentOptions): Agent {
     events,
     outbox,
     summarise,
+    scheduleWaiting: scheduleHandoverWaiting,
+    scheduleIdle: scheduleHandoverIdle,
   })
+
+  /**
+   * HAND-6 and HAND-7: one job per moment worth looking at.
+   *
+   * The key carries the time, which is the trick BUILTIN-3 already uses
+   * for an idle task: a job cannot be rescheduled, so every event books a
+   * new one, and the ones already booked come due, find nothing to do and
+   * say so. Cheap, and no two processes have to agree on a timer.
+   *
+   * Declared as functions rather than consts so they can be handed to
+   * `createHandovers` above, which is built before the job loop.
+   */
+  async function scheduleHandoverWaiting(handover: { id: string }, runAt: Date): Promise<void> {
+    await jobs.queue({
+      kind: HANDOVER_WAITING_JOB,
+      payload: { handoverId: handover.id },
+      runAt,
+      dedupeKey: `${HANDOVER_WAITING_JOB}:${handover.id}:${runAt.toISOString()}`,
+    })
+  }
+
+  async function scheduleHandoverIdle(handover: { id: string }, runAt: Date): Promise<void> {
+    await jobs.queue({
+      kind: HANDOVER_IDLE_JOB,
+      payload: { handoverId: handover.id },
+      runAt,
+      dedupeKey: `${HANDOVER_IDLE_JOB}:${handover.id}:${runAt.toISOString()}`,
+    })
+  }
 
   /**
    * HAND-2: the three lines an operator reads first.
@@ -561,6 +600,26 @@ export function createAgent(options: AgentOptions): Agent {
       if (expired !== undefined) await taskChanged?.(expired, "the task expired")
     })
   }
+
+  // HAND-6: the handover nobody took. Ten minutes, then every hour the
+  // agent is open, for as long as it stays open.
+  jobs.on(HANDOVER_WAITING_JOB, async (job) => {
+    const handoverId = (job.payload as { handoverId?: unknown }).handoverId
+    if (typeof handoverId !== "string") return
+    const what = await handovers.waitedTooLong({ handoverId })
+    if (what === "nothing" || what === "gone") return
+    await events.record("job_ran", { job: HANDOVER_WAITING_JOB, handoverId, did: what })
+  })
+
+  // HAND-7: the handover with nothing said in it. The person goes back to
+  // the agent rather than being left with nobody.
+  jobs.on(HANDOVER_IDLE_JOB, async (job) => {
+    const handoverId = (job.payload as { handoverId?: unknown }).handoverId
+    if (typeof handoverId !== "string") return
+    const what = await handovers.endIfIdle({ handoverId })
+    if (what === "nothing") return
+    await events.record("job_ran", { job: HANDOVER_IDLE_JOB, handoverId, did: what })
+  })
 
   /**
    * CONF-2 and CONF-8: what the brain is told about a confirmation the core

@@ -1,5 +1,5 @@
-// HAND-1 to HAND-5: opening a handover, taking it, and the two directions
-// a message travels while it is open.
+// HAND-1 to HAND-7: opening a handover, taking it, the two directions a
+// message travels while it is open, and the two clocks that end it.
 //
 // A handover is the one state in this core where the agent stops being the
 // thing that answers. Everything here is therefore written so that the
@@ -27,6 +27,14 @@
 // apology has to see those words arrive, not a brain's idea of them. So
 // `relay` touches nothing, and the only question the core asks is which
 // conversation the words belong to, which is the operator's focus.
+//
+// HAND-6 and HAND-7 are the two clocks, and both exist for the same
+// reason: a handover is a promise that a person will reply, and nobody
+// should be able to forget it. The first says what happens when nobody
+// comes, and it never gives up: the person is told once more and the
+// operators are reminded every hour they are open. The second says what
+// happens when a colleague walks away mid conversation, and it hands the
+// person back to the agent rather than leaving them with nobody.
 import type { OpenboxConfig } from "../config/index.ts"
 import {
   isUniqueViolation,
@@ -37,6 +45,7 @@ import {
 } from "../store/index.ts"
 import type { Question } from "../providers/decision/types.ts"
 import type { Clock } from "../testing/clock.ts"
+import { createTimeHelpers } from "../time/index.ts"
 import type { EventWriter } from "./events.ts"
 import type { Outbox } from "./outbox.ts"
 
@@ -90,6 +99,22 @@ export function asCommand(text: string): string {
 
 /** HAND-2: what the person is told, once, the moment it opens. */
 export const PERSON_TOLD = "I am passing this to a colleague. Somebody will reply here shortly."
+
+/**
+ * HAND-6: what the person is told when the ten minutes run out.
+ *
+ * It does not promise a time, because nobody has taken it and so
+ * nobody knows. What it does is say out loud that they have not been
+ * forgotten, which is the thing a person waiting actually doubts.
+ */
+export const PERSON_WAITED =
+  "Sorry to keep you waiting. Somebody will get back to you as soon as they can."
+
+/** HAND-6's job: a handover nobody has taken. */
+export const HANDOVER_WAITING_JOB = "handover_waiting"
+
+/** HAND-7's job: an active handover with nothing said in it. */
+export const HANDOVER_IDLE_JOB = "handover_idle"
 
 /** HAND-7: what the brain is told on the way back, in the history. */
 export const BACK_WITH_BOT =
@@ -160,6 +185,16 @@ export interface HandoverOptions {
         reason: HandoverReason
       }) => Promise<{ text: string; costUsd: number } | undefined>)
     | undefined
+  /**
+   * HAND-6: when to look again at a handover nobody has taken.
+   *
+   * Injected, because a job is the agent's machinery and this module is
+   * the rules. Absent in a test driving the rules directly, which is why
+   * both of these are optional rather than required.
+   */
+  scheduleWaiting?: ((handover: HandoverRow, runAt: Date) => Promise<void>) | undefined
+  /** HAND-7: when to check an active handover for silence. */
+  scheduleIdle?: ((handover: HandoverRow, runAt: Date) => Promise<void>) | undefined
 }
 
 export interface Opened {
@@ -175,6 +210,22 @@ export type Taken =
   | { kind: "none" }
 
 export type Resumed = { kind: "resumed"; handover: HandoverRow } | { kind: "none" }
+
+/** What HAND-6's job did, which is mostly nothing and says why. */
+export type Waited =
+  /** The ten minutes ran out: the person was told, the status moved. */
+  | "told"
+  /** HAND-6's repeat: the operators were reminded. */
+  | "alerted"
+  /** Open hours only. Nobody is woken for this. */
+  | "closed"
+  /** Taken, ended, or not due yet. A later job has it. */
+  | "nothing"
+  /** The handover is gone, so nothing is scheduled again. */
+  | "gone"
+
+/** What HAND-7's job did. */
+export type Ended = "ended" | "nothing"
 
 export interface Handovers {
   /** LOOP-5 step 5: the handover this person is in, if any. */
@@ -210,6 +261,13 @@ export interface Handovers {
   takeOver(request: { operator: PersonRow; person?: PersonRow | undefined }): Promise<Taken>
   /** HAND-7's first half: back to the bot. Its timeout is T6.4. */
   resume(request: { operator: PersonRow; person?: PersonRow | undefined }): Promise<Resumed>
+  /**
+   * HAND-6: what the waiting job does. Idempotent, and safe to run
+   * early or twice: it decides from the rows, not from being called.
+   */
+  waitedTooLong(request: { handoverId: string }): Promise<Waited>
+  /** HAND-7's second half: the idle timeout, run by its job. */
+  endIfIdle(request: { handoverId: string }): Promise<Ended>
   /** HAND-3: everyone who could take one. */
   operators(): Promise<PersonRow[]>
 }
@@ -218,7 +276,10 @@ export interface Handovers {
 const OPEN: HandoverRow["status"][] = ["waiting", "active", "unanswered"]
 
 export function createHandovers(options: HandoverOptions): Handovers {
-  const { store, clock, events, outbox } = options
+  const { config, store, clock, events, outbox } = options
+  // TIME-2: one answer to whether the agent is open, shared with every
+  // other part of the core that asks.
+  const time = createTimeHelpers({ config, clock })
 
   // Oldest first, and by when they were made an operator: ob_people has no
   // sequence, because a person is found by their channel id and never by
@@ -226,14 +287,70 @@ export function createHandovers(options: HandoverOptions): Handovers {
   const operators = (): Promise<PersonRow[]> =>
     store.people.list({ role: "operator" }, { orderBy: "created_at" })
 
+  /** HAND-7: the next time this handover could have gone quiet. */
+  const scheduleIdle = (handover: HandoverRow): Promise<void> =>
+    options.scheduleIdle?.(
+      handover,
+      new Date(clock.now().getTime() + config.handover.idleMinutes * 60_000),
+    ) ?? Promise.resolve()
+
   const openFor = async (person: { id: string }): Promise<HandoverRow | undefined> => {
     const rows = await store.handovers.list({ person_id: person.id }, { orderBy: "seq" })
     return rows.find((row) => OPEN.includes(row.status))
   }
 
+  /** How long this handover has been open, in whole minutes. */
+  const waitedMinutes = (handover: HandoverRow): number =>
+    Math.max(
+      0,
+      Math.floor((clock.now().getTime() - new Date(handover.opened_at).getTime()) / 60_000),
+    )
+
+  /**
+   * One of the core's own two messages to the person, sent and stored.
+   *
+   * Stored as well as sent, because LOOP-7 gives the brain the
+   * conversation and the person can see these lines in their chat. A
+   * brain that cannot see them will say one of them a second time.
+   *
+   * Both callers write under a claim that only one process wins, so
+   * neither the send nor the row can happen twice.
+   */
+  async function tell(
+    person: PersonRow,
+    text: string,
+    key: string,
+    turnId?: string | undefined,
+  ): Promise<void> {
+    await outbox.queue({
+      personId: person.id,
+      ...(turnId !== undefined ? { turnId } : {}),
+      kind: "reply",
+      channel: person.channel,
+      channelUserId: person.channel_user_id,
+      text,
+      idempotencyKey: key,
+      urgent: true,
+    })
+    await store.messages.insert({
+      person_id: person.id,
+      ...(turnId !== undefined ? { turn_id: turnId } : {}),
+      direction: "outbound",
+      author: "agent",
+      text,
+      channel: person.channel,
+      created_at: clock.now().toISOString(),
+    })
+  }
+
   /** HAND-2: everything an operator needs to decide whether to pick it up. */
-  function alertText(handover: HandoverRow, person: PersonRow): string {
+  function alertText(handover: HandoverRow, person: PersonRow, again = false): string {
     const lines = [
+      // HAND-6: a reminder says so, and says how long, because an
+      // operator who has seen this alert twice needs to know which it is.
+      ...(again
+        ? [`Still waiting after ${waitedMinutes(handover)} minutes, nobody has taken this.`]
+        : []),
       `Handover: ${nameOf(person)}`,
       `Why: ${WHY[handover.reason]}${handover.detail === null ? "" : ` - ${handover.detail}`}`,
     ]
@@ -246,10 +363,20 @@ export function createHandovers(options: HandoverOptions): Handovers {
     return lines.join("\n\n")
   }
 
-  /** One alert per operator per handover, however many times this runs. */
-  async function alert(handover: HandoverRow, person: PersonRow): Promise<number> {
+  /**
+   * One alert per operator per handover, however many times this runs.
+   *
+   * HAND-6's reminder is a second alert on purpose, so it carries the
+   * moment it was sent in its key. Without that the outbox would drop
+   * it as a duplicate of the first and the reminder would be silent.
+   */
+  async function alert(
+    handover: HandoverRow,
+    person: PersonRow,
+    again?: { since: string },
+  ): Promise<number> {
     const told = await operators()
-    const text = alertText(handover, person)
+    const text = alertText(handover, person, again !== undefined)
 
     for (const operator of told) {
       await outbox.queue({
@@ -259,8 +386,14 @@ export function createHandovers(options: HandoverOptions): Handovers {
         channel: operator.channel,
         channelUserId: operator.channel_user_id,
         text,
-        idempotencyKey: `handover:${handover.id}:alert:${operator.id}`,
-        urgent: true,
+        idempotencyKey:
+          again === undefined
+            ? `handover:${handover.id}:alert:${operator.id}`
+            : `handover:${handover.id}:alert:${operator.id}:${again.since}`,
+        // The first one interrupts. A reminder takes its turn, because
+        // the operator it is reminding may be mid conversation with
+        // somebody else.
+        urgent: again === undefined,
       })
     }
     return told.length
@@ -306,16 +439,14 @@ export function createHandovers(options: HandoverOptions): Handovers {
 
     // HAND-2: the person is told first. They are the one waiting, and the
     // summary below can take a brain call.
-    await outbox.queue({
-      personId: person.id,
-      ...(request.turnId !== undefined ? { turnId: request.turnId } : {}),
-      kind: "reply",
-      channel: person.channel,
-      channelUserId: person.channel_user_id,
-      text: PERSON_TOLD,
-      idempotencyKey: `handover:${row.id}:person`,
-      urgent: true,
-    })
+    await tell(person, PERSON_TOLD, `handover:${row.id}:person`, request.turnId)
+
+    // HAND-6: the clock starts the moment it opens, and runs whether or
+    // not anything below this line works.
+    await options.scheduleWaiting?.(
+      row,
+      new Date(clock.now().getTime() + config.handover.noOperatorMinutes * 60_000),
+    )
 
     // HAND-2: the brain's one job in a handover. A failure here costs the
     // alert its summary and nothing else.
@@ -379,6 +510,7 @@ export function createHandovers(options: HandoverOptions): Handovers {
         { id: wanted.id },
         { focused_at: clock.now().toISOString() },
       )
+      await scheduleIdle(again ?? wanted)
       return { kind: "taken", handover: again ?? wanted }
     }
 
@@ -408,6 +540,9 @@ export function createHandovers(options: HandoverOptions): Handovers {
 
     const person = await store.people.byId(claimed.person_id)
 
+    // HAND-7: the silence is measured from here.
+    await scheduleIdle(claimed)
+
     await events.about({ personId: claimed.person_id }).record("handover_taken", {
       handoverId: claimed.id,
       operatorId: request.operator.id,
@@ -433,6 +568,54 @@ export function createHandovers(options: HandoverOptions): Handovers {
     return { kind: "taken", handover: claimed }
   }
 
+  /**
+   * HAND-7: the one way a handover closes, for either of its reasons.
+   *
+   * One conditional claim (DATA-4), so an operator saying `resume` at the
+   * same moment the idle job fires produces one close, one note in the
+   * history and one event rather than two of each.
+   */
+  async function closeWith(
+    row: HandoverRow,
+    why: "resume" | "idle",
+    by?: string,
+  ): Promise<HandoverRow | undefined> {
+    const [closed] = await store.handovers.update(
+      { id: row.id },
+      {
+        status: "closed",
+        ended_reason: why,
+        ended_at: clock.now().toISOString(),
+      },
+      { isIn: { status: OPEN } },
+    )
+    if (closed === undefined) return undefined
+
+    // HAND-7: the brain gets a note that a handover happened. Stored as a
+    // notice, so the next turn's history carries it and the brain cannot
+    // answer as though it had been there all along.
+    await store.messages.insert({
+      person_id: closed.person_id,
+      direction: "inbound",
+      author: "notice",
+      text: BACK_WITH_BOT,
+      channel: (await store.people.byId(closed.person_id))?.channel ?? "",
+      created_at: clock.now().toISOString(),
+    })
+
+    await events.about({ personId: closed.person_id }).record("handover_ended", {
+      handoverId: closed.id,
+      why,
+      ...(by !== undefined ? { operatorId: by } : {}),
+      heldMinutes:
+        closed.taken_at === null
+          ? 0
+          : Math.floor((clock.now().getTime() - new Date(closed.taken_at).getTime()) / 60_000),
+    })
+
+    return closed
+  }
+
   async function resume(request: {
     operator: PersonRow
     person?: PersonRow | undefined
@@ -446,35 +629,8 @@ export function createHandovers(options: HandoverOptions): Handovers {
 
     if (wanted === undefined) return { kind: "none" }
 
-    const [closed] = await store.handovers.update(
-      { id: wanted.id },
-      {
-        status: "closed",
-        ended_reason: "resume",
-        ended_at: clock.now().toISOString(),
-      },
-      { isIn: { status: OPEN } },
-    )
-    if (closed === undefined) return { kind: "none" }
-
-    // HAND-7: the brain gets a note that a handover happened. Stored as a
-    // notice, so the next turn's history carries it and the brain cannot
-    // answer as though it had been there all along.
-    await store.messages.insert({
-      person_id: closed.person_id,
-      direction: "inbound",
-      author: "notice",
-      text: BACK_WITH_BOT,
-      channel: (await store.people.byId(closed.person_id))?.channel ?? "",
-    })
-
-    await events.about({ personId: closed.person_id }).record("handover_ended", {
-      handoverId: closed.id,
-      why: "resume",
-      operatorId: request.operator.id,
-    })
-
-    return { kind: "resumed", handover: closed }
+    const closed = await closeWith(wanted, "resume", request.operator.id)
+    return closed === undefined ? { kind: "none" } : { kind: "resumed", handover: closed }
   }
 
   /**
@@ -547,6 +703,10 @@ export function createHandovers(options: HandoverOptions): Handovers {
       })
       sent++
     }
+    // HAND-7: a colleague who is typing has not walked away.
+    if (sent > 0 && request.handover.status === "active") {
+      await scheduleIdle(request.handover)
+    }
     return sent
   }
 
@@ -591,8 +751,173 @@ export function createHandovers(options: HandoverOptions): Handovers {
         sent++
       }
     }
+    // HAND-7: the person speaking is not silence either, so the half
+    // hour starts again from here.
+    if (handover.status === "active") await scheduleIdle(handover)
     return sent
   }
 
-  return { openFor, open, takeOver, resume, operators, focusOf, relay, forward }
+  /**
+   * HAND-7: when either side last said anything in this conversation.
+   *
+   * Two bounded reads rather than one, because `Where` has no OR and a
+   * read that needs one is a read nobody can check. Notices are not
+   * words from either side, so they do not count: the core telling the
+   * person it is passing them on must not look like the colleague
+   * replying.
+   *
+   * The floor is when it was taken. A colleague who takes one and says
+   * nothing has still been silent for however long.
+   */
+  async function lastWord(row: HandoverRow): Promise<number> {
+    const latest = async (author: string): Promise<number> => {
+      const [found] = await store.messages.list(
+        { person_id: row.person_id, author },
+        { orderBy: "seq", ascending: false, limit: 1 },
+      )
+      return found === undefined ? 0 : new Date(found.created_at).getTime()
+    }
+
+    return Math.max(
+      new Date(row.taken_at ?? row.opened_at).getTime(),
+      await latest("person"),
+      await latest("operator"),
+    )
+  }
+
+  /**
+   * HAND-6: a handover nobody has taken, ten minutes on and every hour
+   * after that.
+   *
+   * Everything is decided from the rows, so running this early, late or
+   * twice is safe, and a job that finds nothing to do says why. Both
+   * transitions are conditional updates (DATA-4), because two processes
+   * running the same job must not tell the person twice.
+   */
+  async function waitedTooLong(request: { handoverId: string }): Promise<Waited> {
+    const row = await store.handovers.byId(request.handoverId)
+    if (row === null) return "gone"
+    if (row.status === "active" || row.status === "closed") return "nothing"
+
+    const now = clock.now()
+    const repeatMs = config.handover.alertRepeatMinutes * 60_000
+
+    if (row.status === "waiting") {
+      const due = new Date(row.opened_at).getTime() + config.handover.noOperatorMinutes * 60_000
+      // Early. Whatever scheduled this asked for the wrong time, so ask
+      // for the right one rather than acting now.
+      if (due > now.getTime()) {
+        await options.scheduleWaiting?.(row, new Date(due))
+        return "nothing"
+      }
+
+      const [changed] = await store.handovers.update(
+        { id: row.id, status: "waiting" },
+        { status: "unanswered", alerted_at: now.toISOString() },
+      )
+      if (changed === undefined) return "nothing"
+
+      const person = await store.people.byId(changed.person_id)
+      if (person !== null) {
+        // HAND-6: the person first. They are the one who has been
+        // waiting, and they are owed the truth: nobody has come yet.
+        await tell(person, PERSON_WAITED, `handover:${changed.id}:waited`)
+        await alert(changed, person, { since: now.toISOString() })
+      }
+
+      await events.about({ personId: changed.person_id }).record("handover_unanswered", {
+        handoverId: changed.id,
+        reason: changed.reason,
+        waitedMinutes: waitedMinutes(changed),
+      })
+
+      // HAND-6: it stays open, so the next reminder is already booked.
+      await options.scheduleWaiting?.(changed, new Date(now.getTime() + repeatMs))
+      return "told"
+    }
+
+    // HAND-6's hourly reminder, for a handover already `unanswered`.
+    const since = new Date(row.alerted_at ?? row.opened_at).getTime()
+    if (since + repeatMs > now.getTime()) {
+      await options.scheduleWaiting?.(row, new Date(since + repeatMs))
+      return "nothing"
+    }
+
+    // HAND-6: during opening hours only. Outside them the reminder is
+    // skipped rather than queued, because an operator woken at three in
+    // the morning by a bot learns to mute it.
+    if (!time.isOpen(now)) {
+      await options.scheduleWaiting?.(row, new Date(now.getTime() + repeatMs))
+      return "closed"
+    }
+
+    const [stamped] = await store.handovers.update(
+      { id: row.id, status: "unanswered" },
+      { alerted_at: now.toISOString() },
+      { lte: { alerted_at: new Date(since).toISOString() } },
+    )
+    if (stamped === undefined) return "nothing"
+
+    const person = await store.people.byId(stamped.person_id)
+    if (person !== null) await alert(stamped, person, { since: now.toISOString() })
+    await options.scheduleWaiting?.(stamped, new Date(now.getTime() + repeatMs))
+    return "alerted"
+  }
+
+  /**
+   * HAND-7: an active handover with nothing said in it for half an hour
+   * goes back to the agent.
+   *
+   * The person is not told, because from where they sit nothing has
+   * happened: the next thing they say is answered, which is better than
+   * silence. The operator is told, because they think they still have
+   * it, and the next thing they type would otherwise go to the agent
+   * instead of to the person (HAND-4).
+   */
+  async function endIfIdle(request: { handoverId: string }): Promise<Ended> {
+    const row = await store.handovers.byId(request.handoverId)
+    if (row === null || row.status !== "active") return "nothing"
+
+    const silentSince = await lastWord(row)
+    const due = silentSince + config.handover.idleMinutes * 60_000
+    // Somebody spoke after this job was scheduled, so a later job has it.
+    if (due > clock.now().getTime()) {
+      await options.scheduleIdle?.(row, new Date(due))
+      return "nothing"
+    }
+
+    const closed = await closeWith(row, "idle")
+    if (closed === undefined) return "nothing"
+
+    const operator =
+      closed.operator_id === null ? null : await store.people.byId(closed.operator_id)
+    const person = await store.people.byId(closed.person_id)
+    if (operator !== null) {
+      await outbox.queue({
+        personId: operator.id,
+        kind: "operator_alert",
+        channel: operator.channel,
+        channelUserId: operator.channel_user_id,
+        text: `${
+          person === null ? "That handover" : nameOf(person)
+        } has gone back to the agent after ${config.handover.idleMinutes} minutes with nothing said. What you type now goes to the agent, not to them.`,
+        idempotencyKey: `handover:${closed.id}:idle:${operator.id}`,
+      })
+    }
+
+    return "ended"
+  }
+
+  return {
+    openFor,
+    open,
+    takeOver,
+    resume,
+    operators,
+    focusOf,
+    relay,
+    forward,
+    waitedTooLong,
+    endIfIdle,
+  }
 }
