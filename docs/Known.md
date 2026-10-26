@@ -466,3 +466,38 @@ change what the skill is allowed to accept.
 **What would resolve it.** One conversation with a lawyer, with the seven
 questions above, and then a decisions log row per answer and whatever Spec
 changes they imply. Before M9, which is five milestones out.
+
+---
+
+## K16. Four brains ship, not the five Intent names
+
+**Status:** open by decision. Resolved by building T5.3, which now sits in After
+release.
+
+**What happens.** Intent goal 2 names five brains: OpenRouter, the Claude Agent
+SDK, the OpenAI Agents SDK, Claude Code and Codex. The OpenAI Agents SDK is
+parked at the builder's decision, on usage limits and reasoning quality. Intent
+is never edited, so it still says five and four exist.
+
+**What it costs.** Less than the sentence above suggests.
+
+- OpenAI's models are still reachable, through OpenRouter. What is parked is one
+  vendor specific code path, not access to GPT.
+- The OpenAI Decisions API is a different dependency, is built, and is tested.
+  C3 is unaffected.
+- BRAIN-5's fallback chain still has two production brains, and OpenRouter
+  itself fronts many vendors.
+
+What is actually lost is the SDK's own features, whatever they turn out to be
+worth, and C2's claim that the same conversation runs on five brains rather than
+four.
+
+**What we did.** `openai-agents` stays a valid config id with its env key
+reserved, and `providersFromConfig` already says plainly that its adapter is not
+built rather than failing obscurely. C2's bar was reworded to the brains that
+exist, because the blocker is a vendor improving and that has no date, and a
+milestone that cannot close would hold M6 to M9 behind it.
+
+**What would resolve it.** T5.3, which is one `ask` function on T5.1's adapter
+plus its section 23 check. The adapter is the part that was expensive and it is
+already done, so this is cheap whenever it is wanted.

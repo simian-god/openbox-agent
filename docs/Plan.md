@@ -194,13 +194,12 @@ Each task lists the Spec IDs it implements. **Done when** is the bar for closing
 |---|---|---|
 | T5.1 | Shared structured output adapter for brains without native tool calling | BRAIN-2 |
 | T5.2 | Claude Agent SDK brain: check one turn structured output with no built in tools | BRAIN-1, Spec 23 |
-| T5.3 | OpenAI Agents SDK brain | BRAIN-1 |
 | T5.4 | Claude Code CLI and Codex CLI brains: check the flag combinations, including spawning on Windows | BRAIN-1, Spec 23 |
 | T5.5 | Fallback chain, dropping extra tool calls, refusing CLI brains in production | BRAIN-3, BRAIN-4, BRAIN-5 |
 | T5.6 | Conformance suite: one scripted conversation run on all five brains. Live and opt in | C2 |
 | T5.7 | Suite stability: find the intermittent integration stall (Known K14). Make a failing turn say what it was waiting on, prove no agent outlives its test file, then separate load from logic | Known K14, TEST-1 |
 
-**Done when:** C2 passes, and three consecutive full `bun run check` runs are clean. M5 adds four brains and a conformance suite on top of a suite that already stalls now and then (K14), so this is the milestone to stop guessing about it.
+**Done when:** C2 passes on the four brains that are built, and three consecutive full `bun run check` runs are clean. M5 adds four brains and a conformance suite on top of a suite that already stalls now and then (K14), so this is the milestone to stop guessing about it.
 
 ### M6. Handover and operators
 
@@ -277,6 +276,10 @@ Each task lists the Spec IDs it implements. **Done when** is the bar for closing
 **Done when:** C20, C23, C24 and C25 pass, and Review.md is written.
 
 ### After release
+
+| Task | What | Spec |
+|---|---|---|
+| T5.3 | OpenAI Agents SDK brain, when it is worth having. One `ask` function on T5.1's adapter, plus its section 23 check. Parked at the builder's call, see Known K16 | BRAIN-1, Spec 23 |
 
 C1 (the second agent ships with zero core changes) can only be checked by building real agents. Build the restaurant agent, then the dentist agent, and record every core change either one needed in Review.md.
 
@@ -422,3 +425,4 @@ Every change to Spec made during the build goes here, with the date, the Spec ID
 | 2026-10-26 | Spec 23 | Three of the SDK's defaults are overridden, and two of them fail silently | `settingSources` loads `~/.claude/settings.json`, the project's settings and CLAUDE.md unless passed `[]`, so an agent's answers would otherwise depend on whose machine it ran on. `env` replaces the subprocess environment rather than merging, so passing a key alone takes `PATH` away. And the SDK's own docs say its list of built in tool names is incomplete and "cannot stand for every tool", so tools are denied with an empty allow list rather than a deny list |
 | 2026-10-26 | BRAIN-1 | The subprocess runs on Bun by default | The core only runs on Bun, which is a constraint rather than a preference, so Bun is the one runtime guaranteed to be on the machine. Letting the SDK choose would mean a brain that works in development and cannot start on a server without node |
 | 2026-10-26 | BRAIN-2 | The SDK's structured output is handed to the shared reader, not trusted | It arrives as an object and is stringified so the same reader validates it on the same rules as every other brain. One reader means a tool that was never offered is caught the same way everywhere, rather than trusted because this particular SDK produced it |
+| 2026-10-26 | BRAIN-1, C2, Plan M5 | The OpenAI Agents SDK is parked, and C2's bar becomes the brains that are built | The builder's call, on usage limits and reasoning quality. It costs less than it reads: OpenRouter already reaches OpenAI's models, so what is parked is one vendor specific code path rather than access to GPT, and the OpenAI Decisions API is a separate dependency that stays built and tested. BRAIN-5's fallback chain still has two production brains. C2 is reworded rather than left failing because the blocker is a vendor improving, which has no date, and a milestone that cannot close would hold M6 to M9 behind it. Intent's goal 2 still names five and is never edited, so the gap stays visible there and in Known K16. T5.3 moves to After release |
