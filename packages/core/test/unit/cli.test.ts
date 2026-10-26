@@ -29,6 +29,24 @@ test("cli: a flag before the command is still read", () => {
   expect(flags.get("database-url")).toBe("postgres://x/y")
 })
 
+test("ROLE-2: the words after the command are kept, in order", () => {
+  // `openbox operator add whatsapp 9198...` is a command and three words.
+  // A flag for each would be a worse way to write the same thing, so the
+  // parser keeps the bare words and the command stays the first of them.
+  const { command, args, flags } = parseArgs([
+    "operator",
+    "add",
+    "whatsapp",
+    "919812345678",
+    "--dir",
+    "agents/restaurant",
+  ])
+
+  expect(command).toBe("operator")
+  expect(args).toEqual(["operator", "add", "whatsapp", "919812345678"])
+  expect(flags.get("dir")).toBe("agents/restaurant")
+})
+
 test("cli: no arguments means no command", () => {
   expect(parseArgs([]).command).toBeUndefined()
 })

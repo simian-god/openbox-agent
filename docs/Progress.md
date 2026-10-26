@@ -4,7 +4,7 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** T6.1. The M5 check is `blocked` on the live conformance run, which needs an Anthropic key (see "Waiting on you"), and the M3 check row stays `blocked` until T11.1.
+**Next task:** T6.2. The M5 check is `blocked` on the live conformance run, which needs an Anthropic key (see "Waiting on you"), and the M3 check row stays `blocked` until T11.1.
 
 ## Waiting on you
 
@@ -93,7 +93,7 @@ expensive the later they happen.
 
 | Task | What | Status | Date | Note |
 |---|---|---|---|---|
-| T6.1 | Operator role, `openbox operator add`, role filtering, blocking, operator tools | todo | | |
+| T6.1 | Operator role, `openbox operator add`, role filtering, blocking, operator tools | done | 2026-10-26 | Three things, and the smallest of them took the most care. ROLE-4: a blocked person's messages are stored and get no reply, checked first of all, before the confirmation path and before any context is read. That order is the point: a pending action from before the block cannot be confirmed by someone who has since been blocked, and a blocked person costs no brain call, no decision request and no reads. The turn is still recorded, with outcome `blocked`, and that outcome is deliberately not one of the unanswered ones, because the message was handled correctly by not being answered and the recovery sweep must leave it alone. ROLE-2: `openbox operator add <channel> <id>`, the only way an operator is made apart from the seed, which promotes someone who has already written in place so their history, facts and tasks stay theirs. The parser now keeps the bare words after the command, since `operator add whatsapp 9198...` is three of them. Section 10's three operator tools: `block`, `unblock` and `flag`, offered to nobody but an operator (ROLE-3). They name a person by their id on the channel, the channel defaulting to the operator's own, and nothing is created by naming someone: an id that has never written is reported, not blocked. `block` refuses to block an operator, including the one asking, which the Spec does not say and which follows from ROLE-2: an agent that could be talked into locking its own operators out would undo the rule in one message. All three are declared `read`, like `remember` and `start_task`, because risk is what the gate reads and BUILTIN-1 says only `erase_person` is gated; the reason an operator gives is recorded anyway, in the tool run's arguments. Nineteen tests, twelve probes, all caught. Also ran the real command against the local database, both paths, and took the row back out. |
 | T6.2 | Handover states and every trigger: `escalate`, `wants_human`, repeat rules | todo | | |
 | T6.3 | Operator focus, word for word relay, `/` commands | todo | | |
 | T6.4 | Waiting and idle timeouts as jobs | todo | | |

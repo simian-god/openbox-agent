@@ -112,8 +112,11 @@ export interface TurnResult {
    * `failed` is not produced here. `createAgent` uses it for a turn that
    * ended in a way the core did not plan for, so a caller of
    * `receiveAndWait` gets a result rather than a rejection.
+   *
+   * Nor is `blocked`. LOOP-5's first check runs before anything in this
+   * file, so a blocked person's turn never reaches it (ROLE-4).
    */
-  outcome: "replied" | "no_reply" | "step_cap" | "brains_failed" | "failed"
+  outcome: "replied" | "no_reply" | "step_cap" | "brains_failed" | "failed" | "blocked"
   /** Set only when the outcome is `failed`. */
   error?: string | undefined
 }

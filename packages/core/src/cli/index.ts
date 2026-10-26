@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
-// The `openbox` command. Four subcommands by the end; `migrate` was the
-// first. Hand written argument parsing, since four commands need no
-// framework.
+// The `openbox` command. `migrate` was the first. Hand written argument
+// parsing, since a handful of commands need no framework.
 //
 // Nothing imports this file: it is the executable, and each command lives
 // in its own module. `chat` loads the agent project, which imports
@@ -13,6 +12,7 @@ import { join } from "node:path"
 import { migrate, MigrateError } from "../migrate/index.ts"
 import { runChat } from "./chat.ts"
 import { runTune } from "./tune.ts"
+import { runOperator } from "./operator.ts"
 
 const USAGE = `openbox - tools for an openbox-agent project
 
@@ -20,6 +20,8 @@ Usage:
   openbox migrate [options]    apply the core migrations, then the agent's
   openbox chat [options]       talk to the agent in this folder
   openbox tune [options]       measure where the routing threshold belongs
+  openbox operator add <channel> <id>
+                               make someone an operator of this agent
 
 Options for migrate:
   --database-url <url>   Postgres connection. Defaults to DATABASE_URL
@@ -40,12 +42,27 @@ Options for tune:
   --write                set routeThreshold in agent.config.ts. Off by
                          default: nothing changes the agent unless you say so
 
+Options for operator:
+  --dir <dir>            the agent project. Defaults to this folder
+  --config <file>        defaults to agent.config.ts
+
   --help                 show this
 `
 
-/** Reads --name value pairs and bare flags. */
-export function parseArgs(argv: string[]): { command?: string; flags: Map<string, string> } {
+/**
+ * Reads --name value pairs, bare flags, and the words in between.
+ *
+ * `args` is every bare word in order, the command first, because
+ * `operator add whatsapp 9198...` is three of them and a flag for each
+ * would be a worse way to write the same thing.
+ */
+export function parseArgs(argv: string[]): {
+  command?: string
+  args: string[]
+  flags: Map<string, string>
+} {
   const flags = new Map<string, string>()
+  const args: string[] = []
   let command: string | undefined
 
   for (let i = 0; i < argv.length; i++) {
@@ -61,12 +78,13 @@ export function parseArgs(argv: string[]): { command?: string; flags: Map<string
       } else {
         flags.set(name, "true")
       }
-    } else if (command === undefined) {
-      command = arg
+    } else {
+      args.push(arg)
+      if (command === undefined) command = arg
     }
   }
 
-  return command === undefined ? { flags } : { command, flags }
+  return command === undefined ? { args, flags } : { command, args, flags }
 }
 
 async function runMigrate(flags: Map<string, string>): Promise<number> {
@@ -102,7 +120,7 @@ async function runMigrate(flags: Map<string, string>): Promise<number> {
 }
 
 export async function run(argv: string[]): Promise<number> {
-  const { command, flags } = parseArgs(argv)
+  const { command, args, flags } = parseArgs(argv)
 
   if (command === undefined || flags.has("help")) {
     console.log(USAGE)
@@ -136,6 +154,13 @@ export async function run(argv: string[]): Promise<number> {
         ...(flags.has("write") ? { write: true } : {}),
       })
     }
+    case "operator":
+      return runOperator({
+        // Everything after `operator`, so the subcommand and its two words.
+        args: args.slice(1),
+        ...(flags.has("dir") ? { dir: flags.get("dir") } : {}),
+        ...(flags.has("config") ? { config: flags.get("config") } : {}),
+      })
     default:
       console.error(`Unknown command: ${command}\n`)
       console.log(USAGE)

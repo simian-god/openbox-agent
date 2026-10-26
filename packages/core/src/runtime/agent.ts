@@ -25,6 +25,7 @@ import {
 import { createToolRegistry, type Tool, type ToolRegistry } from "../tools/index.ts"
 import { taskTools, openTasks, TASK_EXPIRE_JOB } from "../tools/tasks.ts"
 import { factTools, factsFor } from "../tools/facts.ts"
+import { operatorTools } from "../tools/operator.ts"
 import type { TaskRow } from "../store/index.ts"
 import type { Clock } from "../testing/clock.ts"
 import { systemClock } from "../testing/clock.ts"
@@ -171,6 +172,23 @@ export interface Agent {
  */
 const UNANSWERED = new Set<TurnResult["outcome"]>(["failed", "brains_failed", "step_cap"])
 
+/**
+ * ROLE-4: what a blocked person's turn did, which is nothing.
+ *
+ * Not in UNANSWERED above: the message was handled correctly by not
+ * being answered, so the recovery sweep must leave it alone.
+ */
+const blockedTurn = (): TurnResult => ({
+  steps: 0,
+  costUsd: 0,
+  brainsUsed: [],
+  toolsRun: [],
+  routed: [],
+  droppedCalls: [],
+  handoverDue: [],
+  outcome: "blocked",
+})
+
 /** One reply per set of messages answered, however many turns it takes. */
 export function replyKey(inboxIds: string[]): string {
   const of = [...inboxIds].sort().join(",")
@@ -194,6 +212,15 @@ export function createAgent(options: AgentOptions): Agent {
   let taskChanged: ((task: TaskRow, why: string) => Promise<void>) | undefined
   let scheduleTaskExpiry: ((task: TaskRow) => Promise<void>) | undefined
 
+  // Before the tools, because an operator tool writes a flag (LEARN-1)
+  // and nothing here depends on the tools in return.
+  const events = createEvents({
+    store,
+    clock,
+    sink: deps.events,
+    onError: options.onEventError,
+  })
+
   const tools = createToolRegistry([
     ...(options.tools ?? []),
     // Section 10: `remember` and `forget_fact`, for every agent. Unlike
@@ -201,6 +228,11 @@ export function createAgent(options: AgentOptions): Agent {
     // people, and a person who says they are allergic to peanuts has said
     // something worth keeping whatever the agent is for.
     ...factTools({ store, clock: deps.clock ?? systemClock }),
+    // Section 10: `block`, `unblock` and `flag`. For every agent too,
+    // and offered to nobody but an operator (ROLE-3). An agent with no
+    // operators yet is an agent whose builder has not run
+    // `openbox operator add` yet, which is not something to decide here.
+    ...operatorTools({ store, events }),
     ...(hasTaskTypes
       ? taskTools({
           config,
@@ -211,12 +243,6 @@ export function createAgent(options: AgentOptions): Agent {
         })
       : []),
   ])
-  const events = createEvents({
-    store,
-    clock,
-    sink: deps.events,
-    onError: options.onEventError,
-  })
 
   // CFG-1's last rule needs the tools, which config alone cannot see.
   const problems =
@@ -740,6 +766,19 @@ export function createAgent(options: AgentOptions): Agent {
       })),
     )
 
+    // LOOP-5 step 1, ROLE-4: a blocked person's messages are stored and
+    // get no reply. Stored is the half worth saying out loud: the rows
+    // written just above are the record, and an operator may want to
+    // read them.
+    //
+    // First, because LOOP-5 says the first check that applies decides
+    // the turn. So a pending action cannot be confirmed by someone who
+    // has since been blocked, and a blocked person costs no brain call,
+    // no decision request and no context reads at all.
+    if (person.blocked) {
+      return finish(blockedTurn(), turnRow, turnEvents, startedAt, batch.length)
+    }
+
     // CONF-4 and CONF-8: a confirmation is not a message for the brain.
     // It is resolved here, before the brain is asked anything, and what
     // happened goes into the conversation as a notice so the brain can
@@ -819,7 +858,17 @@ export function createAgent(options: AgentOptions): Agent {
       await deliver(person, turnRow.id, inboxIds, result.reply)
     }
 
-    // LOOP-11: the turn records what it did.
+    return finish(result, turnRow, turnEvents, startedAt, batch.length)
+  }
+
+  /** LOOP-11 and EVT-2: what every turn records on the way out. */
+  async function finish(
+    result: TurnResult,
+    turnRow: { id: string },
+    turnEvents: EventWriter,
+    startedAt: Date,
+    messages: number,
+  ): Promise<TurnResult> {
     const latencyMs = clock.now().getTime() - startedAt.getTime()
     await store.turns.update(
       { id: turnRow.id },
@@ -840,7 +889,7 @@ export function createAgent(options: AgentOptions): Agent {
       brains: result.brainsUsed,
       replied: result.reply !== undefined,
       toolsRun: result.toolsRun.length,
-      messages: batch.length,
+      messages,
     })
 
     return { ...result, turnId: turnRow.id }

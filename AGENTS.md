@@ -85,6 +85,13 @@ decision model key and no database:
   `--write` applies the result to `agent.config.ts`. Nothing is written
   without it.
 
+Making someone an operator of an agent (ROLE-2), which needs the database:
+
+- `bun packages/core/src/cli/index.ts operator add <channel> <id> --dir <agent>`
+  - the only way an operator is made, apart from the agent's own seed.
+  Never through chat. A person who has already written is promoted in
+  place, so their history, facts and tasks stay theirs.
+
 Talking to the demo agent, which needs the database and an OpenRouter key:
 
 - `bun packages/core/src/cli/index.ts chat --dir examples/demo-agent` - the terminal channel. `examples/demo-agent/README.md` has the environment it needs. Inside chat, `:help` lists its commands.
