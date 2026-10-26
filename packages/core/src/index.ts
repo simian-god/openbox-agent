@@ -207,6 +207,18 @@ export {
 } from "./testing/scripted-brain.ts"
 
 export {
+  runConformance,
+  conformanceConfig,
+  CONFORMANCE_PROMPT,
+  CONFORMANCE_DISH,
+  type ConformanceOptions,
+  type ConformanceReport,
+  type ConformanceStep,
+  type ConformanceBrainChoice,
+  type Check,
+} from "./testing/conformance.ts"
+
+export {
   createAgent,
   runTurn,
   route,
