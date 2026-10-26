@@ -159,7 +159,7 @@ offers. `id` ties a result to the call that asked for it.
 | Brain | Kind | How it's called |
 |---|---|---|
 | OpenRouter | api | Native tool calling over HTTP. |
-| Claude Agent SDK | api | API key, no built in tools, custom system prompt, structured output, one turn. |
+| Claude Agent SDK | api | API key, no built in tools, custom system prompt, structured output, one turn. Spawns its own bundled executable per call, so it is slower than a direct API call and needs a JS runtime on the machine. Still `api` rather than `cli`: it needs no separately installed command, and BRAIN-4 is about a brain that drives the builder's own tooling. |
 | OpenAI Agents SDK | api | API key, structured output, one turn. |
 | Claude Code CLI | cli | `claude -p` with prompt on stdin, `--bare --tools "" --system-prompt <text> --json-schema <schema> --output-format json --no-session-persistence --model <m>`. |
 | Codex CLI | cli | `codex exec -` with prompt on stdin, `--output-schema <file> -o <file> --sandbox read-only --skip-git-repo-check --ephemeral --ignore-user-config -m <m>`. |
@@ -807,7 +807,8 @@ A yes to 5 stops the flow: the skill says plainly that this is a stricter catego
 ## 23. To verify during the build
 
 - The exact request and response fields of the OpenAI Decisions API. It's in beta, and only secondary sources were read.
-- Structured output support in the Claude Agent SDK and OpenAI Agents SDK TypeScript packages, in one turn mode with no built in tools.
+- ~~Structured output support in the Claude Agent SDK~~, in one turn mode with no built in tools. Checked at T5.2 against `@anthropic-ai/claude-agent-sdk@0.3.310`: `outputFormat: { type: "json_schema", schema }` is supported and the answer arrives as `structured_output` on the result message rather than as assistant text. It spawns a subprocess per call. Three of its defaults have to be overridden: `settingSources` loads the machine's own Claude settings and CLAUDE.md unless given `[]`, `env` replaces the subprocess environment rather than merging, and its list of built in tool names is documented as incomplete so tools must be denied with an empty allow list rather than a deny list.
+- Structured output support in the OpenAI Agents SDK TypeScript package, in one turn mode with no built in tools.
 - Which Claude Code flags combine cleanly (`--bare` with `--tools ""` and `--json-schema`), and that no MCP or built in tool leaks in.
 - WhatsApp template and button rules at build time.
 - sqlite-vec support in evals-agent's world, before any agent relies on the pgvector retriever.

@@ -6,12 +6,19 @@
 import type { OpenboxConfig } from "../config/index.ts"
 import type { Brain } from "./brains/types.ts"
 import { openRouterBrain } from "./brains/openrouter.ts"
+import { claudeAgentSdkBrain } from "./brains/claude-agent-sdk.ts"
 import type { DecisionModel } from "./decision/types.ts"
 import { jevDecisionModel, type JevRoute } from "./decision/jev.ts"
 import { openaiDecisionsModel } from "./decision/openai-decisions.ts"
 
 export * from "./brains/types.ts"
 export { openRouterBrain, toWireMessages, readResponse } from "./brains/openrouter.ts"
+export {
+  claudeAgentSdkBrain,
+  DEFAULT_CLAUDE_MODEL,
+  type ClaudeAgentSdkOptions,
+  type SdkQuery,
+} from "./brains/claude-agent-sdk.ts"
 export {
   structuredBrain,
   structuredSchema,
@@ -84,8 +91,20 @@ function buildBrain(id: string, env: Env, problems: string[]): Brain | undefined
       }
       return openRouterBrain({ apiKey })
     }
+
+    case "claude-agent-sdk": {
+      const apiKey = env[ENV_KEYS["claude-agent-sdk"]]
+      if (apiKey === undefined || apiKey === "") {
+        problems.push(
+          `brain claude-agent-sdk needs ${ENV_KEYS["claude-agent-sdk"]} in the environment. Secrets never go in config (CFG-2)`,
+        )
+        return undefined
+      }
+      return claudeAgentSdkBrain({ apiKey })
+    }
+
     default:
-      // The other four brains arrive in M5. Config already rejects an id
+      // The other three brains arrive later in M5. Config already rejects an id
       // that is not one of the five (CFG-1), so this is a gap in the
       // build, not a typo by the builder.
       problems.push(`brain ${id} is named in config but its adapter is not built yet`)
