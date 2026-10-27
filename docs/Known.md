@@ -432,6 +432,34 @@ PRIV-3 saying so.
 
 ---
 
+## K20. A trigger can only compose, so an "order ready" message cannot be a template
+
+**Status:** open, and waiting on the builder. Needed before T7.2.
+
+**What happens.** Section 12's signature for `trigger` takes an event, its
+data and `urgent`. It has no `text` and no `template`, so every triggered
+message is written by the brain. PRO-3's third rule says that outside the
+channel's window, which is 24 hours on WhatsApp, only a template goes out,
+and a free text message with no template becomes `failed` and flagged. So
+the one example Intent 16 gives for a trigger, "order ready", cannot reach
+a WhatsApp customer who last wrote two days ago. It gets written, refused
+and flagged.
+
+**What we did.** Built `trigger` exactly as the signature reads. A glue
+that needs a template for an event today can call `schedule` with `at` set
+to now, which is the same job row and the same code path, so nothing is
+blocked meanwhile.
+
+**What it costs.** Nothing until T7.2. That is the row that builds the
+window rule, and the row where the flag starts firing.
+
+**What would resolve it.** The builder deciding whether `trigger` also
+takes `text` and `template` the way `schedule` does, or whether a map in
+config says which template each event uses outside the window. Then one
+line in section 12.
+
+---
+
 ## K16. Four brains ship, not the five Intent names
 
 **Status:** open by decision. Resolved by building T5.3, which now sits in After

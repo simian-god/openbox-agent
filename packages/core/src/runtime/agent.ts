@@ -43,6 +43,13 @@ import {
 } from "./handover.ts"
 import { createJobs, type Jobs } from "./jobs.ts"
 import { createOutbox, type Outbox } from "./outbox.ts"
+import {
+  createProactive,
+  PROACTIVE_JOB,
+  type ScheduleRequest,
+  type Scheduled,
+  type TriggerRequest,
+} from "./proactive.ts"
 import { createWorker } from "./worker.ts"
 import type { Inbound, Sender } from "./sender.ts"
 import { runTurn, type TurnResult } from "./turn.ts"
@@ -161,6 +168,19 @@ export interface Agent {
    * A webhook that only hands messages over uses `receive`.
    */
   receiveAndWait(inbound: Inbound): Promise<ReceiveAndWaitResult>
+  /**
+   * PRO-1: a message at a time, as a job, so a restart does not lose it.
+   *
+   * Either fixed (`text` or `template`) or composed (`compose`), and
+   * exactly one of the three. The same `dedupeKey` twice books one
+   * message.
+   */
+  schedule(request: ScheduleRequest): Promise<Scheduled>
+  /**
+   * PRO-2: a message about something that happened outside the
+   * conversation, which the brain writes from the event and its data.
+   */
+  trigger(request: TriggerRequest): Promise<Scheduled>
   /** Starts the worker (LOOP-2). Nothing is handled here until it runs. */
   start(): void
   /** Stops it, finishing the turns in flight and giving up every lease. */
@@ -621,6 +641,26 @@ export function createAgent(options: AgentOptions): Agent {
     await events.record("job_ran", { job: HANDOVER_IDLE_JOB, handoverId, did: what })
   })
 
+  // PRO-1 and PRO-2: the agent speaking first. The rules about what is
+  // sent, and to whom nothing is sent, live in proactive.ts; the turn a
+  // composed message needs lives here, because a turn needs the lease,
+  // the version row and everything else `createAgent` holds.
+  const proactive = createProactive({
+    store,
+    clock,
+    events,
+    outbox,
+    jobs,
+    compose: composeProactive,
+    handoverFor: (person) => handovers.openFor(person),
+  })
+
+  jobs.on(PROACTIVE_JOB, async (job) => {
+    // The handler's own record says what it did and why, so the loop's
+    // `job_ran` is left to say whether it threw.
+    await proactive.run(job)
+  })
+
   /**
    * CONF-2 and CONF-8: what the brain is told about a confirmation the core
    * already resolved.
@@ -746,6 +786,10 @@ export function createAgent(options: AgentOptions): Agent {
 
       return { inboxId, duplicate, ...(turn !== undefined ? { turn } : {}) }
     },
+
+    schedule: (request) => proactive.schedule(request),
+
+    trigger: (request) => proactive.trigger(request),
 
     start(): void {
       worker.start()
@@ -1051,7 +1095,21 @@ export function createAgent(options: AgentOptions): Agent {
     })
 
     if (result.reply !== undefined) {
-      await deliver(person, turnRow.id, inboxIds, result.reply)
+      // Keyed by the messages being answered, not by the turn.
+      //
+      // A turn abandoned by a dying process has its messages handed back
+      // by the recovery sweep, and the turn that then answers them is a
+      // different turn. Keyed by turn id, both replies would go out and
+      // the person would be answered twice. Keyed by what is being
+      // answered, the outbox keeps the first and drops the second, which
+      // is the right number of answers to one question.
+      await deliver({
+        person,
+        turnId: turnRow.id,
+        text: result.reply,
+        key: replyKey(inboxIds),
+        kind: "reply",
+      })
     }
 
     // HAND-1: the triggers this turn noticed, in the order it noticed
@@ -1068,6 +1126,196 @@ export function createAgent(options: AgentOptions): Agent {
     }
 
     return finish(result, turnRow, turnEvents, startedAt, batch.length)
+  }
+
+  /** Told when something outside a turn went wrong, if anyone is listening. */
+  function reportWorker(error: unknown): void {
+    try {
+      options.onWorkerError?.(error)
+    } catch {
+      // A broken handler must not be the reason a lease is not given up.
+    }
+  }
+
+  /**
+   * PRO-2: one turn with nobody on the other side of it.
+   *
+   * The same brain, the same tools, the same routing and the same gate as
+   * any other turn. What differs is the input: there is no batch, and the
+   * note about the event goes in where a confirmation's notice would, so
+   * the brain reads what happened rather than a message nobody sent.
+   *
+   * It throws for the two cases the job loop should try again: the person
+   * is busy, and the turn ended without anything to say because the
+   * brains were down (JOB-2).
+   */
+  async function composeProactive(request: {
+    person: PersonRow
+    note: string
+    key: string
+    urgent: boolean
+  }): Promise<"composed" | "silent"> {
+    const { person } = request
+    const startedAt = clock.now()
+
+    // LOOP-2: one person is one turn at a time, here as well as in the
+    // worker. A person in the middle of a conversation is left alone and
+    // the job comes back in a moment, because a message written beside a
+    // live turn would talk over whatever that turn is saying.
+    const lease = await leases.claim(person.id)
+    if (lease === null) {
+      throw new Error(`${nameOf(person)} is being handled right now, so this message waits`)
+    }
+
+    const renewal = setInterval(
+      () => {
+        leases.renew(person.id).then(
+          (kept) => {
+            if (!kept) {
+              reportWorker(new Error(`the lease on person ${person.id} was lost mid turn`))
+            }
+          },
+          (error: unknown) => reportWorker(error),
+        )
+      },
+      Math.max(1_000, (config.leaseSeconds * 1000) / 3),
+    )
+
+    const where: { turnId?: string | undefined } = {}
+    let ended: { did: "composed" | "silent" } | { retry: string }
+    try {
+      ended = await proactiveTurn({ ...request, startedAt, where })
+    } catch (error) {
+      await turnFailed({ person, batch: [], turnId: where.turnId, startedAt, error })
+      // Thrown on, so the job records it and tries again (JOB-2).
+      throw error
+    } finally {
+      clearInterval(renewal)
+      await leases.release(person.id).catch(reportWorker)
+    }
+
+    // The lease is already given up here, which is the point: the next
+    // attempt is a fresh turn and must not meet a lease this one held.
+    if ("retry" in ended) throw new Error(ended.retry)
+    return ended.did
+  }
+
+  /** The turn `composeProactive` holds the lease for. */
+  async function proactiveTurn(request: {
+    person: PersonRow
+    note: string
+    key: string
+    urgent: boolean
+    startedAt: Date
+    where: { turnId?: string | undefined }
+  }): Promise<{ did: "composed" | "silent" } | { retry: string }> {
+    const { person, note, startedAt } = request
+    const versionRowId = await version()
+    const turnRow = await store.turns.insert({
+      person_id: person.id,
+      version_id: versionRowId,
+      started_at: startedAt.toISOString(),
+    })
+    request.where.turnId = turnRow.id
+
+    const turnEvents = events.about({ personId: person.id, turnId: turnRow.id })
+    await turnEvents.record("turn_started", {
+      channel: person.channel,
+      inboxIds: [],
+      messages: 0,
+      versionId: versionRowId,
+      hasMedia: false,
+      hasAction: false,
+      // What tells this turn apart in the trace: nobody wrote to us.
+      proactive: true,
+    })
+
+    const history = (await store.messages.list(
+      { person_id: person.id },
+      { orderBy: "seq", ascending: false, limit: config.history },
+    )) as MessageRow[]
+
+    // The note joins the conversation, the way a confirmation's notice
+    // does, so the next turn's history says why the agent spoke first.
+    await store.messages.insert({
+      person_id: person.id,
+      turn_id: turnRow.id,
+      direction: "inbound",
+      author: "notice",
+      text: note,
+      channel: person.channel,
+      created_at: clock.now().toISOString(),
+    })
+
+    const facts = await factsFor(store, person.id)
+    const tasks = hasTaskTypes ? await openTasks(store, person) : []
+    const active = tasks.find((task) => task.status === "active")
+    const pending =
+      confirmations === undefined
+        ? []
+        : await store.pendingActions.list({ person_id: person.id, status: "pending" })
+
+    const result = await runTurn({
+      config,
+      history: [...history].reverse(),
+      store,
+      brains: deps.brains,
+      decisionModel: deps.decisionModel,
+      models,
+      tools,
+      clock,
+      person,
+      // Nobody said anything. The note is the whole input.
+      batch: [],
+      prompt,
+      turnId: turnRow.id,
+      events: turnEvents,
+      notices: [note],
+      proactive: true,
+      ...(confirmations !== undefined ? { confirm: confirmations } : {}),
+      ...(facts.length > 0 ? { facts } : {}),
+      ...(tasks.length > 0 ? { tasks } : {}),
+      ...(pending.length > 0 ? { pendingActions: pending } : {}),
+      ...(active !== undefined
+        ? {
+            activeTask: {
+              id: active.id,
+              type: active.type,
+              fields: active.fields,
+              missing: active.missing,
+            },
+          }
+        : {}),
+    })
+
+    if (result.reply !== undefined) {
+      await deliver({
+        person,
+        turnId: turnRow.id,
+        text: result.reply,
+        key: request.key,
+        kind: "proactive",
+        urgent: request.urgent,
+      })
+    }
+
+    // HAND-1: a composed turn can trigger a handover like any other. The
+    // repeat rules and a tool failing twice both count across turns, and
+    // a turn nobody asked for is still a turn that went wrong.
+    const trigger = result.handoverDue[0]
+    if (trigger !== undefined) {
+      await handovers.open({ person, reason: trigger, turnId: turnRow.id })
+    }
+
+    await finish(result, turnRow, turnEvents, startedAt, 0)
+
+    // BRAIN-5 ran out of brains, or the step cap stopped it. Nobody has
+    // heard anything, so the job tries again rather than calling this done.
+    if (UNANSWERED.has(result.outcome)) {
+      return { retry: `the message could not be written: the turn ended ${result.outcome}` }
+    }
+    // The brain was asked and had nothing to add, which is an answer.
+    return { did: result.reply === undefined ? "silent" : "composed" }
   }
 
   /** LOOP-11 and EVT-2: what every turn records on the way out. */
@@ -1158,29 +1406,33 @@ export function createAgent(options: AgentOptions): Agent {
     }
   }
 
-  /** LOOP-11: the reply goes to the outbox, and is stored either way. */
-  async function deliver(
-    person: PersonRow,
-    turnId: string,
-    inboxIds: string[],
-    text: string,
-  ): Promise<void> {
+  /**
+   * LOOP-11: what the turn decided goes to the outbox, and is stored
+   * either way.
+   *
+   * The key is the caller's, because what makes two sends the same
+   * message depends on why it was sent. A reply is keyed by the messages
+   * it answers (see `replyKey`), and a proactive message by the job that
+   * asked for it (PRO-1).
+   */
+  async function deliver(request: {
+    person: PersonRow
+    turnId: string
+    text: string
+    key: string
+    kind: "reply" | "proactive"
+    urgent?: boolean | undefined
+  }): Promise<void> {
+    const { person, turnId, text } = request
     await outbox.queue({
       personId: person.id,
       turnId,
-      kind: "reply",
+      kind: request.kind,
       channel: person.channel,
       channelUserId: person.channel_user_id,
       text,
-      // Keyed by the messages being answered, not by the turn.
-      //
-      // A turn abandoned by a dying process has its messages handed back
-      // by the recovery sweep, and the turn that then answers them is a
-      // different turn. Keyed by turn id, both replies would go out and
-      // the person would be answered twice. Keyed by what is being
-      // answered, the outbox keeps the first and drops the second, which
-      // is the right number of answers to one question.
-      idempotencyKey: replyKey(inboxIds),
+      idempotencyKey: request.key,
+      ...(request.urgent === true ? { urgent: true } : {}),
     })
 
     await store.messages.insert({

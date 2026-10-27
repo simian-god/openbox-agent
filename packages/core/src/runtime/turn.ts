@@ -77,6 +77,15 @@ export interface TurnInput {
    */
   focus?: { who: string } | undefined
   /**
+   * PRO-2: this turn was started by an event rather than by the person.
+   *
+   * The batch is empty and the note in `notices` is the whole input, so
+   * HAND-1's `wants_human` question is not asked: it reads what the
+   * person just said, and the person has not said anything. Asking would
+   * be a question about nothing, paid for per turn.
+   */
+  proactive?: boolean | undefined
+  /**
    * CONF-1: makes a pending action when an irreversible call passes the
    * gate. Absent for an agent with no irreversible tools, in which case
    * nothing here can ever ask for one.
@@ -277,7 +286,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       // LOOP-8 step 1: on the first step the same request also asks
       // whether this person wants a human (HAND-1). DM-2 is why it
       // rides along rather than being asked on its own.
-      ...(steps === 1 && person.role === "end_user"
+      ...(steps === 1 && person.role === "end_user" && input.proactive !== true
         ? { also: { [WANTS_HUMAN]: wantsHumanQuestion() } }
         : {}),
     })

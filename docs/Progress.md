@@ -4,18 +4,19 @@ The coding agent keeps this file up to date (see AGENTS.md). You don't need to t
 
 Statuses: `todo`, `doing`, `done`, `blocked`. A milestone check row is done only when every item in that milestone's "Done when" passes.
 
-**Next task:** T7.1. The M6 check row is `blocked`: everything built for M6 passes, and three of its clauses wait on T8.4 and T11.2 (see the row). The M5 check is `blocked` on the live conformance run, which needs an Anthropic key (see "Waiting on you"), and the M3 check row stays `blocked` until T11.1. The M5 check is `blocked` on the live conformance run, which needs an Anthropic key (see "Waiting on you"), and the M3 check row stays `blocked` until T11.1.
+**Next task:** T7.2, which is PRO-3's send rules: the opt out, quiet hours, the channel window and templates, STOP and START. Known K20 is a question for you that lands in that row. The M6 check row is `blocked`: everything built for M6 passes, and three of its clauses wait on T8.4 and T11.2. The M5 check is `blocked` on the live conformance run, which needs an Anthropic key (see "Waiting on you"), and the M3 check row stays `blocked` until T11.1.
 
 ## Waiting on you
 
-Three things only the builder can do. None of them stops the next task, but
-the first two are what the M5 check is waiting for, and all three get more
-expensive the later they happen.
+Four things only the builder can do. The first two are what the M5 check is
+waiting for and do not stop the next task. The third is a decision that T7.2
+runs into. The fourth is the lawyer, before M9 is built.
 
 | What | Why it matters | When it bites |
 |---|---|---|
 | Run the live tests once: `OPENBOX_LIVE=1 bun test packages/core/test/live` | Three things now. It settles whether the OpenAI Decisions API reports a `usage` object at all (Known K9), it exercises the Jev route that can be reached (Known K8), and it runs the C2 conformance conversation on each brain. A CLI brain spawns a process per step, so those runs take minutes | T7.3 for the spend cap, and the M5 check, which cannot close until C2 has actually run |
 | Put an `ANTHROPIC_API_KEY` in `.env`, and log Codex in with `OPENBOX_LIVE_CODEX=1` | Only OpenRouter can run the C2 conversation today. The Claude Agent SDK brain and the Claude Code CLI brain both need that key, since `--bare` never reads a logged in session, and Codex runs on its own login. Three of the four brains cannot be measured without them | The M5 check. It is the only thing left in that milestone |
+| Decide whether `trigger` can also take `text` and a `template`, or whether config maps an event to a template (Known K20) | Section 12 gives `trigger` no template, and PRO-3 lets only a template out past the channel's window. So Intent 16's own example, "order ready" to a WhatsApp customer who last wrote two days ago, would be written by the brain and then refused | T7.2, the next row. A glue can use `schedule` with `at` set to now meanwhile, which takes a template today |
 | Have the DPDP conversation with a lawyer, with the seven questions in Known K15 | PRIV-1 to PRIV-4 are my reading of the rules, not a lawyer's. Erasure deletes rows and is the one thing here that cannot be walked back | M9. Before it is built, not after |
 
 ## M0. Foundations
@@ -104,7 +105,7 @@ expensive the later they happen.
 
 | Task | What | Status | Date | Note |
 |---|---|---|---|---|
-| T7.1 | `schedule` and `trigger`, fixed and composed messages | todo | | |
+| T7.1 | `schedule` and `trigger`, fixed and composed messages | done | 2026-10-27 | `agent.schedule({ personId, at, text | template | compose, urgent, dedupeKey })` and `agent.trigger({ personId, event, data, urgent })`, both as job rows (PRO-1), so a restart cannot lose one and a trigger that arrives mid restart is not dropped either. A fixed message is sent word for word with no brain call and nothing spent. A composed one is a real turn (PRO-2): the brain gets a note saying nobody has written and what the event was, and runs with the same tools, the same routing and the same gate, so a reminder cannot become a way around CONF-1. The outbox key is the job's id, which is what makes it exactly once: a job taken over from a dead process sends nothing a second time, composes nothing a second time and writes no second line into the conversation. It takes the person's lease, so a reminder never runs beside a live turn (LOOP-2), and waits by JOB-2 instead. Three people hear nothing: somebody blocked (ROLE-4), somebody in a handover (C11, dropped and recorded rather than held back, see the decisions log), and nobody, when the brain had nothing to add. 22 tests, and nine probes, all nine caught. Open question for you: a trigger can only compose, so an "order ready" message cannot be a template, which is Known K20 and bites in T7.2. |
 | T7.2 | Send rules: opt out, quiet hours, channel window and templates, STOP and START | todo | | |
 | T7.3 | Rate limit, step cap, spend tracking with the pricing table, the spend cap triggering handover | todo | | |
 | T7.4 | Sarvam and OpenAI transcribers, language detection | todo | | |
