@@ -41,14 +41,70 @@ function sdkAnswering(result: Record<string, unknown>, extra: unknown[] = []) {
   return { query, calls }
 }
 
+/**
+ * The same, but the stream throws once it has yielded everything.
+ *
+ * This is what the real SDK does and the first live run is how we found
+ * out. `readMessages` catches the subprocess exiting on an error result
+ * and rethrows it as "Claude Code returned an error result: ...", after
+ * the result itself has already gone down the stream. A fake that only
+ * yields cannot tell the two apart, which is why every error path in this
+ * adapter passed its tests and none of them had ever run.
+ */
+function sdkThrowingAfter(result: Record<string, unknown>, message: string) {
+  const calls: { prompt: string; options: Record<string, unknown> }[] = []
+  const query: SdkQuery = ({ prompt, options }) => {
+    calls.push({ prompt, options: options ?? {} })
+    return (async function* () {
+      yield { type: "result", ...result }
+      throw new Error(message)
+    })()
+  }
+  return { query, calls }
+}
+
+/** A stream that throws having yielded nothing at all. */
+function sdkThrowing(message: string) {
+  const calls: { prompt: string; options: Record<string, unknown> }[] = []
+  const query: SdkQuery = ({ prompt, options }) => {
+    calls.push({ prompt, options: options ?? {} })
+    return (async function* () {
+      await Promise.resolve()
+      throw new Error(message)
+    })()
+  }
+  return { query, calls }
+}
+
 const reply = { structured_output: { kind: "reply", text: "We have space." } }
 
+/** What the SDK says when the turn limit is reached. Measured, not guessed. */
+const MAX_TURNS_THROW = "Claude Code returned an error result: Reached maximum number of turns (1)"
+
 describe("Spec 23: the options the check found have to be set", () => {
-  test("BRAIN-1: one turn, which is one user message and one response", async () => {
+  test("BRAIN-2: enough turns for structured output, which takes two", async () => {
+    // Measured against the real SDK, not read off the type docs. With
+    // `outputFormat: json_schema` a run is two round trips: the model
+    // answers, then a second turn produces the structured output. The
+    // docs say a turn is "a user message and assistant response", which
+    // is true and was not the whole story, so `maxTurns: 1` could never
+    // succeed. It did not fail quietly either: the SDK ended every single
+    // run as `error_max_turns` and the brain answered nobody.
     const { query, calls } = sdkAnswering(reply)
     await claudeAgentSdkBrain({ apiKey: "sk-test", query }).complete(input)
 
-    expect(calls[0]?.options["maxTurns"]).toBe(1)
+    const maxTurns = calls[0]?.options["maxTurns"] as number
+    expect(maxTurns).toBeGreaterThanOrEqual(2)
+    // Still a cap. The core runs its own step loop (LOOP-8), so the SDK
+    // must never get to run an agentic loop of its own inside one step.
+    expect(maxTurns).toBeLessThanOrEqual(6)
+  })
+
+  test("BRAIN-2: the turn cap can be raised for a slow model, but not removed", async () => {
+    const { query, calls } = sdkAnswering(reply)
+    await claudeAgentSdkBrain({ apiKey: "sk-test", query, maxTurns: 5 }).complete(input)
+
+    expect(calls[0]?.options["maxTurns"]).toBe(5)
   })
 
   test("BRAIN-1: no built in tools, as an allow list of nothing", async () => {
@@ -342,6 +398,105 @@ describe("BRAIN-5: when it goes wrong", () => {
     } catch (error) {
       expect((error as BrainError).retryable).toBe(true)
     }
+  })
+
+  test("BRAIN-5: a stream that throws after the result is read from the result", async () => {
+    // The whole fault, in one test. The SDK yields the result and then
+    // throws about it, so a brain that lets the throw win reports "the
+    // session ended" and loses everything the result said.
+    const { query } = sdkThrowingAfter(
+      { subtype: "error_max_turns", is_error: true, usage: { input_tokens: 40 } },
+      MAX_TURNS_THROW,
+    )
+    const brain = claudeAgentSdkBrain({ apiKey: "sk-test", query })
+
+    const error = (await brain.complete(input).catch((e: unknown) => e)) as BrainError
+    expect(error).toBeInstanceOf(BrainError)
+    expect(error.message).toContain("error_max_turns")
+  })
+
+  test("BRAIN-2: an answer that arrived is used, even if the stream then throws", async () => {
+    // The invariant the fix rests on, stated on its own. The SDK sends the
+    // result down the stream and throws afterwards, so a brain that lets
+    // the throw win discards an answer it already has.
+    const { query } = sdkThrowingAfter(reply, "Claude Code returned an error result: anything")
+    const output = await claudeAgentSdkBrain({ apiKey: "sk-test", query }).complete(input)
+
+    expect(output.text).toBe("We have space.")
+  })
+
+  test("BRAIN-5: reaching the turn limit is not worth retrying", async () => {
+    // A limit is not an outage. The next attempt reaches the same limit on
+    // the same request, so retrying only spends the money twice. BRAIN-5
+    // still moves to the next brain, which is a different thing.
+    const { query } = sdkThrowingAfter(
+      { subtype: "error_max_turns", is_error: true },
+      MAX_TURNS_THROW,
+    )
+    const brain = claudeAgentSdkBrain({ apiKey: "sk-test", query })
+
+    const error = (await brain.complete(input).catch((e: unknown) => e)) as BrainError
+    expect(error.retryable).toBe(false)
+  })
+
+  test("BRAIN-5: a budget stopping the run is not worth retrying either", async () => {
+    const { query } = sdkThrowingAfter(
+      { subtype: "error_max_budget_usd", is_error: true },
+      "Claude Code returned an error result: budget exceeded",
+    )
+    const brain = claudeAgentSdkBrain({ apiKey: "sk-test", query })
+
+    const error = (await brain.complete(input).catch((e: unknown) => e)) as BrainError
+    expect(error.retryable).toBe(false)
+  })
+
+  test("BRAIN-5: the shared shape retry still runs when the stream throws", async () => {
+    // This path was dead code. The SDK giving up on the shape is BRAIN-5's
+    // own case and is handled by returning empty text, but the throw got
+    // there first, so the retry never happened for this brain.
+    let attempt = 0
+    const query: SdkQuery = () => {
+      attempt++
+      const first = attempt === 1
+      return (async function* () {
+        yield first
+          ? { type: "result", subtype: "error_max_structured_output_retries", is_error: true }
+          : { type: "result", ...reply }
+        if (first) throw new Error("Claude Code returned an error result: shape")
+      })()
+    }
+
+    const output = await claudeAgentSdkBrain({ apiKey: "sk-test", query }).complete(input)
+    expect(output.text).toBe("We have space.")
+    expect(attempt).toBe(2)
+  })
+
+  test("BRAIN-5: the shape failing twice reaches the next brain, not a wrong answer", async () => {
+    // The shape failing every time is the one case BRAIN-5 is for. What
+    // must never happen is the empty text this brain returns for that
+    // case being read as an answer: the person would get nothing and the
+    // turn would call it a success.
+    const { query } = sdkThrowingAfter(
+      { subtype: "error_max_structured_output_retries", is_error: true },
+      "Claude Code returned an error result: shape",
+    )
+    const brain = claudeAgentSdkBrain({ apiKey: "sk-test", query })
+
+    const error = (await brain.complete(input).catch((e: unknown) => e)) as BrainError
+    expect(error).toBeInstanceOf(BrainError)
+  })
+
+  test("BRAIN-5: a stream that throws with no result at all is still an error", async () => {
+    // A subprocess that cannot start says nothing first, and that must
+    // still reach BRAIN-5 rather than hanging or reading as an answer.
+    const { query } = sdkThrowing("spawn bun ENOENT")
+    const brain = claudeAgentSdkBrain({ apiKey: "sk-test", query })
+
+    const error = (await brain.complete(input).catch((e: unknown) => e)) as BrainError
+    expect(error).toBeInstanceOf(BrainError)
+    expect(error.message).toContain("spawn bun ENOENT")
+    // Nothing is known about why, so another attempt is worth having.
+    expect(error.retryable).toBe(true)
   })
 
   test("the abort signal reaches the SDK as the controller it wants", async () => {
