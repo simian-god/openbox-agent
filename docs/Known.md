@@ -588,3 +588,45 @@ the answer is probably a confidence threshold rather than a word list, since
 `verbose_json` also returns `language_confidence` and per-segment data this
 adapter currently ignores. The language-code question should be settled the
 first time anything branches on `person.language`, and not before.
+
+## K24. Codex is built but never measured, by decision
+
+**Status:** open by decision. Resolved by one `codex login` and a switch.
+
+**What happens.** The Codex CLI brain has an adapter, unit tests and a place in
+C2's candidate list, and it has never been run against the real command. The
+builder does not use Codex, so there is no login here to run it with.
+
+Codex is the one brain that takes no API key. It keeps its own login, which is
+why it needs `OPENBOX_LIVE_CODEX=1` as well as `OPENBOX_LIVE=1`: with no key to
+look for, nothing can tell "not set up" from "broken" without trying it. That
+is also why its absence cannot be detected and has to be declared.
+
+**What it costs.** Less than the other two brain gaps.
+
+- BRAIN-4 already says both CLI brains are for building and local testing, not
+  for production, so no agent was going to ship on it.
+- BRAIN-5's fallback chain has two production brains, OpenRouter and the Claude
+  Agent SDK, and C2 passes on both.
+- The adapter is proven against a fake `runCommand`, so the mapping, the
+  schema file, the answer file and the error handling are all tested. What is
+  unproven is the same thing T7.3a found for the Agent SDK: whether the real
+  command behaves as its own help says.
+
+That last point is the honest cost, and T7.3a is the reason to state it
+plainly. The Agent SDK brain also had a green suite and could not answer
+anybody, and only running it found that. Codex is in exactly that position
+now: tested against a fake, never run.
+
+Spec section 23 already records what reading its help turned up, including
+that Codex has no way to turn its tools off, so `--sandbox read-only` is the
+most that can be done and it still reads the filesystem.
+
+**What we did.** Parked it, and reworded M5's bar to the brains that can be
+measured here rather than the brains that have adapters. `codex-cli` stays a
+valid config id, and the switch stays, so nothing has to be rebuilt.
+
+**What would resolve it.** `codex login` on this machine, then
+`OPENBOX_LIVE=1 OPENBOX_LIVE_CODEX=1 bun test packages/core/test/live`. That
+runs both the Codex live test and its C2 conversation. Expect minutes, because
+it spawns a process per step.
