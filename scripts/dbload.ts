@@ -19,6 +19,7 @@
 // what a test sees. It loads Postgres directly rather than PostgREST,
 // which is the part both of them sit on.
 import { SQL } from "bun"
+import { envOr } from "../packages/core/src/env.ts"
 
 /** The same default as test/support/db.ts, for the stack `db:up` starts. */
 const LOCAL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
@@ -35,7 +36,7 @@ function flag(name: string, fallback: number): number {
 
 const clients = flag("clients", 8)
 const seconds = flag("seconds", 60)
-const url = process.env["DATABASE_URL"] ?? LOCAL
+const url = envOr("DATABASE_URL", LOCAL)
 
 /** A read that touches what the worker and the outbox read every pass. */
 const QUERIES = [

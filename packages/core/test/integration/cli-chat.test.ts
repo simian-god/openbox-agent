@@ -13,6 +13,7 @@ import { test, expect, beforeAll } from "bun:test"
 import { join } from "node:path"
 import { describeDatabase, localApiKey, LOCAL_SUPABASE_URL, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
+import { envOr } from "../../src/env.ts"
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..")
 const CLI = join(ROOT, "packages", "core", "src", "cli", "index.ts")
@@ -30,9 +31,8 @@ async function chat(
     stderr: "pipe",
     env: {
       ...process.env,
-      SUPABASE_URL: process.env["SUPABASE_URL"] ?? LOCAL_SUPABASE_URL,
-      SUPABASE_SERVICE_ROLE_KEY:
-        process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? localApiKey("service_role"),
+      SUPABASE_URL: envOr("SUPABASE_URL", LOCAL_SUPABASE_URL),
+      SUPABASE_SERVICE_ROLE_KEY: envOr("SUPABASE_SERVICE_ROLE_KEY", localApiKey("service_role")),
       // Enough to build the brain. Nothing here ever calls it.
       OPENROUTER_API_KEY: "sk-not-used-by-this-test",
     },

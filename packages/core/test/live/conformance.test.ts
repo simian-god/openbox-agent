@@ -28,6 +28,7 @@ import { providersFromConfig } from "../../src/providers/index.ts"
 import { DEFAULT_CLAUDE_MODEL } from "../../src/providers/brains/claude-agent-sdk.ts"
 import { DEFAULT_CLAUDE_CLI_MODEL, DEFAULT_CODEX_MODEL } from "../../src/providers/brains/cli.ts"
 import type { BrainId } from "../../src/config/index.ts"
+import { envOr } from "../../src/env.ts"
 
 const live = process.env["OPENBOX_LIVE"] === "1"
 const openrouterKey = process.env["OPENROUTER_API_KEY"] ?? ""
@@ -51,7 +52,7 @@ interface Candidate {
 const CANDIDATES: Candidate[] = [
   {
     id: "openrouter",
-    model: process.env["OPENBOX_LIVE_MODEL"] ?? "openai/gpt-4o-mini",
+    model: envOr("OPENBOX_LIVE_MODEL", "openai/gpt-4o-mini"),
     ready: openrouterKey !== "",
     why: "OPENROUTER_API_KEY is not set",
   },

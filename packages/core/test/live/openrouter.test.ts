@@ -12,12 +12,13 @@ import { test, expect, describe } from "bun:test"
 import { z } from "zod"
 import { openRouterBrain } from "../../src/providers/index.ts"
 import { defineTool } from "../../src/tools/index.ts"
+import { envOr } from "../../src/env.ts"
 
 const apiKey = process.env["OPENROUTER_API_KEY"]
 const live = process.env["OPENBOX_LIVE"] === "1" && apiKey !== undefined && apiKey !== ""
 
 /** Cheap and widely available, so this costs a fraction of a cent. */
-const MODEL = process.env["OPENBOX_LIVE_MODEL"] ?? "openai/gpt-4o-mini"
+const MODEL = envOr("OPENBOX_LIVE_MODEL", "openai/gpt-4o-mini")
 
 describe.skipIf(!live)("BRAIN-1: against the real OpenRouter API", () => {
   const brain = () => openRouterBrain({ apiKey: apiKey as string, appName: "openbox-agent tests" })

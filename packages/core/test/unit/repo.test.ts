@@ -61,8 +61,15 @@ test("REL-2: .env.example lists every environment variable the source reads", ()
     /(?:process|Bun)\.env\.([A-Z][A-Z0-9_]*)/g,
     /(?:process|Bun)\.env\[["']([A-Z][A-Z0-9_]*)["']\]/g,
   ]
+  // Two files name variables that do not exist on purpose: this one, and
+  // env.test.ts, which quotes the shape `process.env["X"] ?? default` to
+  // prove its own rule against that shape can fail.
+  const quotesFakeNames = new Set([
+    "packages/core/test/unit/repo.test.ts",
+    "packages/core/test/unit/env.test.ts",
+  ])
   for (const file of sourceDirs.flatMap((d) => sourceFiles(d))) {
-    if (file === "packages/core/test/unit/repo.test.ts") continue
+    if (quotesFakeNames.has(file)) continue
     const text = readFileSync(join(root, file), "utf8")
     for (const pattern of patterns) {
       for (const match of text.matchAll(pattern)) {

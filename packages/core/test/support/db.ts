@@ -10,13 +10,14 @@ import { SQL } from "bun"
 import { describe, beforeAll, afterAll } from "bun:test"
 import { createHmac } from "node:crypto"
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
+import { envOr } from "../../src/env.ts"
 
 /** What `supabase start` serves. Matches [db].port in supabase/config.toml. */
 export const LOCAL_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 
 /** DATABASE_URL wins, so CI and a hosted database need no code change. */
 export function databaseUrl(): string {
-  return process.env["DATABASE_URL"] ?? LOCAL_DATABASE_URL
+  return envOr("DATABASE_URL", LOCAL_DATABASE_URL)
 }
 
 /** Opens a connection, or returns null if nothing is listening. */
@@ -149,10 +150,10 @@ export function localApiKey(role: "service_role" | "anon"): string {
  * would hold, and should reach nothing (DATA-5).
  */
 export function localSupabase(role: "service_role" | "anon" = "service_role"): SupabaseClient {
-  const url = process.env["SUPABASE_URL"] ?? LOCAL_SUPABASE_URL
+  const url = envOr("SUPABASE_URL", LOCAL_SUPABASE_URL)
   const key =
     role === "service_role"
-      ? (process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? localApiKey("service_role"))
+      ? envOr("SUPABASE_SERVICE_ROLE_KEY", localApiKey("service_role"))
       : localApiKey("anon")
 
   return createClient(url, key, { auth: { persistSession: false } })
