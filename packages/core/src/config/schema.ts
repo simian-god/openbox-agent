@@ -240,7 +240,12 @@ export const configSchema = z
 
     handover: HANDOVER.prefault({}),
     pendingActionMinutes: z.number().positive().default(15),
-    quietHours: z.tuple([TIME, TIME]).optional(),
+    // PRO-3: 21:00 to 09:00 unless the config says otherwise. A default
+    // rather than optional, because "nothing non urgent goes out in quiet
+    // hours" is a promise to the person, and an agent that forgot to
+    // write the line should still keep it. An agent that genuinely wants
+    // none says so with a range of zero length, like ["09:00", "09:00"].
+    quietHours: z.tuple([TIME, TIME]).default(["21:00", "09:00"]),
     taskTypes: z.record(z.string(), TASK_TYPE).default({}),
 
     // PRIV-1 and PRIV-2: both required, both with no default.

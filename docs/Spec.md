@@ -614,6 +614,7 @@ agent.trigger({ personId, event: "order_ready", data: { ... }, urgent? })
 | `frustration` | The frustration score is at or above 1.5 on a 0 to 2 scale (calm, annoyed, angry) *(default)*. |
 | `step_cap` | LOOP-9 fired. |
 | `confirmation_rejected` | CONF-4 rejected a confirm. |
+| `send_blocked` | A message could not be sent because of a channel rule, such as free text outside the channel's window (PRO-3). |
 | `operator` | An operator used `flag`. |
 
 **LEARN-2.** Every turn stores its version ID: a hash of `prompt.md`, every tool's name, description, conditions, schema, risk and roles, the config without secrets, and the core package version.

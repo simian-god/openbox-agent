@@ -101,6 +101,55 @@ const minutesOf = (time: string): number => {
   return (hours ?? 0) * 60 + (minutes ?? 0)
 }
 
+/**
+ * PRO-3: whether an instant falls inside the agent's quiet hours.
+ *
+ * Quiet hours are the one range in this core that may cross midnight, and
+ * 21:00 to 09:00 is the default, so they cannot share `hours`' logic: the
+ * config validator rejects an opening range that crosses midnight, for
+ * good reasons that do not apply here.
+ *
+ * Read in the agent's timezone, so a server in another one does not
+ * decide when the night is. A range of zero length, like 09:00 to 09:00,
+ * is no quiet hours at all, which is how an agent says it wants none.
+ */
+export function inQuietHours(config: OpenboxConfig, at: Date): boolean {
+  const quiet = config.quietHours
+  if (quiet === undefined) return false
+
+  const [from, to] = quiet
+  const now = minutesOf(partsInZone(at, config.timezone).time)
+  const start = minutesOf(from)
+  const end = minutesOf(to)
+
+  // Through midnight: quiet from the evening to the end of the day, and
+  // from the start of the day to the morning.
+  return start <= end ? now >= start && now < end : now >= start || now < end
+}
+
+/**
+ * PRO-3: the first instant after this one that is no longer quiet.
+ *
+ * Where a message that arrived in the night waits until. The next time
+ * the clock reads the end of quiet hours in the agent's timezone, which
+ * is tomorrow morning when it is already past it today.
+ */
+export function quietHoursEnd(config: OpenboxConfig, at: Date): Date {
+  const quiet = config.quietHours
+  if (quiet === undefined) return at
+
+  const end = minutesOf(quiet[1])
+  const zoned = DateTime.fromJSDate(at, { zone: config.timezone })
+  let next = zoned.set({
+    hour: Math.floor(end / 60),
+    minute: end % 60,
+    second: 0,
+    millisecond: 0,
+  })
+  if (next <= zoned) next = next.plus({ days: 1 })
+  return next.toJSDate()
+}
+
 /** Words that mean a leftover was part of the date, not filler. */
 const STILL_A_DATE =
   /\d|mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|today|tomorrow|tonight|next|last|week|month|morning|noon|afternoon|evening|night/i

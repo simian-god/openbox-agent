@@ -3,7 +3,7 @@
 // The names are checked against the Spec's own table, so adding an event
 // to one and not the other fails here rather than quietly drifting.
 import { test, expect, describe } from "bun:test"
-import { readFileSync } from "node:fs"
+import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import {
   EVENT_NAMES,
@@ -279,14 +279,26 @@ describe("LEARN-1: the flag kinds", () => {
   test("LEARN-1: the migration accepts exactly those kinds and no others", () => {
     // A kind the type allows and the check constraint refuses would be a
     // flag that is raised in a test and lost in production.
-    const sql = readFileSync(
-      join(import.meta.dir, "..", "..", "migrations", "0007_gate.sql"),
-      "utf8",
-    )
-    const allowed = [...sql.matchAll(/'([a-z_]+)'/g)]
-      .map((match) => match[1])
-      .filter((kind): kind is FlagKind => FLAG_KINDS.includes(kind as FlagKind))
+    //
+    // Read from the migrations in order, because a constraint can be
+    // replaced: 0007 writes it and 0014 widened it for `send_blocked`.
+    // The one that counts is the last one declared, in the last
+    // migration that touches the table.
+    const dir = join(import.meta.dir, "..", "..", "migrations")
+    const files = readdirSync(dir)
+      .filter((name) => name.endsWith(".sql"))
+      .sort()
 
+    let last = ""
+    for (const name of files) {
+      const sql = readFileSync(join(dir, name), "utf8")
+      if (!sql.includes("ob_flags")) continue
+      const blocks = [...sql.matchAll(/check \(kind in \(([^)]*)\)\)/g)]
+      const block = blocks[blocks.length - 1]?.[1]
+      if (block !== undefined) last = block
+    }
+
+    const allowed = [...last.matchAll(/'([a-z_]+)'/g)].map((match) => match[1] as FlagKind)
     expect([...new Set(allowed)].sort()).toEqual([...FLAG_KINDS].sort())
   })
 })

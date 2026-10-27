@@ -132,9 +132,10 @@ export interface TurnResult {
    * ended in a way the core did not plan for, so a caller of
    * `receiveAndWait` gets a result rather than a rejection.
    *
-   * Nor are `blocked`, `handover` and `relayed`. All three are decided
-   * before anything in this file runs, so none of those turns reaches
-   * it (ROLE-4, HAND-5, HAND-4).
+   * Nor are `blocked`, `handover`, `relayed`, `opted_out` and
+   * `opted_in`. All five are decided before anything in this file runs,
+   * so none of those turns reaches it (ROLE-4, HAND-5, HAND-4, LOOP-5
+   * step 2).
    */
   outcome:
     | "replied"
@@ -145,6 +146,8 @@ export interface TurnResult {
     | "blocked"
     | "handover"
     | "relayed"
+    | "opted_out"
+    | "opted_in"
   /** Set only when the outcome is `failed`. */
   error?: string | undefined
 }

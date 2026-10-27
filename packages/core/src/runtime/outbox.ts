@@ -27,6 +27,7 @@
 import type { OpenboxConfig } from "../config/index.ts"
 import { isUniqueViolation, type OutboxKind, type OutboxRow, type Store } from "../store/index.ts"
 import type { Clock } from "../testing/clock.ts"
+import { inQuietHours, quietHoursEnd } from "../time/index.ts"
 import type { EventWriter } from "./events.ts"
 import { createPump, type Pump } from "./pump.ts"
 import type { Outbound, Sender } from "./sender.ts"
@@ -175,7 +176,95 @@ export function createOutbox(options: OutboxOptions): Outbox {
     return rows[0] ?? { ...row, ...patch }
   }
 
+  /**
+   * PRO-3: the three checks a proactive message passes before it is sent,
+   * in the Spec's order. Returns the row it ended as, or null to carry on
+   * and send.
+   *
+   * The order is the whole rule. Somebody who has opted out hears nothing,
+   * whatever the hour and whatever the channel allows, so that is read
+   * first and nothing after it can put the message back.
+   *
+   * PRO-4 is why this only runs for `proactive`. A reply, an operator
+   * alert and a confirm are all caused by a message somebody just sent,
+   * so none of them is a message the agent decided to start, and quiet
+   * hours would hold back the answer to "are you open?" until morning.
+   */
+  async function holdBack(row: OutboxRow): Promise<OutboxRow | null> {
+    const now = clock.now()
+    const scope = { personId: row.person_id, ...turnOf(row) }
+
+    // 1. Opted out: dropped and recorded. Not retried, because nothing
+    // about waiting makes this sendable, and not an error either: the
+    // person asked for this.
+    const person = await store.people.byId(row.person_id)
+    if (person?.opted_out === true) {
+      await events.about(scope).record("send_failed", {
+        outboxId: row.id,
+        kind: row.kind,
+        attempts: row.attempts,
+        error: "the person has opted out",
+        retryable: false,
+      })
+      return finish(row, { status: "failed", error: "the person has opted out" })
+    }
+
+    // 2. Quiet hours, unless it is urgent: the message waits rather than
+    // being dropped. Attempts are left alone, because this was not an
+    // attempt: nothing was sent and nothing failed.
+    if (!row.urgent && inQuietHours(config, now)) {
+      return finish(row, {
+        status: "queued",
+        not_before: quietHoursEnd(config, now).toISOString(),
+      })
+    }
+
+    // 3. Outside the channel's window, only a template goes out. A
+    // channel that declares no window has none, so nothing here applies
+    // to it.
+    const windowHours = sender.capabilities(row.channel).windowHours
+    const payload = row.payload as { template?: unknown }
+    if (windowHours === undefined || payload.template !== undefined) return null
+
+    // Since the person's own last message, which is what every channel
+    // with a window measures. A notice the core wrote into the
+    // conversation is not them writing, so the author is read too.
+    const [latest] = await store.messages.list(
+      { person_id: row.person_id, direction: "inbound", author: "person" },
+      { orderBy: "seq", ascending: false, limit: 1 },
+    )
+    const wroteAt = latest === undefined ? null : new Date(latest.created_at).getTime()
+    const open = wroteAt !== null && now.getTime() - wroteAt <= windowHours * 3_600_000
+    if (open) return null
+
+    const error = `${row.channel} only takes a template more than ${windowHours} hours after the person's last message, and this one is free text`
+    await events.about(scope).record("send_failed", {
+      outboxId: row.id,
+      kind: row.kind,
+      attempts: row.attempts,
+      error,
+      retryable: false,
+    })
+    // LEARN-1: and flagged. A reminder that never reached somebody is
+    // invisible otherwise: nobody is waiting for it and nothing else
+    // would ever say so.
+    await events.about(scope).flag("send_blocked", {
+      outboxId: row.id,
+      channel: row.channel,
+      windowHours,
+      lastMessageAt: latest?.created_at ?? null,
+      why: "free text outside the channel's window",
+    })
+    return finish(row, { status: "failed", error })
+  }
+
   async function attempt(row: OutboxRow): Promise<OutboxRow> {
+    // PRO-3, before anything is sent and before an attempt is counted.
+    if (row.kind === "proactive") {
+      const held = await holdBack(row)
+      if (held !== null) return held
+    }
+
     const attempts = row.attempts + 1
     const last = attempts >= config.sendAttempts
 

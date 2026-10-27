@@ -73,6 +73,7 @@ export const FLAG_KINDS = [
   "frustration",
   "step_cap",
   "confirmation_rejected",
+  "send_blocked",
   "operator",
 ] as const
 

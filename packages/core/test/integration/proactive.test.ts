@@ -185,6 +185,7 @@ describeDatabase("proactive messages", (sql) => {
 
       agent.start()
       await until(() => sender.texts().length > 0)
+      await agent.settled()
 
       expect(sender.texts()).toEqual(["Your table is at 8 tonight."])
       const [row] = await agent.store.outbox.list()
@@ -251,6 +252,7 @@ describeDatabase("proactive messages", (sql) => {
       const second = agentWith()
       second.agent.start()
       await until(() => sender.texts().length > 0)
+      await second.agent.settled()
 
       expect(sender.texts()).toEqual(["Table at 8."])
     })
@@ -345,6 +347,7 @@ describeDatabase("proactive messages", (sql) => {
       })
       agent.start()
       await until(() => sender.texts().length > 0)
+      await agent.settled()
 
       expect(sender.texts()).toEqual(["Your table is at 8 tonight."])
       // A fixed message is the builder's words. Nothing reads them, nothing
@@ -361,6 +364,7 @@ describeDatabase("proactive messages", (sql) => {
       await agent.schedule({ personId: who.id, at: clock.now(), text: "Table at 8." })
       agent.start()
       await until(() => sender.texts().length > 0)
+      await agent.settled()
 
       const [message] = await agent.store.messages.list({ person_id: who.id })
       expect(message?.text).toBe("Table at 8.")
@@ -379,6 +383,7 @@ describeDatabase("proactive messages", (sql) => {
       })
       agent.start()
       await until(() => sender.sent.length > 0)
+      await agent.settled()
 
       expect(sender.sent[0]?.template).toEqual({ name: "table_reminder", vars: { time: "20:00" } })
       expect(brain.calls).toHaveLength(0)
@@ -400,6 +405,7 @@ describeDatabase("proactive messages", (sql) => {
       })
       agent.start()
       await until(() => sender.texts().length > 0)
+      await agent.settled()
 
       expect(sender.texts()).toEqual(["Your table is at 8 tonight, see you then."])
 
@@ -425,6 +431,7 @@ describeDatabase("proactive messages", (sql) => {
       await agent.schedule({ personId: who.id, at: clock.now(), compose: "remind them" })
       agent.start()
       await until(() => sender.texts().length > 0)
+      await agent.settled()
 
       const rows = await agent.store.messages.list({ person_id: who.id }, { orderBy: "seq" })
       expect(rows.map((row) => row.author)).toEqual(["notice", "agent"])
@@ -441,6 +448,7 @@ describeDatabase("proactive messages", (sql) => {
       await agent.schedule({ personId: who.id, at: clock.now(), compose: "remind them" })
       agent.start()
       await until(() => sender.texts().length > 0)
+      await agent.settled()
 
       expect(await agent.store.decisions.count({ kind: "wants_human" })).toBe(0)
       expect(await agent.store.handovers.count()).toBe(0)
@@ -513,6 +521,7 @@ describeDatabase("proactive messages", (sql) => {
 
       agent.start()
       await until(() => sender.texts().length > 0)
+      await agent.settled()
 
       expect(sender.texts()).toEqual(["Your table is at 8 tonight."])
       const job = await jobOf(agent)
@@ -533,6 +542,7 @@ describeDatabase("proactive messages", (sql) => {
 
       agent.start()
       await until(() => sender.texts().length > 0)
+      await agent.settled()
 
       expect(sender.texts()).toEqual(["Your order is ready for collection."])
       const notices = JSON.stringify(

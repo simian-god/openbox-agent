@@ -32,8 +32,10 @@
 // window, are not here. They belong to the outbox, just before a message
 // goes out, which is where the Spec puts them and where T7.2 builds them.
 import { randomUUID } from "node:crypto"
+import type { OpenboxConfig } from "../config/index.ts"
 import type { JobRow, PersonRow, Store } from "../store/index.ts"
 import type { Clock } from "../testing/clock.ts"
+import { inQuietHours, quietHoursEnd } from "../time/index.ts"
 import type { EventWriter } from "./events.ts"
 import type { Jobs } from "./jobs.ts"
 import type { Outbox } from "./outbox.ts"
@@ -79,8 +81,8 @@ export interface Scheduled {
 
 /** What became of one proactive job. Recorded, and returned for a test. */
 export interface Proacted {
-  did: "sent" | "composed" | "silent" | "dropped" | "already" | "gone"
-  why?: "blocked" | "handover" | undefined
+  did: "sent" | "composed" | "silent" | "dropped" | "deferred" | "already" | "gone"
+  why?: "blocked" | "handover" | "opted_out" | "quiet_hours" | undefined
 }
 
 /** What the job row carries. Read defensively: it came from the database. */
@@ -96,6 +98,7 @@ interface Payload {
 }
 
 export interface ProactiveOptions {
+  config: OpenboxConfig
   store: Store
   clock: Clock
   events: EventWriter
@@ -171,7 +174,7 @@ export function templateLine(template: { name: string; vars: Record<string, stri
 }
 
 export function createProactive(options: ProactiveOptions): Proactive {
-  const { store, clock, events, outbox, jobs, compose, handoverFor } = options
+  const { config, store, clock, events, outbox, jobs, compose, handoverFor } = options
 
   /**
    * The person this is for, or a refusal.
@@ -280,6 +283,20 @@ export function createProactive(options: ProactiveOptions): Proactive {
     })
   }
 
+  /**
+   * The same message again, at a later time, as a new job row.
+   *
+   * A job cannot be rescheduled: the loop writes `done` over whatever the
+   * handler left behind, and a dedupe key cannot be moved. So the way to
+   * put something off is to book another one, which is the trick BUILTIN-3
+   * and HAND-6 already use. The new row carries no dedupe key, because the
+   * key it came with is still held by this row.
+   */
+  async function rebook(job: JobRow, at: Date): Promise<void> {
+    const { ref: _ref, ...rest } = job.payload as Record<string, unknown>
+    await jobs.queue({ kind: PROACTIVE_JOB, payload: { ...rest, ref: randomUUID() }, runAt: at })
+  }
+
   async function run(job: JobRow): Promise<Proacted> {
     const payload = job.payload as Payload
     const key = `proactive:${job.id}`
@@ -312,6 +329,12 @@ export function createProactive(options: ProactiveOptions): Proactive {
     // which has to include the ones nobody asked for.
     if (person.blocked) return record({ did: "dropped", why: "blocked" }, person.id)
 
+    // PRO-3's first rule, read here as well as in the outbox. The outbox
+    // is where the Spec puts it and where it is enforced, but by then a
+    // composed message has already paid for a brain call to write
+    // something nobody will ever see.
+    if (person.opted_out) return record({ did: "dropped", why: "opted_out" }, person.id)
+
     // C11: the bot sends nothing to that person while handed over. A
     // reminder is still the bot. Checked here so a composed one costs
     // nothing either. The last moment check belongs in the outbox with
@@ -324,6 +347,18 @@ export function createProactive(options: ProactiveOptions): Proactive {
     if (!composed) {
       await sendFixed(person, payload, key)
       return record({ did: "sent" }, person.id)
+    }
+
+    // PRO-3's second rule, for a composed message only. The outbox would
+    // hold the send until morning on its own, but the words would be last
+    // night's: "your table is at 8 tonight" arriving at nine the next
+    // day. So the job books itself again for the end of quiet hours and
+    // the message gets written then, from what is true then. A fixed
+    // message does not go stale, so that one waits in the outbox exactly
+    // as PRO-3 describes.
+    if (payload.urgent !== true && inQuietHours(config, clock.now())) {
+      await rebook(job, quietHoursEnd(config, clock.now()))
+      return record({ did: "deferred", why: "quiet_hours" }, person.id)
     }
 
     const did = await compose({

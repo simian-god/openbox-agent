@@ -234,6 +234,33 @@ const nothingHappened = (outcome: TurnResult["outcome"]): TurnResult => ({
   outcome,
 })
 
+/**
+ * LOOP-5 step 2: what the person is told when they opt out, and back in.
+ *
+ * Fixed lines, not the brain's. A person who has just asked to be left
+ * alone should not have to read a sentence somebody's model wrote, and
+ * the way back has to be in the same breath or it is not a way back.
+ */
+export const OPTED_OUT_REPLY =
+  "You will not get any more messages from us. Send START whenever you want them again."
+export const OPTED_IN_REPLY =
+  "You will get messages from us again. Send STOP any time to stop them."
+
+/**
+ * LOOP-5 step 2: which of the two words this message is, if it is one.
+ *
+ * "Exactly STOP or START (any case)" in the Spec's words. Surrounding
+ * space is ignored, because a phone keyboard adds one and nobody means
+ * anything different by it. Anything longer is a sentence for the brain:
+ * "stop by on friday" is not an opt out.
+ */
+export function optOutWord(text: string | null): "stop" | "start" | undefined {
+  const word = (text ?? "").trim().toLowerCase()
+  if (word === "stop") return "stop"
+  if (word === "start") return "start"
+  return undefined
+}
+
 /** One reply per set of messages answered, however many turns it takes. */
 export function replyKey(inboxIds: string[]): string {
   const of = [...inboxIds].sort().join(",")
@@ -646,6 +673,7 @@ export function createAgent(options: AgentOptions): Agent {
   // composed message needs lives here, because a turn needs the lease,
   // the version row and everything else `createAgent` holds.
   const proactive = createProactive({
+    config,
     store,
     clock,
     events,
@@ -960,6 +988,39 @@ export function createAgent(options: AgentOptions): Agent {
     // no decision request and no context reads at all.
     if (person.blocked) {
       return finish(nothingHappened("blocked"), turnRow, turnEvents, startedAt, batch.length)
+    }
+
+    // LOOP-5 step 2: STOP and START. Before the handover check, because
+    // LOOP-5's order says so and because the one message a person must
+    // always be able to send is the one that makes us stop. It costs no
+    // brain call and no decision request: the whole turn is a column on
+    // the person and one fixed line back.
+    //
+    // The last of them decides, so STOP then START in one burst leaves
+    // them opted in, which is the order they said it in.
+    const words = batch.map((row) => optOutWord(row.text)).filter((word) => word !== undefined)
+    const word = words[words.length - 1]
+    if (word !== undefined) {
+      const out = word === "stop"
+      await store.people.update({ id: person.id }, { opted_out: out })
+      const text = out ? OPTED_OUT_REPLY : OPTED_IN_REPLY
+      // A reply, not a proactive message, so PRO-3 lets it out: the
+      // confirmation that they will hear nothing more has to be the one
+      // thing that still reaches them.
+      await deliver({
+        person,
+        turnId: turnRow.id,
+        text,
+        key: replyKey(inboxIds),
+        kind: "reply",
+      })
+      return finish(
+        { ...nothingHappened(out ? "opted_out" : "opted_in"), reply: text },
+        turnRow,
+        turnEvents,
+        startedAt,
+        batch.length,
+      )
     }
 
     // One Relayed per message, whichever direction this turn is. The

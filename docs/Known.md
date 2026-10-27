@@ -450,8 +450,12 @@ that needs a template for an event today can call `schedule` with `at` set
 to now, which is the same job row and the same code path, so nothing is
 blocked meanwhile.
 
-**What it costs.** Nothing until T7.2. That is the row that builds the
-window rule, and the row where the flag starts firing.
+**What it costs.** As of T7.2, which built the window rule, it costs a
+brain call per blocked event. A triggered message is composed first and
+refused afterwards, because PRO-3's rules live in the outbox, just before
+the send, which is where the Spec puts them. The refusal is recorded and
+flagged as `send_blocked`, so it is visible rather than silent, but the
+message still does not arrive.
 
 **What would resolve it.** The builder deciding whether `trigger` also
 takes `text` and `template` the way `schedule` does, or whether a map in
