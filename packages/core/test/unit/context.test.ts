@@ -3,6 +3,7 @@ import {
   buildRuntimeBlock,
   buildSystem,
   buildMessages,
+  withoutImages,
   partsInZone,
 } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
@@ -187,7 +188,7 @@ describe("LOOP-7: the messages", () => {
   test("LOOP-7: history comes first, then the current batch", () => {
     const messages = buildMessages(
       [message({ text: "older" }), message({ text: "newer", author: "agent" })],
-      ["what I just said"],
+      [{ text: "what I just said" }],
     )
 
     expect(messages).toEqual([
@@ -216,7 +217,64 @@ describe("LOOP-7: the messages", () => {
   })
 
   test("LOOP-7: a whole batch is passed, in arrival order", () => {
-    const messages = buildMessages([], ["first", "second", "third"])
+    const messages = buildMessages([], [{ text: "first" }, { text: "second" }, { text: "third" }])
     expect(messages.map((m) => ("text" in m ? m.text : ""))).toEqual(["first", "second", "third"])
+  })
+})
+
+describe("MEDIA-2: pictures on a message", () => {
+  test("MEDIA-2: images ride along with the text of the batch", () => {
+    const messages = buildMessages(
+      [],
+      [{ text: "is this still on?", images: [{ ref: "https://m/pic", mime: "image/jpeg" }] }],
+    )
+
+    const said = messages[0]
+    expect(said?.role).toBe("person")
+    expect(said !== undefined && "images" in said ? said.images : undefined).toEqual([
+      { ref: "https://m/pic", mime: "image/jpeg" },
+    ])
+  })
+
+  test("MEDIA-2: a message with no images has no images field at all", () => {
+    // Not an empty array. The field being absent is what lets a brain
+    // adapter send the plain string shape, which is the common case.
+    const messages = buildMessages([], [{ text: "just typing" }])
+
+    expect(messages[0] !== undefined && "images" in messages[0]).toBe(false)
+  })
+
+  test("MEDIA-2: an empty image list is treated as none", () => {
+    const messages = buildMessages([], [{ text: "hello", images: [] }])
+
+    expect(messages[0] !== undefined && "images" in messages[0]).toBe(false)
+  })
+
+  test("MEDIA-2: withoutImages leaves the words and takes the pictures", () => {
+    const messages = buildMessages(
+      [],
+      [{ text: "what is this", images: [{ ref: "r", mime: "image/png" }] }],
+    )
+
+    const stripped = withoutImages(messages)
+    expect(stripped[0] !== undefined && "images" in stripped[0]).toBe(false)
+    expect(stripped[0] !== undefined && "text" in stripped[0] ? stripped[0].text : "").toBe(
+      "what is this",
+    )
+  })
+
+  test("MEDIA-2: withoutImages leaves every other message untouched", () => {
+    const messages = buildMessages([], [{ text: "plain" }])
+
+    expect(withoutImages(messages)).toEqual(messages)
+  })
+
+  test("LOOP-7: history never carries pictures, however old the photo was", () => {
+    // Bounded on purpose. Re-sending every picture a person ever sent on
+    // every turn would grow the request with the conversation, and the
+    // caption is already in the history as text.
+    const messages = buildMessages([message({ text: "a photo I sent", author: "person" })], [])
+
+    expect(messages[0] !== undefined && "images" in messages[0]).toBe(false)
   })
 })

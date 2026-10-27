@@ -14,7 +14,13 @@ import type { Brain, BrainMessage } from "../providers/brains/types.ts"
 import type { Store, PersonRow } from "../store/index.ts"
 import type { Tool, ToolRegistry, ToolContext } from "../tools/index.ts"
 import type { Clock } from "../testing/clock.ts"
-import { buildMessages, buildRuntimeBlock, buildSystem } from "./context.ts"
+import {
+  buildMessages,
+  buildRuntimeBlock,
+  buildSystem,
+  withoutImages,
+  type Said,
+} from "./context.ts"
 import type { MessageRow } from "../store/index.ts"
 import { noEvents, type EventWriter } from "./events.ts"
 import { route, ROUTING_QUESTION, type RoutingState } from "./routing.ts"
@@ -41,10 +47,18 @@ export interface TurnInput {
   tools: ToolRegistry
   clock: Clock
   person: PersonRow
-  /** The messages this turn is answering, in arrival order (LOOP-3). */
-  batch: string[]
+  /**
+   * The messages this turn is answering, in arrival order (LOOP-3).
+   *
+   * Text, not keystrokes: MEDIA-1 makes a voice note's transcript the
+   * text and MEDIA-2 makes a picture's caption the text. Any images ride
+   * along for a brain that can read them.
+   */
+  batch: Said[]
   prompt: string
   turnId: string
+  /** MEDIA-4: how a tool sends a file. Absent means it cannot. */
+  sendFile?: ToolContext["sendFile"] | undefined
   /** EVT-1: where each step records what it did. Defaults to recording nothing. */
   events?: EventWriter | undefined
   /**
@@ -133,9 +147,10 @@ export interface TurnResult {
    * `receiveAndWait` gets a result rather than a rejection.
    *
    * Nor are `blocked`, `handover`, `relayed`, `opted_out`, `opted_in`,
-   * `rate_limited` and `no_transcript`. All seven are decided before
-   * anything in this file runs, so none of those turns reaches it
-   * (ROLE-4, HAND-5, HAND-4, LOOP-5 steps 2 and 3, MEDIA-1).
+   * `rate_limited`, `no_transcript` and `cannot_read_images`. All eight
+   * are decided before anything in this file runs, so none of those turns
+   * reaches it (ROLE-4, HAND-5, HAND-4, LOOP-5 steps 2 and 3, MEDIA-1,
+   * MEDIA-2).
    */
   outcome:
     | "replied"
@@ -150,6 +165,7 @@ export interface TurnResult {
     | "opted_in"
     | "rate_limited"
     | "no_transcript"
+    | "cannot_read_images"
   /** Set only when the outcome is `failed`. */
   error?: string | undefined
 }
@@ -249,7 +265,9 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   // batch, and the active task, which arrives with tasks in M4.
   const routingState = (): RoutingState => ({
     messages: recent(),
-    batch,
+    // MEDIA-2: the decision model always works from text, which is the
+    // transcript or the caption. It is never shown a picture.
+    batch: batch.map((said) => said.text),
     activeTask: input.activeTask ?? null,
   })
 
@@ -404,7 +422,10 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         output = await brain.complete({
           model,
           system,
-          messages,
+          // MEDIA-2, per brain rather than per turn: BRAIN-5's chain can
+          // hold brains that differ on this, and a fallback that cannot
+          // read pictures must still be able to answer the caption.
+          messages: brain.supportsImages ? messages : withoutImages(messages),
           tools: offered.map((tool) => ({
             name: tool.name,
             description: tool.brainDescription,
@@ -677,6 +698,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       config,
       facts: knownFacts,
       turnId,
+      ...(input.sendFile !== undefined ? { sendFile: input.sendFile } : {}),
     })
 
     const ranAt = clock.now().getTime()

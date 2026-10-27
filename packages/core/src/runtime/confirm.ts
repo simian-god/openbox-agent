@@ -129,7 +129,14 @@ export interface ConfirmOptions {
    * A handler that behaved differently depending on which path reached it
    * is the one difference nobody would think to test for.
    */
-  contextFor: (person: PersonRow) => Promise<ToolContext>
+  /**
+   * CONF-4 and MEDIA-4: the action is passed as well as the person, so a
+   * tool that sends a file from a confirmed call can key it by the
+   * action. Without that the same confirmed call retried would send the
+   * file twice, and a confirmed call is the one place where that matters
+   * most.
+   */
+  contextFor: (person: PersonRow, action: { id: string }) => Promise<ToolContext>
 }
 
 export interface CreateRequest {
@@ -426,7 +433,7 @@ export function createConfirmations(options: ConfirmOptions): Confirmations {
       try {
         const result = await tool.handler(
           tool.parse(claimed.args) as never,
-          await options.contextFor(person),
+          await options.contextFor(person, claimed),
         )
         const [executed] = await store.pendingActions.update(
           { id: claimed.id },

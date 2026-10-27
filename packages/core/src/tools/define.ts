@@ -68,6 +68,23 @@ export interface ToolContext {
     // is a change to the store's own surface, not to this declaration.
     table(name: string): unknown
   }
+  /**
+   * MEDIA-4: sends a file to this person, through the outbox.
+   *
+   * Through the outbox, not through the channel, so a file is written
+   * down before it is sent, retried on the same rules as a reply, and
+   * never sent twice (LOOP-11). It is refused when the channel has no
+   * `files` capability, because the alternative is a send that fails at
+   * the vendor with nothing in the trace to say why.
+   *
+   * The url has to be one the channel can fetch. The core does not
+   * upload: a tool that has bytes rather than a link puts them somewhere
+   * the channel can reach first.
+   */
+  readonly sendFile: (
+    file: { url: string; name: string; mime: string },
+    options?: { caption?: string | undefined },
+  ) => Promise<void>
   /** Goes to the turn's record, not to the person. */
   readonly log: (message: string, detail?: Record<string, unknown>) => void
 }

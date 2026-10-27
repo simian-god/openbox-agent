@@ -630,3 +630,44 @@ valid config id, and the switch stays, so nothing has to be rebuilt.
 `OPENBOX_LIVE=1 OPENBOX_LIVE_CODEX=1 bun test packages/core/test/live`. That
 runs both the Codex live test and its C2 conversation. Expect minutes, because
 it spawns a process per step.
+
+## K25. An image reaches the brain only if the provider can fetch the ref
+
+**Status:** open by design, and documented.
+
+**What happens.** MEDIA-2 sends a picture to the brain as
+`{ type: "image_url", image_url: { url } }`, and the url is the channel's media
+ref, passed through. Confirmed against OpenRouter's own API reference: a plain
+https URL is accepted and so is a `data:` URL.
+
+Passed through means the provider does the fetching, not the core. So a channel
+whose media needs an auth header to read, which is how WhatsApp's media
+endpoint works, hands over a url the provider cannot open. The picture does not
+arrive and the brain answers as though there were none.
+
+This is the opposite of the transcriber, which fetches the bytes itself because
+its endpoint takes no url at all.
+
+**What it costs.** For a glue that already has public or signed media urls,
+nothing. For one that does not, a photo silently contributes nothing: the
+caption still becomes the text and the brain still answers it, so the person
+gets a reply rather than an error, which is the part that makes it quiet.
+
+**What we did.** Left the ref as the url and said so here, rather than fetching
+and base64ing every image into a data url. That choice is not obvious and the
+reasoning is worth keeping: a voice note is a few seconds of audio, while a
+photo from a phone is several megabytes, and inlining one as base64 puts it
+through the brain's token count on every step of the turn it survives in.
+Making that trade for every agent, to fix a problem only some channels have,
+is the wrong default.
+
+The way out is deliberately open: `media.ref` is whatever the glue puts in it.
+A glue that cannot expose a public url can put a signed url there, or a
+`data:` url, and the adapter passes either through untouched. There is a test
+for the data url case for exactly that reason.
+
+**What would resolve it.** The channel glue, when WhatsApp is built. It is the
+piece that knows how to turn a WhatsApp media id into something fetchable, and
+it is the piece that should decide whether that is a signed url or bytes. If
+several channels turn out to need bytes, the honest fix is a `fetchImages`
+option on the brain adapter rather than a change here.

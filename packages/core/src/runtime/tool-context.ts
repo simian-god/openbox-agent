@@ -19,6 +19,12 @@ export function toolContext(input: {
   /** TOOL-4: read once when the turn started, so every step agrees. */
   facts?: Record<string, string> | undefined
   turnId?: string | undefined
+  /**
+   * MEDIA-4. Left out, a tool that tries to send a file is told it
+   * cannot rather than appearing to succeed, which is the honest answer
+   * for a context built outside a turn.
+   */
+  sendFile?: ToolContext["sendFile"] | undefined
 }): ToolContext {
   const { store, clock, person, config } = input
   return {
@@ -37,6 +43,11 @@ export function toolContext(input: {
       language: person.language,
     },
     db: store,
+    sendFile:
+      input.sendFile ??
+      (async () => {
+        throw new Error("this agent cannot send files here")
+      }),
     // `ctx.log` goes to the turn's record. Nothing reads it yet, so it is
     // deliberately a no op rather than a console write a builder would
     // then find in production logs.

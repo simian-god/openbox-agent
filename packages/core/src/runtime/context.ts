@@ -153,12 +153,46 @@ export function toBrainMessage(row: MessageRow): BrainMessage {
 }
 
 /**
+ * One message of the current batch, as the brain is told about it.
+ *
+ * Text rather than "what they typed", because MEDIA-1 makes a voice
+ * note's transcript the text and MEDIA-2 makes a picture's caption the
+ * text. Images ride alongside for a brain that can look at them.
+ */
+export interface Said {
+  text: string
+  images?: { ref: string; mime: string }[] | undefined
+}
+
+/**
  * The history LOOP-7 asks for: the last `history` messages with this
  * person, oldest first, then the current batch.
  */
-export function buildMessages(history: MessageRow[], batch: string[]): BrainMessage[] {
+export function buildMessages(history: MessageRow[], batch: Said[]): BrainMessage[] {
   return [
     ...history.map(toBrainMessage),
-    ...batch.map((text): BrainMessage => ({ role: "person", text })),
+    ...batch.map(
+      (said): BrainMessage => ({
+        role: "person",
+        text: said.text,
+        ...(said.images !== undefined && said.images.length > 0 ? { images: said.images } : {}),
+      }),
+    ),
   ]
+}
+
+/**
+ * MEDIA-2: the same messages with the pictures taken out.
+ *
+ * BRAIN-5's chain can hold brains that differ on this, so the decision is
+ * per brain rather than per turn: the one being asked gets pictures only
+ * if it says it can read them. Sending an image part to a brain that
+ * cannot is not a graceful degradation, it is a request that fails.
+ */
+export function withoutImages(messages: BrainMessage[]): BrainMessage[] {
+  return messages.map((message) => {
+    if (message.role !== "person" || message.images === undefined) return message
+    const { images: _images, ...rest } = message
+    return rest
+  })
 }

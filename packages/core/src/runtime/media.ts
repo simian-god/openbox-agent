@@ -16,6 +16,17 @@ import type { Transcriber } from "../providers/transcribers/types.ts"
 export const TYPE_INSTEAD_REPLY =
   "Sorry, I could not make out that voice note. Could you type what you need instead?"
 
+/**
+ * MEDIA-2: what a person gets when no brain here can read a picture.
+ *
+ * It says what cannot be done and what to do instead, because a person who
+ * has just sent a photo of a menu needs the way forward, not an apology.
+ * A caption they sent with it is still answered, so this line and a real
+ * answer can both arrive.
+ */
+export const CANNOT_READ_IMAGES_REPLY =
+  "Sorry, I cannot look at pictures. Could you tell me in words what you need?"
+
 /** One item of media on an inbound message, as the channel described it. */
 export interface MediaItem {
   kind: string
@@ -30,6 +41,8 @@ export interface Heard {
   text: string
   /** MEDIA-1: the words, kept apart from the text actually used. */
   transcript: string | null
+  /** MEDIA-2: the pictures, for a brain that can look at them. */
+  images: { ref: string; mime: string }[]
 }
 
 export interface ListenResult {
@@ -52,16 +65,25 @@ export interface ListenResult {
  * request built out of a half row.
  */
 export function audioIn(media: unknown): MediaItem[] {
+  return mediaIn(media, "audio")
+}
+
+/** MEDIA-2: the image items on a stored `media` column, read the same way. */
+export function imagesIn(media: unknown): MediaItem[] {
+  return mediaIn(media, "image")
+}
+
+function mediaIn(media: unknown, kind: "audio" | "image"): MediaItem[] {
   if (!Array.isArray(media)) return []
   const items: MediaItem[] = []
   for (const entry of media) {
     if (entry === null || typeof entry !== "object") continue
     const item = entry as Record<string, unknown>
-    if (item["kind"] !== "audio") continue
+    if (item["kind"] !== kind) continue
     if (typeof item["ref"] !== "string" || item["ref"] === "") continue
     if (typeof item["mime"] !== "string" || item["mime"] === "") continue
     items.push({
-      kind: "audio",
+      kind,
       ref: item["ref"],
       mime: item["mime"],
       ...(typeof item["caption"] === "string" ? { caption: item["caption"] } : {}),
@@ -98,7 +120,9 @@ export async function listen(options: ListenOptions): Promise<ListenResult> {
 
   for (const row of batch) {
     const audio = audioIn(row.media)
-    if (audio.length === 0) continue
+    const pictures = imagesIn(row.media)
+    // Nothing attached, so nothing to do and no row in the result.
+    if (audio.length === 0 && pictures.length === 0) continue
 
     const words: string[] = []
     let anyHere = false
@@ -138,16 +162,21 @@ export async function listen(options: ListenOptions): Promise<ListenResult> {
     }
 
     const transcript = anyHere ? words.join("\n").trim() : null
-    // The caption comes along, because a person who records a voice note
-    // and types a word with it meant both.
-    const captions = audio
+    // Captions from everything attached. Somebody who sends a photo and
+    // types a word with it meant both, and MEDIA-2 says the caption is
+    // the text when the picture cannot be read.
+    const captions = [...audio, ...pictures]
       .map((item) => item.caption)
       .filter((caption): caption is string => caption !== undefined && caption.trim() !== "")
     const parts = [row.text ?? "", ...captions, transcript ?? ""]
       .map((part) => part.trim())
       .filter((part) => part !== "")
 
-    heard.set(row.id, { text: parts.join("\n"), transcript })
+    heard.set(row.id, {
+      text: parts.join("\n"),
+      transcript,
+      images: pictures.map((item) => ({ ref: item.ref, mime: item.mime })),
+    })
   }
 
   return { heard, failed, language, costUsd }

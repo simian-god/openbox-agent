@@ -43,7 +43,14 @@ import {
 } from "./handover.ts"
 import { createJobs, type Jobs } from "./jobs.ts"
 import { createOutbox, type Outbox } from "./outbox.ts"
-import { audioIn, listen, TYPE_INSTEAD_REPLY, type ListenResult } from "./media.ts"
+import {
+  audioIn,
+  CANNOT_READ_IMAGES_REPLY,
+  imagesIn,
+  listen,
+  TYPE_INSTEAD_REPLY,
+  type ListenResult,
+} from "./media.ts"
 import {
   costOf,
   createLimits,
@@ -64,6 +71,7 @@ import type { Inbound, Sender } from "./sender.ts"
 import { runTurn, type TurnResult } from "./turn.ts"
 import { createConfirmations, EXPIRE_JOB, type Confirmations, type Resolution } from "./confirm.ts"
 import { toolContext } from "./tool-context.ts"
+import type { ToolContext } from "../tools/index.ts"
 import type { DecisionModel } from "../providers/decision/types.ts"
 import type { Transcriber } from "../providers/transcribers/types.ts"
 import { ensureVersionRow, versionHash } from "./version.ts"
@@ -596,6 +604,53 @@ export function createAgent(options: AgentOptions): Agent {
     ...(options.onWorkerError !== undefined ? { onError: options.onWorkerError } : {}),
   })
 
+  /**
+   * MEDIA-4: how a tool sends a file, for one person and one piece of work.
+   *
+   * Shared by a step and by a confirmed call, which is the whole reason
+   * `tool-context.ts` exists: a tool must not behave differently depending
+   * on whether it was confirmed. A probe found that it did, because the
+   * confirmed path had been given no `sendFile` at all and a tool sending a
+   * receipt would have thrown after the person agreed to it.
+   *
+   * `key` is what makes it exactly once (LOOP-11). A step passes the key of
+   * the messages it is answering, so a turn recovered after a crash answers
+   * the same batch and produces the same keys. A confirmed call passes the
+   * action's id, which is stable for that one call. The counter is what
+   * separates two different files in the same piece of work.
+   *
+   * Refused outright when the channel cannot carry files, as MEDIA-4 says.
+   * The useful place to refuse is here: the brain reads the error and can
+   * answer in words instead, which it cannot do if the send fails later at
+   * the vendor with nothing in the trace to explain it.
+   */
+  function fileSender(where: {
+    person: PersonRow
+    key: string
+    turnId?: string | undefined
+  }): ToolContext["sendFile"] {
+    let sent = 0
+    return async (file, options) => {
+      if (!deps.sender.capabilities(where.person.channel).files) {
+        throw new Error(`the ${where.person.channel} channel cannot send files`)
+      }
+
+      sent += 1
+      await outbox.queue({
+        personId: where.person.id,
+        ...(where.turnId !== undefined ? { turnId: where.turnId } : {}),
+        kind: "reply",
+        channel: where.person.channel,
+        channelUserId: where.person.channel_user_id,
+        ...(options?.caption !== undefined && options.caption !== ""
+          ? { text: options.caption }
+          : {}),
+        file,
+        idempotencyKey: `file:${where.key}:${sent}`,
+      })
+    }
+  }
+
   // CONF-1 to CONF-8. Built only when the agent has something to confirm,
   // so an agent with no irreversible tools carries no confirm machinery
   // and nothing can accidentally depend on it.
@@ -612,7 +667,7 @@ export function createAgent(options: AgentOptions): Agent {
           sender: deps.sender,
           secret,
           toolByName: (name) => tools.get(name),
-          contextFor: async (person) =>
+          contextFor: async (person, action) =>
             toolContext({
               store,
               clock,
@@ -621,6 +676,12 @@ export function createAgent(options: AgentOptions): Agent {
               facts: Object.fromEntries(
                 (await factsFor(store, person.id)).map((fact) => [fact.key, fact.value]),
               ),
+              // MEDIA-4: the same context a step gets, which is the whole
+              // point of this file existing. A tool that sends a receipt
+              // must not work when called and throw when confirmed, and
+              // that is exactly what happens if this is left out: a probe
+              // found it, because nothing else would have.
+              sendFile: fileSender({ person, key: `action:${action.id}` }),
             }),
         })
 
@@ -1045,7 +1106,7 @@ export function createAgent(options: AgentOptions): Agent {
         // including for a blocked person and for a transcription that
         // failed, so the audio can still be found. The audio itself never
         // is.
-        const ref = audioIn(row.media)[0]?.ref
+        const ref = audioIn(row.media)[0]?.ref ?? imagesIn(row.media)[0]?.ref
         return {
           person_id: person.id,
           turn_id: turnRow.id,
@@ -1085,16 +1146,27 @@ export function createAgent(options: AgentOptions): Agent {
       person = { ...person, language: listened.language }
     }
 
-    // MEDIA-1's last clause: with no transcriber, or on failure, the
-    // person is asked to type instead.
+    // MEDIA-4: keyed by the messages being answered, so a recovered
+    // turn over the same batch sends the same file once (LOOP-11).
+    const sendFile = fileSender({ person, key: replyKey(inboxIds), turnId: turnRow.id })
+
+    // MEDIA-2: whether any brain in the chain can look at a picture.
     //
-    // Keyed by the messages it answers, like every other reply, so a
-    // recovered turn over the same batch says it once (LOOP-11).
+    // Asked of the whole chain rather than the primary, because BRAIN-5
+    // may fall through to another brain and the person should be told
+    // "I cannot see pictures" only when nobody could.
+    const canSeeImages = deps.brains.some((brain) => brain.supportsImages)
+    const sentPictures = [...listened.heard.values()].some((heard) => heard.images.length > 0)
+    const unreadablePictures = sentPictures && !canSeeImages
+
+    // MEDIA-1's last clause, and MEDIA-2's: with no transcriber or on
+    // failure, and with a picture nobody can read, the person is told so
+    // and told what to do instead.
     //
-    // Then the turn ends only if there is nothing left to answer. A person
-    // who sent a voice note and typed a line with it has still said
-    // something, and the brain should answer the part that arrived rather
-    // than ignore it because the other part did not.
+    // Each is keyed by the messages it answers, like every other reply, so
+    // a recovered turn over the same batch says each one once (LOOP-11).
+    // Both can happen at once, because one message can carry a voice note
+    // and a photo, and then both lines are true and both are sent.
     if (listened.failed) {
       await deliver({
         person,
@@ -1103,15 +1175,31 @@ export function createAgent(options: AgentOptions): Agent {
         key: `transcript:${replyKey(inboxIds)}`,
         kind: "reply",
       })
+    }
+    if (unreadablePictures) {
+      await deliver({
+        person,
+        turnId: turnRow.id,
+        text: CANNOT_READ_IMAGES_REPLY,
+        key: `images:${replyKey(inboxIds)}`,
+        kind: "reply",
+      })
+    }
 
+    // The turn ends here only if nothing readable was said. Somebody who
+    // sent a photo and typed a line with it has still asked a question,
+    // and MEDIA-2 says the caption is the text, so the brain answers it.
+    if (listened.failed || unreadablePictures) {
       const anythingSaid = batch.some((row) => {
-        const said = listened.heard.get(row.id)
-        return (said?.text ?? row.text ?? "").trim() !== ""
+        const heard = listened.heard.get(row.id)
+        return (heard?.text ?? row.text ?? "").trim() !== ""
       })
       if (!anythingSaid) {
         // No brain call and no decision request: there is nothing to ask
         // about, and asking would spend money on silence.
-        return settle({ ...nothingHappened("no_transcript"), reply: TYPE_INSTEAD_REPLY })
+        const told = listened.failed ? TYPE_INSTEAD_REPLY : CANNOT_READ_IMAGES_REPLY
+        const why = listened.failed ? "no_transcript" : "cannot_read_images"
+        return settle({ ...nothingHappened(why), reply: told })
       }
     }
 
@@ -1260,8 +1348,19 @@ export function createAgent(options: AgentOptions): Agent {
       // the brain is asked about. `heard` wins even when it is empty,
       // because an empty one means a voice note nobody could make out and
       // the row's own text is already folded into it.
-      const said = listened.heard.get(row.id)?.text ?? row.text ?? ""
-      return focus === undefined ? said : asCommand(said)
+      const heard = listened.heard.get(row.id)
+      const text = heard?.text ?? row.text ?? ""
+      const images = heard?.images ?? []
+      return {
+        text: focus === undefined ? text : asCommand(text),
+        // MEDIA-2: attached whenever there are any. Which brain actually
+        // receives them is decided per brain in `runTurn`, because
+        // BRAIN-5's chain can hold brains that differ. Guarding here as
+        // well read like caution and was untestable: with every brain
+        // stripped individually, attaching or not made no difference
+        // anybody could observe. A probe found that and it came out.
+        ...(images.length > 0 ? { images } : {}),
+      }
     })
 
     // HAND-4: who this operator is replying to, for the runtime block.
@@ -1284,7 +1383,7 @@ export function createAgent(options: AgentOptions): Agent {
         const tapped = row.action as { payload?: unknown } | null
         const resolution = await confirmations.resolve({
           person,
-          ...(row.text !== null ? { text: texts[index] ?? row.text } : {}),
+          ...(row.text !== null ? { text: texts[index]?.text ?? row.text } : {}),
           ...(typeof tapped?.payload === "string" ? { payload: tapped.payload } : {}),
         })
         if (resolution === null) continue
@@ -1329,6 +1428,7 @@ export function createAgent(options: AgentOptions): Agent {
       batch: texts,
       prompt,
       turnId: turnRow.id,
+      sendFile,
       events: turnEvents,
       ...(notices.length > 0 ? { notices } : {}),
       ...(confirmations !== undefined ? { confirm: confirmations } : {}),

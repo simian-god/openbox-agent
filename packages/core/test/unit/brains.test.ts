@@ -368,3 +368,83 @@ describe("TEST-3: the scripted brain", () => {
     expect((await brain.complete(emptyInput)).text).toBe("second")
   })
 })
+
+describe("MEDIA-2: images on the wire", () => {
+  // Checked against OpenRouter's own API reference on 2026-10-27 rather
+  // than a mirror, because two mirrors disagreed. The image part is
+  // `{ type: "image_url", image_url: { url } }` and the url takes a plain
+  // https URL as well as a data: URL.
+  test("MEDIA-2: a message with no images stays a plain string", () => {
+    const wire = toWireMessages([{ role: "person", text: "Can I book?" }])
+
+    expect(wire[0]).toEqual({ role: "user", content: "Can I book?" })
+  })
+
+  test("MEDIA-2: a picture becomes an image_url part beside the text", () => {
+    const wire = toWireMessages([
+      {
+        role: "person",
+        text: "is this still on?",
+        images: [{ ref: "https://m/pic.jpg", mime: "image/jpeg" }],
+      },
+    ])
+
+    expect(wire[0]).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "is this still on?" },
+        { type: "image_url", image_url: { url: "https://m/pic.jpg" } },
+      ],
+    })
+  })
+
+  test("MEDIA-2: a photo with no caption sends the picture and no empty text part", () => {
+    const wire = toWireMessages([
+      { role: "person", text: "", images: [{ ref: "https://m/pic.jpg", mime: "image/jpeg" }] },
+    ])
+
+    expect(wire[0]).toEqual({
+      role: "user",
+      content: [{ type: "image_url", image_url: { url: "https://m/pic.jpg" } }],
+    })
+  })
+
+  test("MEDIA-2: several pictures are several parts, in order", () => {
+    const wire = toWireMessages([
+      {
+        role: "person",
+        text: "these two",
+        images: [
+          { ref: "https://m/a.jpg", mime: "image/jpeg" },
+          { ref: "https://m/b.png", mime: "image/png" },
+        ],
+      },
+    ])
+
+    const content = (wire[0] as { content: { image_url?: { url: string } }[] }).content
+    expect(content.map((part) => part.image_url?.url)).toEqual([
+      undefined,
+      "https://m/a.jpg",
+      "https://m/b.png",
+    ])
+  })
+
+  test("MEDIA-2: a data URL in the ref goes through untouched", () => {
+    // The way out for a channel whose media needs an auth header: the
+    // provider does the fetching, so the ref has to be something it can
+    // reach, and a data URL always is (Known K25).
+    const data = "data:image/png;base64,iVBORw0KGgo="
+    const wire = toWireMessages([
+      { role: "person", text: "", images: [{ ref: data, mime: "image/png" }] },
+    ])
+
+    expect(wire[0]).toEqual({
+      role: "user",
+      content: [{ type: "image_url", image_url: { url: data } }],
+    })
+  })
+
+  test("MEDIA-2: this brain says it can read pictures", () => {
+    expect(openRouterBrain({ apiKey: "sk-test" }).supportsImages).toBe(true)
+  })
+})

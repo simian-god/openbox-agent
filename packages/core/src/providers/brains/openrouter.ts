@@ -30,9 +30,28 @@ export interface OpenRouterOptions {
   appName?: string | undefined
 }
 
+/**
+ * MEDIA-2: one part of a multipart user message.
+ *
+ * Checked against OpenRouter's own API reference on 2026-10-27, because a
+ * mirror of the docs had a different shape. The image part is
+ * `{ type: "image_url", image_url: { url } }`, and `url` takes a plain
+ * https URL or a `data:` URL, both documented and both accepted.
+ *
+ * That the ref is passed through as the url rather than fetched is worth
+ * knowing: the provider does the fetching, so the ref has to be something
+ * the provider can reach. A channel whose media needs an auth header can
+ * put a signed URL or a data URL in the ref, which is why the core does
+ * not assume either (Known K25).
+ */
+type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+
 /** The wire shape of a chat message, as the API wants it. */
 type WireMessage =
   | { role: "system" | "user" | "assistant"; content: string }
+  | { role: "user"; content: ContentPart[] }
   | {
       role: "assistant"
       content: null
@@ -52,9 +71,21 @@ export function toWireMessages(messages: BrainMessage[]): WireMessage[] {
 
   for (const message of messages) {
     switch (message.role) {
-      case "person":
-        wire.push({ role: "user", content: message.text })
+      case "person": {
+        // MEDIA-2: a plain string when there is nothing to look at, so the
+        // common case stays the shape every provider handles best.
+        if (message.images === undefined || message.images.length === 0) {
+          wire.push({ role: "user", content: message.text })
+          break
+        }
+        const parts: ContentPart[] = []
+        if (message.text !== "") parts.push({ type: "text", text: message.text })
+        for (const image of message.images) {
+          parts.push({ type: "image_url", image_url: { url: image.ref } })
+        }
+        wire.push({ role: "user", content: parts })
         break
+      }
       case "agent":
         wire.push({ role: "assistant", content: message.text })
         break

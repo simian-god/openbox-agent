@@ -6,8 +6,32 @@
 // transcription must not become an empty message, and it must not become
 // an exception that loses the turn.
 import { test, expect, describe } from "bun:test"
-import { audioIn, listen, TYPE_INSTEAD_REPLY } from "../../src/runtime/media.ts"
+import {
+  audioIn,
+  CANNOT_READ_IMAGES_REPLY,
+  imagesIn,
+  listen,
+  TYPE_INSTEAD_REPLY,
+} from "../../src/runtime/media.ts"
 import { TranscribeError, type Transcriber } from "../../src/providers/transcribers/types.ts"
+import { toolContext } from "../../src/runtime/tool-context.ts"
+import { fixedClock } from "../../src/testing/clock.ts"
+import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
+
+/** The least config `toolContext` needs, for the two tests that build one. */
+const smallConfig = (): OpenboxConfig =>
+  defineConfig({
+    name: "restaurant",
+    mode: "development",
+    timezone: "Asia/Kolkata",
+    hours: { mon: [["11:00", "23:00"]] },
+    brain: { id: "openrouter", model: "test/model" },
+    decisionModel: { id: "jev" },
+    retriever: { id: "local" },
+    limits: { dailySpendUsd: 5 },
+    notice: "We store your messages.",
+    retentionDays: 365,
+  })
 
 const VOICE = [{ kind: "audio", ref: "https://m/1", mime: "audio/ogg" }]
 
@@ -244,5 +268,143 @@ describe("MEDIA-1: when a voice note cannot be heard", () => {
     // Not the brain's words. Somebody whose voice note failed needs the
     // way forward in the same sentence.
     expect(TYPE_INSTEAD_REPLY.toLowerCase()).toContain("type")
+  })
+})
+
+describe("MEDIA-2: pictures", () => {
+  test("MEDIA-2: image items are found, and audio is not mistaken for one", () => {
+    const found = imagesIn([
+      { kind: "image", ref: "r1", mime: "image/jpeg", caption: "is this the menu?" },
+      { kind: "audio", ref: "r2", mime: "audio/ogg" },
+      { kind: "file", ref: "r3", mime: "application/pdf" },
+    ])
+
+    expect(found).toHaveLength(1)
+    expect(found[0]?.ref).toBe("r1")
+    expect(found[0]?.caption).toBe("is this the menu?")
+  })
+
+  test("MEDIA-2: a photo comes back as an image, with no transcriber involved", async () => {
+    const { record, events } = recorder()
+    const result = await listen({
+      batch: [{ id: "a", text: null, media: [{ kind: "image", ref: "r1", mime: "image/jpeg" }] }],
+      record,
+    })
+
+    // No transcriber is configured and that is not a failure here: there
+    // is nothing to transcribe, so nobody is asked to type.
+    expect(result.failed).toBe(false)
+    expect(events).toEqual([])
+    expect(result.heard.get("a")?.images).toEqual([{ ref: "r1", mime: "image/jpeg" }])
+  })
+
+  test("MEDIA-2: the caption becomes the text, which is what the brain reads", async () => {
+    const { record } = recorder()
+    const result = await listen({
+      batch: [
+        {
+          id: "a",
+          text: null,
+          media: [{ kind: "image", ref: "r1", mime: "image/jpeg", caption: "is this still on?" }],
+        },
+      ],
+      record,
+    })
+
+    expect(result.heard.get("a")?.text).toBe("is this still on?")
+    expect(result.heard.get("a")?.transcript).toBeNull()
+  })
+
+  test("MEDIA-1 and MEDIA-2: a voice note and a photo in one message", async () => {
+    // One message can carry both, and then both have to come through: the
+    // transcript as words, the picture as a picture.
+    const { record } = recorder()
+    const result = await listen({
+      batch: [
+        {
+          id: "a",
+          text: "look",
+          media: [
+            { kind: "image", ref: "pic", mime: "image/jpeg", caption: "this one" },
+            { kind: "audio", ref: "note", mime: "audio/ogg" },
+          ],
+        },
+      ],
+      transcriber: hears([{ text: "is this dish still on the menu" }]),
+      record,
+    })
+
+    const heard = result.heard.get("a")
+    expect(heard?.images).toEqual([{ ref: "pic", mime: "image/jpeg" }])
+    expect(heard?.transcript).toBe("is this dish still on the menu")
+    expect(heard?.text.split("\n")).toEqual(["look", "this one", "is this dish still on the menu"])
+  })
+
+  test("MEDIA-2: a row with nothing attached is still absent from the result", async () => {
+    const { record } = recorder()
+    const result = await listen({ batch: [{ id: "a", text: "just typing", media: [] }], record })
+
+    expect(result.heard.size).toBe(0)
+  })
+
+  test("the reply MEDIA-2 asks for says what to do instead", () => {
+    expect(CANNOT_READ_IMAGES_REPLY.toLowerCase()).toContain("words")
+  })
+})
+
+describe("MEDIA-4: the context a tool is given", () => {
+  test("MEDIA-4: with no sendFile, sending one fails rather than appearing to work", async () => {
+    // A context built outside a turn has nothing to queue a file on. The
+    // honest answer is to refuse: a tool whose `sendFile` resolved and
+    // sent nothing would report success to the brain, which would then
+    // tell the person their menu is on its way.
+    const ctx = toolContext({
+      store: {} as never,
+      clock: fixedClock("2026-10-19T06:00:00Z"),
+      person: {
+        id: "p1",
+        channel: "whatsapp",
+        channel_user_id: "9",
+        role: "end_user",
+        display_name: null,
+        language: null,
+      } as never,
+      config: smallConfig(),
+    })
+
+    const error = (await ctx
+      .sendFile({ url: "https://f/x.pdf", name: "x.pdf", mime: "application/pdf" })
+      .catch((e: unknown) => e)) as Error
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).toContain("cannot send files")
+  })
+
+  test("MEDIA-4: a sendFile that was given is the one used", async () => {
+    const sent: { name: string; caption?: string }[] = []
+    const ctx = toolContext({
+      store: {} as never,
+      clock: fixedClock("2026-10-19T06:00:00Z"),
+      person: {
+        id: "p1",
+        channel: "whatsapp",
+        channel_user_id: "9",
+        role: "end_user",
+        display_name: null,
+        language: null,
+      } as never,
+      config: smallConfig(),
+      sendFile: async (file, options) => {
+        sent.push({
+          name: file.name,
+          ...(options?.caption !== undefined ? { caption: options.caption } : {}),
+        })
+      },
+    })
+
+    await ctx.sendFile(
+      { url: "https://f/menu.pdf", name: "menu.pdf", mime: "application/pdf" },
+      { caption: "tonight" },
+    )
+    expect(sent).toEqual([{ name: "menu.pdf", caption: "tonight" }])
   })
 })

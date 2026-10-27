@@ -11,11 +11,17 @@ import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts
 import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import { replyKey, type Agent, type AgentOptions } from "../../src/runtime/index.ts"
-import { TYPE_INSTEAD_REPLY } from "../../src/runtime/media.ts"
+import { CANNOT_READ_IMAGES_REPLY, TYPE_INSTEAD_REPLY } from "../../src/runtime/media.ts"
 import { WANTS_HUMAN } from "../../src/runtime/handover.ts"
 import { GATE_QUESTION } from "../../src/runtime/gate.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
-import { scriptedBrain, type ScriptedBrain } from "../../src/testing/scripted-brain.ts"
+import { defineTool, type Tool } from "../../src/tools/index.ts"
+import { z } from "zod"
+import {
+  scriptedBrain,
+  type ScriptedBrain,
+  type ScriptedStep,
+} from "../../src/testing/scripted-brain.ts"
 import { scriptedDecisionModel, yesno } from "../../src/testing/scripted-decision.ts"
 import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
@@ -84,9 +90,20 @@ describeDatabase("a voice note", (sql) => {
   function agentWith(
     transcriber: Transcriber | undefined,
     over: Record<string, unknown> = {},
+    how: {
+      supportsImages?: boolean
+      files?: boolean
+      tools?: Tool[]
+      script?: ScriptedStep[]
+      /** CONF-3: signs the confirm buttons. Never in config (CFG-2). */
+      secret?: string
+    } = {},
   ): { agent: Agent; brain: ScriptedBrain } {
-    const brain = scriptedBrain([{ reply: "We open at 11." }], { exhaustedReply: "Anything else?" })
-    sender = fakeSender()
+    const brain = scriptedBrain(how.script ?? [{ reply: "We open at 11." }], {
+      exhaustedReply: "Anything else?",
+      ...(how.supportsImages !== undefined ? { supportsImages: how.supportsImages } : {}),
+    })
+    sender = fakeSender(how.files === undefined ? {} : { capabilities: { files: how.files } })
     const build: AgentOptions = {
       config: config(over),
       deps: {
@@ -100,7 +117,8 @@ describeDatabase("a voice note", (sql) => {
         ...(transcriber !== undefined ? { transcriber } : {}),
       },
       prompt: PROMPT,
-      tools: [],
+      tools: how.tools ?? [],
+      ...(how.secret !== undefined ? { secret: how.secret } : {}),
     }
     return { agent: agents.create(build), brain }
   }
@@ -110,6 +128,22 @@ describeDatabase("a voice note", (sql) => {
     const message = brain.calls[0]?.messages.at(-1)
     return message !== undefined && "text" in message ? message.text : undefined
   }
+
+  /** An inbound photo, with an optional caption. */
+  const photo = (caption?: string, over: Record<string, unknown> = {}) => ({
+    channel: "whatsapp",
+    channelUserId: "9",
+    channelMessageId: `m-${Math.random()}`,
+    media: [
+      {
+        kind: "image" as const,
+        ref: "https://m/pic-1",
+        mime: "image/jpeg",
+        ...(caption !== undefined ? { caption } : {}),
+      },
+    ],
+    ...over,
+  })
 
   /** An inbound voice note, with no text of its own. */
   const voice = (over: Record<string, unknown> = {}) => ({
@@ -296,6 +330,360 @@ describeDatabase("a voice note", (sql) => {
       expect(rows).toHaveLength(1)
       expect(rows[0]?.media_ref).toBe("https://m/note-1")
       expect(rows[0]?.transcript).toBeNull()
+    })
+  })
+
+  describe("MEDIA-2: a photo", () => {
+    test("MEDIA-2: a brain that can read pictures is given them", async () => {
+      const { agent, brain } = agentWith(undefined, {}, { supportsImages: true })
+
+      await agent.receiveAndWait(photo("is this still on?"))
+
+      const said = brain.calls[0]?.messages.at(-1)
+      expect(said !== undefined && "images" in said ? said.images : undefined).toEqual([
+        { ref: "https://m/pic-1", mime: "image/jpeg" },
+      ])
+      // MEDIA-2: the caption is the text, so the brain has both.
+      expect(lastSaid(brain)).toBe("is this still on?")
+      expect(sender.texts()).toEqual(["We open at 11."])
+    })
+
+    test("MEDIA-2: a brain that cannot is told nothing about the picture", async () => {
+      const { agent, brain } = agentWith(undefined, {}, { supportsImages: false })
+
+      await agent.receiveAndWait(photo("is this still on?"))
+
+      const said = brain.calls[0]?.messages.at(-1)
+      expect(said !== undefined && "images" in said).toBe(false)
+    })
+
+    test("MEDIA-2: and the person is told so, with the caption still answered", async () => {
+      // Both lines are true, so both are sent: the agent cannot see the
+      // photo, and the question they typed with it still has an answer.
+      const { agent, brain } = agentWith(undefined, {}, { supportsImages: false })
+
+      await agent.receiveAndWait(photo("is this still on?"))
+
+      expect(sender.texts()).toEqual([CANNOT_READ_IMAGES_REPLY, "We open at 11."])
+      expect(brain.calls).toHaveLength(1)
+    })
+
+    test("MEDIA-2: a photo with no caption and no reader costs no brain call", async () => {
+      const { agent, brain } = agentWith(undefined, {}, { supportsImages: false })
+
+      const result = await agent.receiveAndWait(photo())
+
+      expect(sender.texts()).toEqual([CANNOT_READ_IMAGES_REPLY])
+      expect(brain.calls).toHaveLength(0)
+      expect(result.turn?.outcome).toBe("cannot_read_images")
+    })
+
+    test("LOOP-11: the same batch is told once, whatever the sweep does", async () => {
+      const { agent } = agentWith(undefined, {}, { supportsImages: false })
+
+      const result = await agent.receiveAndWait(photo())
+
+      const row = await agent.store.outbox.find({
+        idempotency_key: `images:${replyKey([result.inboxId])}`,
+      })
+      expect(row?.status).toBe("sent")
+    })
+
+    test("MEDIA-2: a reader is not told the person cannot be helped", async () => {
+      const { agent } = agentWith(undefined, {}, { supportsImages: true })
+
+      await agent.receiveAndWait(photo("this one"))
+
+      expect(sender.texts()).not.toContain(CANNOT_READ_IMAGES_REPLY)
+    })
+
+    test("MEDIA-2: the decision model is only ever shown text", async () => {
+      // MEDIA-2's last clause, in its own test. Routing reasons over the
+      // batch (ROUTE-1), and what it must reason over is the caption, not
+      // a picture: the decision model takes text and a ref in a field it
+      // does not understand would be noise at best.
+      const asked: unknown[] = []
+      const recording = {
+        id: "recording",
+        async ask(state: unknown, questions: Record<string, unknown>) {
+          asked.push(state)
+          const answers: Record<string, unknown> = {}
+          for (const name of Object.keys(questions)) {
+            answers[name] = { type: "yesno", p: 1, confidence: 1 }
+          }
+          return { answers, usage: { inputTokens: 1, costUsd: 0 } }
+        },
+      }
+
+      sender = fakeSender()
+      const brain = scriptedBrain([{ reply: "Still on the menu." }], { supportsImages: true })
+      const agent = agents.create({
+        config: config({ routingMinTools: 0 }),
+        deps: {
+          brains: [brain],
+          decisionModel: recording as never,
+          db: localSupabase(),
+          sender,
+          clock,
+        },
+        prompt: PROMPT,
+        tools: [],
+      })
+
+      await agent.receiveAndWait(photo("is this still on?"))
+
+      const whole = JSON.stringify(asked)
+      expect(whole).toContain("is this still on?")
+      // The ref never reaches it, under any key.
+      expect(whole).not.toContain("https://m/pic-1")
+    })
+
+    test("MEDIA-2: the reference is stored, and the picture is not", async () => {
+      const { agent } = agentWith(undefined, {}, { supportsImages: true })
+
+      await agent.receiveAndWait(photo("this one"))
+
+      const rows = await agent.store.messages.list({ direction: "inbound" }, { orderBy: "seq" })
+      expect(rows[0]?.media_ref).toBe("https://m/pic-1")
+      expect(rows[0]?.text).toBe("this one")
+    })
+  })
+
+  describe("MEDIA-4: a tool sending a file", () => {
+    const menu = (): Tool =>
+      defineTool({
+        name: "send_menu",
+        description: "Sends the menu as a PDF.",
+        input: z.object({}),
+        risk: "read",
+        roles: ["end_user"],
+        conditions: { callWhen: ["they ask for the menu"], dontCallWhen: ["never"] },
+        examples: { should: ["send me the menu"], shouldNot: ["hello"] },
+        handler: async (_args, ctx) => {
+          await ctx.sendFile(
+            { url: "https://files/menu.pdf", name: "menu.pdf", mime: "application/pdf" },
+            { caption: "Tonight's menu" },
+          )
+          return { sent: true }
+        },
+      })
+
+    test("MEDIA-4: the file goes out through the outbox, with its caption", async () => {
+      const { agent } = agentWith(
+        undefined,
+        {},
+        {
+          files: true,
+          tools: [menu()],
+          script: [{ tool: "send_menu" }, { reply: "That is the menu." }],
+        },
+      )
+      const built = agent.tools.all().find((tool) => tool.name === "send_menu")
+      expect(built).toBeDefined()
+
+      await agent.receiveAndWait({
+        channel: "whatsapp",
+        channelUserId: "9",
+        channelMessageId: "m-menu",
+        text: "send me the menu",
+      })
+
+      const rows = await agent.store.outbox.list({}, { orderBy: "seq" })
+      const file = rows.find((row) => (row.payload as { file?: unknown }).file !== undefined)
+      expect(file).toBeDefined()
+      expect((file?.payload as { file: { name: string } }).file.name).toBe("menu.pdf")
+      expect((file?.payload as { text?: string }).text).toBe("Tonight's menu")
+      expect(file?.status).toBe("sent")
+    })
+
+    test("MEDIA-2: in a chain, only the brain that can read them gets them", async () => {
+      // The per-brain half of MEDIA-2, which neither of the tests above
+      // reaches: with one brain the two guards cover each other, so a
+      // probe could remove either and nothing failed. Here the primary
+      // cannot see pictures and the fallback can, so the pictures are
+      // attached to the batch and still must not reach the primary.
+      const blind = scriptedBrain([{ throws: "the primary is down" }], {
+        id: "blind",
+        supportsImages: false,
+      })
+      const seeing = scriptedBrain([{ reply: "That is still on the menu." }], {
+        id: "seeing",
+        supportsImages: true,
+      })
+      sender = fakeSender()
+      const agent = agents.create({
+        config: config({
+          brain: {
+            id: "openrouter",
+            model: "blind/one",
+            fallbacks: [{ id: "openrouter", model: "seeing/one" }],
+          },
+        }),
+        deps: {
+          brains: [blind, seeing],
+          decisionModel: scriptedDecisionModel([
+            { [WANTS_HUMAN]: yesno(0), [GATE_QUESTION]: yesno(1) },
+          ]),
+          db: localSupabase(),
+          sender,
+          clock,
+        },
+        prompt: PROMPT,
+        tools: [],
+      })
+
+      await agent.receiveAndWait(photo("is this still on?"))
+
+      const toBlind = blind.calls[0]?.messages.at(-1)
+      const toSeeing = seeing.calls[0]?.messages.at(-1)
+      expect(toBlind !== undefined && "images" in toBlind).toBe(false)
+      expect(toSeeing !== undefined && "images" in toSeeing ? toSeeing.images : undefined).toEqual([
+        { ref: "https://m/pic-1", mime: "image/jpeg" },
+      ])
+      expect(sender.texts()).toEqual(["That is still on the menu."])
+    })
+
+    test("MEDIA-4: two files in one turn are two messages, not one", async () => {
+      // The counter in the key. With one file a single key works either
+      // way, which is how a probe slipped past the first version of this.
+      const two: Tool = defineTool({
+        name: "send_both",
+        description: "Sends the menu and the wine list.",
+        input: z.object({}),
+        risk: "read",
+        roles: ["end_user"],
+        conditions: { callWhen: ["they ask for both"], dontCallWhen: ["never"] },
+        examples: { should: ["menu and wine list"], shouldNot: ["hello"] },
+        handler: async (_args, ctx) => {
+          await ctx.sendFile({
+            url: "https://files/menu.pdf",
+            name: "menu.pdf",
+            mime: "application/pdf",
+          })
+          await ctx.sendFile({
+            url: "https://files/wine.pdf",
+            name: "wine.pdf",
+            mime: "application/pdf",
+          })
+          return { sent: 2 }
+        },
+      })
+
+      const { agent } = agentWith(
+        undefined,
+        {},
+        { files: true, tools: [two], script: [{ tool: "send_both" }, { reply: "Both sent." }] },
+      )
+
+      await agent.receiveAndWait({
+        channel: "whatsapp",
+        channelUserId: "9",
+        channelMessageId: "m-both",
+        text: "menu and wine list please",
+      })
+
+      const rows = await agent.store.outbox.list({}, { orderBy: "seq" })
+      const files = rows.filter((row) => (row.payload as { file?: unknown }).file !== undefined)
+      expect(files.map((row) => (row.payload as { file: { name: string } }).file.name)).toEqual([
+        "menu.pdf",
+        "wine.pdf",
+      ])
+      expect(new Set(files.map((row) => row.idempotency_key)).size).toBe(2)
+    })
+
+    test("MEDIA-4 and CONF-4: a confirmed tool can send its file too", async () => {
+      // The bug a probe found. The confirmed path built its own tool
+      // context and had been given no `sendFile`, so a receipt sent after
+      // the person agreed would have thrown. `tool-context.ts` exists to
+      // stop exactly that asymmetry, and nothing was testing it.
+      const receipt: Tool = defineTool({
+        name: "charge_card",
+        description: "Charges the card and sends a receipt.",
+        input: z.object({}),
+        risk: "irreversible",
+        roles: ["end_user"],
+        confirmSummary: () => "Charge the card",
+        conditions: { callWhen: ["they ask to pay"], dontCallWhen: ["never"] },
+        examples: { should: ["pay now"], shouldNot: ["hello"] },
+        handler: async (_args, ctx) => {
+          await ctx.sendFile(
+            { url: "https://files/receipt.pdf", name: "receipt.pdf", mime: "application/pdf" },
+            { caption: "Your receipt" },
+          )
+          return { charged: true }
+        },
+      })
+
+      const { agent } = agentWith(
+        undefined,
+        {},
+        {
+          secret: "a-long-test-secret",
+          files: true,
+          tools: [receipt],
+          script: [{ tool: "charge_card" }, { reply: "Done." }, { reply: "Anything else?" }],
+        },
+      )
+
+      await agent.receiveAndWait({
+        channel: "whatsapp",
+        channelUserId: "9",
+        channelMessageId: "m-pay",
+        text: "pay now please",
+      })
+
+      // CONF-1: nothing ran yet, and no file went out either.
+      const pending = await agent.store.pendingActions.list({}, { orderBy: "seq" })
+      expect(pending[0]?.status).toBe("pending")
+      let rows = await agent.store.outbox.list({}, { orderBy: "seq" })
+      expect(rows.some((row) => (row.payload as { file?: unknown }).file !== undefined)).toBe(false)
+
+      // The person confirms with the code they were shown.
+      await agent.receiveAndWait({
+        channel: "whatsapp",
+        channelUserId: "9",
+        channelMessageId: "m-code",
+        text: pending[0]?.code ?? "0000",
+      })
+
+      const after = await agent.store.pendingActions.list({}, { orderBy: "seq" })
+      expect(after[0]?.status).toBe("executed")
+
+      rows = await agent.store.outbox.list({}, { orderBy: "seq" })
+      const file = rows.find((row) => (row.payload as { file?: unknown }).file !== undefined)
+      expect(file).toBeDefined()
+      expect((file?.payload as { file: { name: string } }).file.name).toBe("receipt.pdf")
+      // Keyed by the action, not by a batch, so the same confirmed call
+      // retried cannot send it twice.
+      expect(file?.idempotency_key).toBe(`file:action:${after[0]?.id}:1`)
+    })
+
+    test("MEDIA-4: it is refused when the channel cannot carry files", async () => {
+      // Refused here rather than at the vendor, so the brain reads the
+      // error and can answer in words instead.
+      const { agent } = agentWith(
+        undefined,
+        {},
+        {
+          files: false,
+          tools: [menu()],
+          script: [{ tool: "send_menu" }, { reply: "I cannot send it, but here it is in words." }],
+        },
+      )
+
+      await agent.receiveAndWait({
+        channel: "whatsapp",
+        channelUserId: "9",
+        channelMessageId: "m-menu-2",
+        text: "send me the menu",
+      })
+
+      const rows = await agent.store.outbox.list({}, { orderBy: "seq" })
+      expect(rows.every((row) => (row.payload as { file?: unknown }).file === undefined)).toBe(true)
+
+      const runs = await agent.store.toolRuns.list({ tool: "send_menu" }, { orderBy: "seq" })
+      expect(runs[0]?.status).toBe("error")
+      expect(String(runs[0]?.error)).toContain("cannot send files")
     })
   })
 })

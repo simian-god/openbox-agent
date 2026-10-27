@@ -22,6 +22,14 @@ export interface FakeToolContextOptions {
   facts?: Record<string, string> | undefined
   /** Every line the tool logged, so a test can read them. */
   logged?: string[] | undefined
+  /**
+   * MEDIA-4: every file the tool sent, so a test can read them.
+   *
+   * Given an array, `ctx.sendFile` pushes into it and resolves. Left out,
+   * sending a file throws, which is the right default: a tool that sends
+   * one is doing something a test should have opted into seeing.
+   */
+  filesSent?: { file: { url: string; name: string; mime: string }; caption?: string }[] | undefined
 }
 
 /** A `ToolContext` for a test, with everything a tool is promised (TOOL-4). */
@@ -29,9 +37,20 @@ export function fakeToolContext(options: FakeToolContextOptions): ToolContext {
   const clock = options.clock ?? systemClock
   const logged = options.logged ?? []
 
+  const filesSent = options.filesSent
+
   return {
     clock,
     time: createTimeHelpers({ config: options.config, clock }),
+    sendFile: async (file, sendOptions) => {
+      if (filesSent === undefined) {
+        throw new Error("this test did not expect the tool to send a file")
+      }
+      filesSent.push({
+        file,
+        ...(sendOptions?.caption !== undefined ? { caption: sendOptions.caption } : {}),
+      })
+    },
     facts: Object.freeze({ ...options.facts }),
     person: {
       id: "00000000-0000-0000-0000-000000000001",
