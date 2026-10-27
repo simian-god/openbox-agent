@@ -499,3 +499,47 @@ milestone that cannot close would hold M6 to M9 behind it.
 **What would resolve it.** T5.3, which is one `ask` function on T5.1's adapter
 plus its section 23 check. The adapter is the part that was expensive and it is
 already done, so this is cheap whenever it is wanted.
+
+## K21. The Sarvam transcriber will ship untested, and Hinglish is the reason it ships at all
+
+**Status:** open, accepted, and deliberately deferred.
+
+**What happens.** T7.4 builds two transcribers. The OpenRouter one is the one
+to reach for, and it will be checked against the real endpoint like every other
+provider here. The Sarvam one is built from Sarvam's published API and will not
+be run against it, because that needs a `SARVAM_API_KEY` and, to mean anything,
+real voice notes in Indian languages and in Hinglish. Neither exists here yet.
+
+**Why it ships anyway.** Sarvam is not on OpenRouter. That was checked against
+OpenRouter's live model catalog, not assumed: it serves 28 speech to text
+models and none of them is Sarvam's. Saaras is the only route to the 22 Indian
+languages plus English that it covers, and the only one with a mode for
+code-mixed speech. Intent 17 names exactly that case first. So the choice was
+not between two adapters and one, it was between keeping a route to Hinglish
+and not having one.
+
+**What it costs.** Two things, and they are different sizes.
+
+The small one: an adapter nobody has run. It sits behind a one method interface
+(`transcribe(media) -> { text, language? }`), it is reached only by an agent
+whose config names it, and it is proven against recorded responses, so a
+contract that has moved shows up as a failure in that adapter and nowhere else.
+Nothing else in the core can be affected by it being wrong.
+
+The larger one: we do not know how well the OpenRouter models handle Hinglish,
+and that is the question the default rests on. `elevenlabs/scribe-v2` advertises
+90 or more languages and Hindi is among them, but code-switching inside a
+sentence is where a model trained on one language at a time tends to mistranscribe
+or transliterate rather than fail outright. A wrong transcript is worse than a
+failed one, because MEDIA-1 stores it as the message text and the brain answers
+it as though the person said it. Nothing in the core can detect that.
+
+**What we did.** Built both, defaulted to OpenRouter, and left Sarvam as the
+switch to throw if real audio comes out badly. Switching is a config line and no
+code change, which is the whole point of DEP-2 being an interface.
+
+**What would resolve it.** Real voice notes. Twenty or so in Hinglish and in two
+or three Indian languages, run through both transcribers, with the transcripts
+read side by side. That is a measurement, not a build, and it needs a
+`SARVAM_API_KEY` and audio from the builder. Until then the default is a
+reasonable guess and is written down here as one.

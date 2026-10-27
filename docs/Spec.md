@@ -212,7 +212,7 @@ interface Retriever  { id: string; index(docs: KnowledgeDoc[]): Promise<void>; s
 interface Embedder   { id: string; embed(texts: string[]): Promise<number[][]> }
 ```
 
-**DEP-2.** Transcribers at launch: Sarvam and OpenAI. Retrievers at launch: `local`, which runs in process (keyword search, plus embeddings when an embedder is configured), and pgvector.
+**DEP-2.** Transcribers at launch: OpenRouter and Sarvam. OpenRouter is the one to reach for: its transcription endpoint serves 28 models behind a single key, including ElevenLabs Scribe, Whisper, Deepgram and Google Chirp, so a builder changes transcription model without changing adapter or key. A separate OpenAI transcriber is not built, because every OpenAI speech model is reachable through OpenRouter and a second adapter for the same models is duplication. Sarvam stays because it is the only route to Saaras, which handles the 22 Indian languages and code-mixed Hinglish that OpenRouter carries no model for, and is not served by OpenRouter. Retrievers at launch: `local`, which runs in process (keyword search, plus embeddings when an embedder is configured), and pgvector.
 
 **DEP-3.** `main.ts` builds the deps from config with `providersFromConfig(config)`, which reads keys from the environment. Tests and evals-agent pass their own instances instead, and those win. Either way, each turn records the IDs of the providers that actually ran.
 
@@ -681,7 +681,7 @@ export default defineConfig({
     routeThreshold: 0.6,
     gateBands: { /* per tool overrides */ },
   },
-  transcriber: { id: "sarvam" },
+  transcriber: { id: "openrouter", model: "elevenlabs/scribe-v2" },
   retriever: { id: "local", embedder: null },
 
   history: 30,
