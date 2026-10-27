@@ -132,10 +132,10 @@ export interface TurnResult {
    * ended in a way the core did not plan for, so a caller of
    * `receiveAndWait` gets a result rather than a rejection.
    *
-   * Nor are `blocked`, `handover`, `relayed`, `opted_out`, `opted_in`
-   * and `rate_limited`. All six are decided before anything in this file
-   * runs, so none of those turns reaches it (ROLE-4, HAND-5, HAND-4,
-   * LOOP-5 steps 2 and 3).
+   * Nor are `blocked`, `handover`, `relayed`, `opted_out`, `opted_in`,
+   * `rate_limited` and `no_transcript`. All seven are decided before
+   * anything in this file runs, so none of those turns reaches it
+   * (ROLE-4, HAND-5, HAND-4, LOOP-5 steps 2 and 3, MEDIA-1).
    */
   outcome:
     | "replied"
@@ -149,6 +149,7 @@ export interface TurnResult {
     | "opted_out"
     | "opted_in"
     | "rate_limited"
+    | "no_transcript"
   /** Set only when the outcome is `failed`. */
   error?: string | undefined
 }

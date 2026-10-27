@@ -30,7 +30,7 @@ export const DECISION_ROUTES = {
 export const DECISION_ROUTE_IDS = ["typesafe", "openrouter"] as const
 
 /** DEP-2. */
-export const TRANSCRIBER_IDS = ["sarvam", "openai"] as const
+export const TRANSCRIBER_IDS = ["openrouter", "sarvam"] as const
 export const RETRIEVER_IDS = ["local", "pgvector"] as const
 export const EMBEDDER_IDS = ["openai"] as const
 

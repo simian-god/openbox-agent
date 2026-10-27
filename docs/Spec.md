@@ -207,7 +207,7 @@ type Answer =
 ### Transcriber, retriever, embedder
 
 ```ts
-interface Transcriber { id: string; transcribe(media: { ref: string; mime: string }): Promise<{ text: string; language?: string }> }
+interface Transcriber { id: string; transcribe(media: { ref: string; mime: string }): Promise<{ text: string; language?: string; costUsd?: number; seconds?: number }> }
 interface Retriever  { id: string; index(docs: KnowledgeDoc[]): Promise<void>; search(query: string, k: number): Promise<{ text: string; source: string; score: number }[]> }
 interface Embedder   { id: string; embed(texts: string[]): Promise<number[][]> }
 ```

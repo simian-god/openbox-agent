@@ -14,6 +14,9 @@ import { claudeCodeCliBrain, codexCliBrain } from "./brains/cli.ts"
 import type { DecisionModel } from "./decision/types.ts"
 import { jevDecisionModel, type JevRoute } from "./decision/jev.ts"
 import { openaiDecisionsModel } from "./decision/openai-decisions.ts"
+import type { Transcriber } from "./transcribers/types.ts"
+import { openRouterTranscriber } from "./transcribers/openrouter.ts"
+import { sarvamTranscriber } from "./transcribers/sarvam.ts"
 
 export * from "./brains/types.ts"
 export { openRouterBrain, toWireMessages, readResponse } from "./brains/openrouter.ts"
@@ -57,6 +60,25 @@ export {
   openaiDecisionsModel,
   type OpenaiDecisionsOptions,
 } from "./decision/openai-decisions.ts"
+export {
+  TranscribeError,
+  fetchAudio,
+  formatFromMime,
+  MAX_AUDIO_BYTES,
+  type Transcriber,
+  type TranscriberMedia,
+  type Transcript,
+} from "./transcribers/types.ts"
+export {
+  openRouterTranscriber,
+  DEFAULT_TRANSCRIBE_MODEL,
+  type OpenRouterTranscriberOptions,
+} from "./transcribers/openrouter.ts"
+export {
+  sarvamTranscriber,
+  DEFAULT_SARVAM_MODEL,
+  type SarvamTranscriberOptions,
+} from "./transcribers/sarvam.ts"
 
 /** Where a provider's key is read from. Also the list in .env.example. */
 export const ENV_KEYS = {
@@ -74,6 +96,9 @@ export const ENV_KEYS = {
   "codex-cli": "OPENAI_API_KEY",
   // Jev's own route. Jev through OpenRouter uses the OpenRouter key above.
   typesafe: "TYPESAFE_API_KEY",
+  // MEDIA-1's transcribers. The OpenRouter one reads the key above, since
+  // it is the same account and the same key.
+  sarvam: "SARVAM_API_KEY",
 } as const
 
 /** Raised when config names a provider that cannot be built. */
@@ -96,11 +121,15 @@ export interface ProvidersOverride {
   brains?: Brain[] | undefined
   /** Used as given, so a test or evals-agent never needs a key. */
   decisionModel?: DecisionModel | undefined
+  /** Used as given, so a test transcribes without a key or network. */
+  transcriber?: Transcriber | undefined
 }
 
 export interface BuiltProviders {
   brains: Brain[]
   decisionModel: DecisionModel
+  /** MEDIA-1: undefined when config names none, which is allowed. */
+  transcriber?: Transcriber | undefined
 }
 
 /** One brain from a config entry, or a problem explaining why not. */
@@ -198,6 +227,59 @@ function buildDecisionModel(
 }
 
 /**
+ * MEDIA-1's transcriber, or undefined when the agent has none.
+ *
+ * Optional in a way the brain and the decision model are not: an agent
+ * that never expects a voice note needs no transcriber, and MEDIA-1 says
+ * what happens without one, which is that the person is asked to type.
+ * So a missing `transcriber` in config is not a problem to report.
+ */
+function buildTranscriber(
+  config: OpenboxConfig,
+  env: Env,
+  problems: string[],
+): Transcriber | undefined {
+  const wanted = config.transcriber
+  if (wanted === undefined) return undefined
+
+  switch (wanted.id) {
+    case "openrouter": {
+      // The same key and the same account as the brain. One key, because
+      // it is one vendor, which is most of why this is the default.
+      const apiKey = envValue(ENV_KEYS.openrouter, env)
+      if (apiKey === undefined) {
+        problems.push(
+          `transcriber openrouter needs ${ENV_KEYS.openrouter} in the environment. Secrets never go in config (CFG-2)`,
+        )
+        return undefined
+      }
+      return openRouterTranscriber({
+        apiKey,
+        ...(wanted.model !== undefined ? { model: wanted.model } : {}),
+      })
+    }
+
+    case "sarvam": {
+      const apiKey = envValue(ENV_KEYS.sarvam, env)
+      if (apiKey === undefined) {
+        problems.push(
+          `transcriber sarvam needs ${ENV_KEYS.sarvam} in the environment. Secrets never go in config (CFG-2)`,
+        )
+        return undefined
+      }
+      return sarvamTranscriber({
+        apiKey,
+        ...(wanted.model !== undefined ? { model: wanted.model } : {}),
+      })
+    }
+
+    default:
+      problems.push(`transcriber ${String(wanted.id)} is not built yet`)
+      return undefined
+  }
+}
+
+/**
  * Just the decision model, for a command that needs nothing else.
  *
  * `openbox tune` measures a dial on the decision model. It never calls a
@@ -247,9 +329,18 @@ export function providersFromConfig(
     decisionModel = buildDecisionModel(config, env, problems)
   }
 
+  const transcriber =
+    override.transcriber !== undefined
+      ? override.transcriber
+      : buildTranscriber(config, env, problems)
+
   if (problems.length > 0) throw new ProviderError(problems)
 
-  return { brains, decisionModel: decisionModel as DecisionModel }
+  return {
+    brains,
+    decisionModel: decisionModel as DecisionModel,
+    ...(transcriber !== undefined ? { transcriber } : {}),
+  }
 }
 
 /** The model each brain should be called with, in the same order. */

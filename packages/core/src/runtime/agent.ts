@@ -43,6 +43,7 @@ import {
 } from "./handover.ts"
 import { createJobs, type Jobs } from "./jobs.ts"
 import { createOutbox, type Outbox } from "./outbox.ts"
+import { audioIn, listen, TYPE_INSTEAD_REPLY, type ListenResult } from "./media.ts"
 import {
   costOf,
   createLimits,
@@ -64,6 +65,7 @@ import { runTurn, type TurnResult } from "./turn.ts"
 import { createConfirmations, EXPIRE_JOB, type Confirmations, type Resolution } from "./confirm.ts"
 import { toolContext } from "./tool-context.ts"
 import type { DecisionModel } from "../providers/decision/types.ts"
+import type { Transcriber } from "../providers/transcribers/types.ts"
 import { ensureVersionRow, versionHash } from "./version.ts"
 
 export interface Deps {
@@ -80,8 +82,16 @@ export interface Deps {
   clock?: Clock | undefined
   /** EVT-1: told about every event, alongside the agent's own table. */
   events?: EventSink | undefined
-  // transcriber and retriever join Deps as the features that need them
-  // land, in M7 and M8. They are left out rather than stubbed, so nothing
+  /**
+   * MEDIA-1: turns a voice note into words.
+   *
+   * Optional in a way the brain is not. An agent that never expects audio
+   * needs none, and MEDIA-1 says what happens without one: the person is
+   * asked to type. So this being absent is a supported configuration and
+   * not a misconfiguration.
+   */
+  transcriber?: Transcriber | undefined
+  // retriever joins Deps at M8, left out rather than stubbed so nothing
   // can quietly depend on a fake.
 }
 
@@ -981,6 +991,45 @@ export function createAgent(options: AgentOptions): Agent {
       hasAction: batch.some((row) => row.action !== null),
     })
 
+    // LOOP-6 and MEDIA-1: a voice note becomes words before it becomes a
+    // message, because MEDIA-1 says the transcript is the message's text.
+    //
+    // Not for a blocked person. LOOP-5 step 1 says their turn costs no
+    // brain call and no decision request, and a transcription is a paid
+    // provider call exactly like those. Their rows are still written
+    // below, with the channel's reference, so an operator can find the
+    // audio; only the paid part is skipped.
+    const silent: ListenResult = {
+      heard: new Map(),
+      failed: false,
+      language: undefined,
+      costUsd: 0,
+    }
+    const listened = person.blocked
+      ? silent
+      : await listen({
+          batch,
+          ...(deps.transcriber !== undefined ? { transcriber: deps.transcriber } : {}),
+          record: (name, props) => turnEvents.record(name, props),
+        })
+
+    /**
+     * Ends the turn, with what the transcription cost folded in.
+     *
+     * Every return below goes through this rather than `finish`, because
+     * a voice note that was transcribed was paid for whatever the turn
+     * decides next, and a turn row that left that out would understate
+     * what it cost (LIMIT-3).
+     */
+    const settle = (result: TurnResult): Promise<TurnResult> =>
+      finish(
+        listened.costUsd > 0 ? { ...result, costUsd: result.costUsd + listened.costUsd } : result,
+        turnRow,
+        turnEvents,
+        startedAt,
+        batch.length,
+      )
+
     // LOOP-7 wants the history *then* the current batch, so history is read
     // before these messages join it. Otherwise the brain sees them twice.
     const history = (await store.messages.list(
@@ -990,15 +1039,27 @@ export function createAgent(options: AgentOptions): Agent {
     )) as MessageRow[]
 
     await store.messages.insertMany(
-      batch.map((row) => ({
-        person_id: person.id,
-        turn_id: turnRow.id,
-        direction: "inbound",
-        author: "person",
-        text: row.text ?? "",
-        channel: person.channel,
-        created_at: row.received_at,
-      })),
+      batch.map((row) => {
+        const said = listened.heard.get(row.id)
+        // MEDIA-1: the channel's reference is stored whatever happened,
+        // including for a blocked person and for a transcription that
+        // failed, so the audio can still be found. The audio itself never
+        // is.
+        const ref = audioIn(row.media)[0]?.ref
+        return {
+          person_id: person.id,
+          turn_id: turnRow.id,
+          direction: "inbound" as const,
+          author: "person" as const,
+          text: said?.text ?? row.text ?? "",
+          ...(said?.transcript !== undefined && said.transcript !== null
+            ? { transcript: said.transcript }
+            : {}),
+          ...(ref !== undefined ? { media_ref: ref } : {}),
+          channel: person.channel,
+          created_at: row.received_at,
+        }
+      }),
     )
 
     // LOOP-5 step 1, ROLE-4: a blocked person's messages are stored and
@@ -1011,7 +1072,47 @@ export function createAgent(options: AgentOptions): Agent {
     // has since been blocked, and a blocked person costs no brain call,
     // no decision request and no context reads at all.
     if (person.blocked) {
-      return finish(nothingHappened("blocked"), turnRow, turnEvents, startedAt, batch.length)
+      return settle(nothingHappened("blocked"))
+    }
+
+    // MEDIA-3: the language the provider heard, stored on the person, so
+    // the runtime block can tell the brain to answer in it. Written only
+    // when it changed, because a person who has always written in Hindi
+    // does not need a database write per turn. The local copy is updated
+    // too, or this turn would still be built from the old one.
+    if (listened.language !== undefined && listened.language !== person.language) {
+      await store.people.update({ id: person.id }, { language: listened.language })
+      person = { ...person, language: listened.language }
+    }
+
+    // MEDIA-1's last clause: with no transcriber, or on failure, the
+    // person is asked to type instead.
+    //
+    // Keyed by the messages it answers, like every other reply, so a
+    // recovered turn over the same batch says it once (LOOP-11).
+    //
+    // Then the turn ends only if there is nothing left to answer. A person
+    // who sent a voice note and typed a line with it has still said
+    // something, and the brain should answer the part that arrived rather
+    // than ignore it because the other part did not.
+    if (listened.failed) {
+      await deliver({
+        person,
+        turnId: turnRow.id,
+        text: TYPE_INSTEAD_REPLY,
+        key: `transcript:${replyKey(inboxIds)}`,
+        kind: "reply",
+      })
+
+      const anythingSaid = batch.some((row) => {
+        const said = listened.heard.get(row.id)
+        return (said?.text ?? row.text ?? "").trim() !== ""
+      })
+      if (!anythingSaid) {
+        // No brain call and no decision request: there is nothing to ask
+        // about, and asking would spend money on silence.
+        return settle({ ...nothingHappened("no_transcript"), reply: TYPE_INSTEAD_REPLY })
+      }
     }
 
     // LOOP-5 step 2: STOP and START. Before the handover check, because
@@ -1038,13 +1139,7 @@ export function createAgent(options: AgentOptions): Agent {
         key: replyKey(inboxIds),
         kind: "reply",
       })
-      return finish(
-        { ...nothingHappened(out ? "opted_out" : "opted_in"), reply: text },
-        turnRow,
-        turnEvents,
-        startedAt,
-        batch.length,
-      )
+      return settle({ ...nothingHappened(out ? "opted_out" : "opted_in"), reply: text })
     }
 
     // LOOP-5 step 3, LIMIT-1: the rate limit. Before the handover check
@@ -1084,7 +1179,7 @@ export function createAgent(options: AgentOptions): Agent {
             urgent: false,
           })
         }
-        return finish(nothingHappened("rate_limited"), turnRow, turnEvents, startedAt, batch.length)
+        return settle(nothingHappened("rate_limited"))
       }
     }
 
@@ -1112,7 +1207,7 @@ export function createAgent(options: AgentOptions): Agent {
           // must stop spending.
           summarise: false,
         })
-        return finish(nothingHappened("handover"), turnRow, turnEvents, startedAt, batch.length)
+        return settle(nothingHappened("handover"))
       }
     }
 
@@ -1132,7 +1227,7 @@ export function createAgent(options: AgentOptions): Agent {
       const theirs = await handovers.openFor(person)
       if (theirs !== undefined) {
         await handovers.forward({ handover: theirs, person, items, turnId: turnRow.id })
-        return finish(nothingHappened("handover"), turnRow, turnEvents, startedAt, batch.length)
+        return settle(nothingHappened("handover"))
       }
     }
 
@@ -1154,15 +1249,20 @@ export function createAgent(options: AgentOptions): Agent {
       // run: no brain call, no decision request, nothing spent. An
       // operator typing to a customer should cost what typing costs.
       if (forBrain.length === 0) {
-        return finish(nothingHappened("relayed"), turnRow, turnEvents, startedAt, batch.length)
+        return settle(nothingHappened("relayed"))
       }
     }
 
     // HAND-4: the slash is addressing, not content, so the brain reads
     // the sentence without it.
-    const texts = forBrain.map((row) =>
-      focus === undefined ? (row.text ?? "") : asCommand(row.text ?? ""),
-    )
+    const texts = forBrain.map((row) => {
+      // MEDIA-1: the transcript is what the message says, so it is what
+      // the brain is asked about. `heard` wins even when it is empty,
+      // because an empty one means a voice note nobody could make out and
+      // the row's own text is already folded into it.
+      const said = listened.heard.get(row.id)?.text ?? row.text ?? ""
+      return focus === undefined ? said : asCommand(said)
+    })
 
     // HAND-4: who this operator is replying to, for the runtime block.
     // Read here rather than in `runTurn`, which knows nothing about
@@ -1311,7 +1411,7 @@ export function createAgent(options: AgentOptions): Agent {
       await handovers.open({ person, reason: trigger, turnId: turnRow.id })
     }
 
-    return finish(result, turnRow, turnEvents, startedAt, batch.length)
+    return settle(result)
   }
 
   /** Told when something outside a turn went wrong, if anyone is listening. */

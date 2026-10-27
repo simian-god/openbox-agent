@@ -303,3 +303,66 @@ describe("DEP-3: the database the agent runs against", () => {
     ).not.toThrow()
   })
 })
+
+describe("DEP-2: the transcriber built from config", () => {
+  test("MEDIA-1: an agent with no transcriber in config gets none, and no problem", () => {
+    // The one optional provider. MEDIA-1 says what happens without it,
+    // so its absence is a supported configuration and not a mistake.
+    const built = providersFromConfig(config(), {}, { [ENV_KEYS.openrouter]: "sk-test" })
+
+    expect(built.transcriber).toBeUndefined()
+  })
+
+  test("DEP-2: openrouter is built on the key the brain already uses", () => {
+    const built = providersFromConfig(
+      config({ transcriber: { id: "openrouter" } }),
+      {},
+      { [ENV_KEYS.openrouter]: "sk-test" },
+    )
+
+    expect(built.transcriber?.id).toBe("openrouter")
+  })
+
+  test("DEP-2: sarvam reads its own key", () => {
+    const built = providersFromConfig(
+      config({ transcriber: { id: "sarvam" } }),
+      {},
+      { [ENV_KEYS.openrouter]: "sk-test", [ENV_KEYS.sarvam]: "sarvam-key" },
+    )
+
+    expect(built.transcriber?.id).toBe("sarvam")
+  })
+
+  test("CFG-2: a missing transcriber key is reported, naming the variable", () => {
+    let problems: string[] = []
+    try {
+      providersFromConfig(
+        config({ transcriber: { id: "sarvam" } }),
+        {},
+        { [ENV_KEYS.openrouter]: "sk-test" },
+      )
+    } catch (error) {
+      problems = (error as ProviderError).problems
+    }
+
+    expect(problems.join("\n")).toContain("transcriber sarvam")
+    expect(problems.join("\n")).toContain(ENV_KEYS.sarvam)
+  })
+
+  test("DEP-3: a transcriber passed in wins, and no key is read for it", () => {
+    const fake = { id: "fake", transcribe: async () => ({ text: "hello" }) }
+    const built = providersFromConfig(
+      config({ transcriber: { id: "sarvam" } }),
+      { transcriber: fake },
+      { [ENV_KEYS.openrouter]: "sk-test" },
+    )
+
+    expect(built.transcriber).toBe(fake)
+  })
+
+  test("DEP-2: openai is not a transcriber, because every OpenAI model is on OpenRouter", () => {
+    // The decision in the log: a second adapter to the same models would
+    // be a second code path and a second key for nothing.
+    expect(() => config({ transcriber: { id: "openai" } })).toThrow()
+  })
+})

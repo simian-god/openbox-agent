@@ -122,6 +122,9 @@ const DECISION_MODEL = z
 const TRANSCRIBER = z
   .object({
     id: z.enum(TRANSCRIBER_IDS),
+    // One OpenRouter adapter reaches 28 speech models, so which one is a
+    // config line. Left out, each adapter's own pinned default is used.
+    model: z.string().min(1).optional(),
   })
   .strict()
 
