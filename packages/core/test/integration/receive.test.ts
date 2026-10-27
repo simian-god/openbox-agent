@@ -13,6 +13,8 @@ import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts
 import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
+import { BRAINS_FAILED_REPLY } from "../../src/runtime/limits.ts"
+import { PERSON_TOLD } from "../../src/runtime/handover.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { scriptedBrain } from "../../src/testing/scripted-brain.ts"
 import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
@@ -333,8 +335,9 @@ describeDatabase("receive", (sql) => {
     const turn = (await agent.store.turns.list())[0]
     expect(turn?.outcome).toBe("brains_failed")
     expect(turn?.ended_at).not.toBeNull()
-    // The person is told nothing rather than told a lie (LOOP-12 is T2.3).
-    expect(sender.sent).toEqual([])
+    // LOOP-12: the fixed holding message and HAND-2's line. Nothing here
+    // pretends to be an answer.
+    expect(sender.texts()).toEqual([BRAINS_FAILED_REPLY, PERSON_TOLD])
   })
 
   test("EVT-1: a turn that runs behind receive still writes its trace", async () => {

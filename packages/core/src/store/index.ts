@@ -137,6 +137,8 @@ export interface Store {
   facts: TableStore<CoreRows["ob_facts"]>
   handovers: TableStore<CoreRows["ob_handovers"]>
   knowledge: TableStore<CoreRows["ob_knowledge"]>
+  /** LIMIT-3: one row per day, holding today's total. */
+  spend: TableStore<CoreRows["ob_spend"]>
   /** For a table with no typed accessor yet. Still scoped. */
   table<T = Record<string, unknown>>(name: string): TableStore<T>
 }
@@ -274,6 +276,7 @@ export function createStore(db: SupabaseClient, agentId: string): Store {
     facts: forTable("ob_facts"),
     handovers: forTable("ob_handovers"),
     knowledge: forTable("ob_knowledge"),
+    spend: forTable("ob_spend"),
     table: <T = Record<string, unknown>>(name: string) => scoped<T>(name),
   }
 }

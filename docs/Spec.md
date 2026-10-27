@@ -287,6 +287,7 @@ type Outbound = {
 | `operator_focus` | Which handover each operator is currently replying in. |
 | `flags` | turn, person, kind, detail, reviewed_at, review_outcome. |
 | `knowledge_entries` | Operator answers: question, answer, status (`candidate`, `approved`, `rejected`), source handover, approved_by. |
+| `spend` | LIMIT-3: one row per agent per day, holding what has been spent and how many calls it came from. Unique on (agent_id, day), where the day is the date in the agent's timezone. |
 | `versions` | Hash of prompt, tools and config, with when it was first seen. |
 | `events` | The full trace of section 18. |
 | `erasure_log` | Hashed person reference, when, by whom. Nothing else. |
@@ -497,6 +498,8 @@ Anything else is rejected, recorded as `confirmation_rejected`, and the person i
 - the decision model's `wants_human` is at or above 0.8 *(default)*
 - GATE-3 or LOOP-10's repeat rules
 - the spend cap (LIMIT-3)
+- the step cap (LOOP-9)
+- every brain failing (LOOP-12)
 - an operator's `take_over`
 
 **HAND-2.** On a trigger, a handover opens as `waiting`. The person gets a short fixed message saying a person will reply. Every operator gets an alert with the person's name, channel, the reason, and a three line summary written by the brain from the last messages. Writing the summary is the brain's only job in a handover.

@@ -19,6 +19,7 @@ export const CORE_TABLES = [
   "ob_facts",
   "ob_handovers",
   "ob_knowledge",
+  "ob_spend",
 ] as const
 
 export type CoreTable = (typeof CORE_TABLES)[number]
@@ -403,6 +404,19 @@ export interface FactRow {
 }
 
 /** Maps a table name to its row type. */
+/** LIMIT-3: what this agent has spent today, in its own timezone. */
+export interface SpendRow {
+  id: string
+  agent_id: string
+  /** yyyy-MM-dd in the agent's timezone. */
+  day: string
+  usd: number
+  /** How many calls the total came from, and the version for the claim. */
+  calls: number
+  updated_at: string
+  created_at: string
+}
+
 export interface CoreRows {
   ob_people: PersonRow
   ob_person_leases: LeaseRow
@@ -421,6 +435,7 @@ export interface CoreRows {
   ob_facts: FactRow
   ob_handovers: HandoverRow
   ob_knowledge: KnowledgeRow
+  ob_spend: SpendRow
 }
 
 /** What a caller supplies when inserting: no id, no agent_id, no defaults. */

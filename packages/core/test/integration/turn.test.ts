@@ -8,6 +8,8 @@ import { trackAgents } from "../support/agents.ts"
 import { check } from "../support/waiting.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
+import { BRAINS_FAILED_REPLY } from "../../src/runtime/limits.ts"
+import { PERSON_TOLD } from "../../src/runtime/handover.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { defineTool, type Tool } from "../../src/tools/index.ts"
 import {
@@ -511,7 +513,7 @@ describeDatabase("a turn", (sql) => {
     expect(sender.texts()).toEqual(["Second brain here."])
   })
 
-  test("when every brain fails the person is not told a lie", async () => {
+  test("LOOP-12: when every brain fails the person is told so, and a colleague is", async () => {
     const failing = scriptedBrain([{ throws: "down" }], { id: "only" })
     sender = fakeSender()
 
@@ -530,7 +532,14 @@ describeDatabase("a turn", (sql) => {
 
     const result = await agent.receiveAndWait(hello())
     expect(result.turn?.outcome).toBe("brains_failed")
-    expect(sender.sent).toEqual([])
+    // LOOP-12: the fixed holding message, and then HAND-2's own line,
+    // because a promise that somebody will come back needs an owner.
+    // Nothing here pretends to be an answer.
+    expect(sender.texts()).toEqual([BRAINS_FAILED_REPLY, PERSON_TOLD])
+    const [handover] = await agent.store.handovers.list()
+    expect(handover?.reason).toBe("brains_failed")
+    // No summary: there is no brain left to write one with.
+    expect(handover?.summary).toBeNull()
   })
 
   test("DATA-1: a second agent on the same database sees none of this", async () => {

@@ -11,6 +11,8 @@ import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts
 import { trackAgents } from "../support/agents.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions } from "../../src/runtime/index.ts"
+import { BRAINS_FAILED_REPLY } from "../../src/runtime/limits.ts"
+import { PERSON_TOLD } from "../../src/runtime/handover.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { defineTool } from "../../src/tools/index.ts"
 import { scriptedBrain } from "../../src/testing/scripted-brain.ts"
@@ -225,7 +227,7 @@ describeDatabase("the fallback chain", (sql) => {
       expect(JSON.stringify(row?.props["failed"])).toContain("503 from the provider")
     })
 
-    test("LOOP-12: with every brain gone the person gets no answer, and the row stays findable", async () => {
+    test("LOOP-12: with every brain gone the person is told so, and the row stays findable", async () => {
       const agent = agentWith([
         scriptedBrain([{ throws: "down" }], { id: "first" }),
         scriptedBrain([{ throws: "also down" }], { id: "second" }),
@@ -234,9 +236,11 @@ describeDatabase("the fallback chain", (sql) => {
       const result = await agent.receiveAndWait(hello())
 
       expect(result.turn?.outcome).toBe("brains_failed")
-      expect(sender.texts()).toEqual([])
-      // Not `done`: a message nobody answered has to stay findable. The
-      // holding message and the operator alert are T7.3.
+      // LOOP-12: the fixed holding message, then HAND-2's line, because
+      // the promise it just made needs an owner.
+      expect(sender.texts()).toEqual([BRAINS_FAILED_REPLY, PERSON_TOLD])
+      // Not `done` even so: a message nobody answered has to stay
+      // findable, and nothing above answered it.
       const row = await agent.store.inbox.byId(result.inboxId)
       expect(row?.status).toBe("failed")
       expect(row?.turn_id).not.toBeNull()

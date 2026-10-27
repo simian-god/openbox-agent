@@ -204,6 +204,13 @@ export interface HandoverOptions {
   scheduleWaiting?: ((handover: HandoverRow, runAt: Date) => Promise<void>) | undefined
   /** HAND-7: when to check an active handover for silence. */
   scheduleIdle?: ((handover: HandoverRow, runAt: Date) => Promise<void>) | undefined
+  /**
+   * LIMIT-3: tells the day's total what the summary call cost.
+   *
+   * The summary is the one brain call that happens outside a turn, so it
+   * is the one cost that nothing else would ever add up.
+   */
+  spend?: ((usd: number) => Promise<void>) | undefined
 }
 
 export interface Opened {
@@ -245,7 +252,28 @@ export interface Handovers {
     reason: HandoverReason
     detail?: string | undefined
     turnId?: string | undefined
+    /**
+     * LIMIT-3: false opens it without HAND-2's three lines.
+     *
+     * For the spend cap, where the summary would be one more brain call
+     * at the exact moment the agent must stop spending. The alert then
+     * says what it says when every brain is down: read the conversation.
+     */
+    summarise?: boolean | undefined
   }): Promise<Opened>
+  /**
+   * LIMIT-1 and LOOP-9: something an operator should know that is not a
+   * handover.
+   *
+   * Here because this module owns who the operators are and how they are
+   * reached. The key is the caller's, so an alert about the same thing
+   * twice is one alert.
+   */
+  tellOperators(request: {
+    text: string
+    key: string
+    urgent?: boolean | undefined
+  }): Promise<number>
   /**
    * HAND-4: the handover this operator is talking into, if any.
    *
@@ -408,11 +436,40 @@ export function createHandovers(options: HandoverOptions): Handovers {
     return told.length
   }
 
+  /**
+   * LIMIT-1 and LOOP-9: one message to every operator, about anything.
+   *
+   * The same path as a handover alert, minus the handover: the outbox
+   * kind, the key and the one row per operator are all the same, which
+   * is why this lives here rather than growing a second notion of what
+   * an operator alert is.
+   */
+  async function tellOperators(request: {
+    text: string
+    key: string
+    urgent?: boolean | undefined
+  }): Promise<number> {
+    const told = await operators()
+    for (const operator of told) {
+      await outbox.queue({
+        personId: operator.id,
+        kind: "operator_alert",
+        channel: operator.channel,
+        channelUserId: operator.channel_user_id,
+        text: request.text,
+        idempotencyKey: `${request.key}:${operator.id}`,
+        urgent: request.urgent ?? true,
+      })
+    }
+    return told.length
+  }
+
   async function open(request: {
     person: PersonRow
     reason: HandoverReason
     detail?: string | undefined
     turnId?: string | undefined
+    summarise?: boolean | undefined
   }): Promise<Opened> {
     const { person, reason } = request
 
@@ -461,9 +518,17 @@ export function createHandovers(options: HandoverOptions): Handovers {
     // alert its summary and nothing else.
     let written: { text: string; costUsd: number } | undefined
     try {
-      written = await options.summarise?.({ person, reason })
+      if (request.summarise !== false) written = await options.summarise?.({ person, reason })
     } catch {
       written = undefined
+    }
+    // LIMIT-3: into the day's total, whatever came of the text. A call
+    // that was made and produced nothing was still paid for.
+    if (written !== undefined && written.costUsd > 0) {
+      await options.spend?.(written.costUsd).catch(() => {
+        // The alert matters more than the accounting, and the cost is
+        // on the event either way.
+      })
     }
     if (written !== undefined && written.text !== "") {
       const [updated] = await store.handovers.update({ id: row.id }, { summary: written.text })
@@ -1007,6 +1072,7 @@ export function createHandovers(options: HandoverOptions): Handovers {
   return {
     openFor,
     open,
+    tellOperators,
     takeOver,
     resume,
     operators,

@@ -179,9 +179,12 @@ and give no numbers for how many questions, choices or levels one request may
 carry. Billing is per input token, so a usage object probably exists, but
 nothing published says what it is called.
 
-**What it costs.** Two things. Spend tracking (LIMIT-3 and the C16 spend cap,
-M7) can see what a brain cost but may not be able to see what a decision cost
-on this route, which would make an agent's reported spend lower than its bill.
+**What it costs.** Two things. Spend tracking (LIMIT-3 and the C16 spend cap)
+is built as of T7.3 and prices a call from the config's pricing table whenever
+the provider reports no cost, so a route that sends `usage.input_tokens` is
+covered. What is not covered is a route that reports no usage at all: its
+decisions then count as zero and the agent's reported spend is lower than its
+bill. Which of those this route is, is exactly the open question.
 And the limits this adapter cannot check are checked by the API instead, so a
 question that is too big is found out by a 400 rather than refused here. Jev
 publishes both of its limits and they are refused before the request.

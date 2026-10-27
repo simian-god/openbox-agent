@@ -44,6 +44,14 @@ import {
 import { createJobs, type Jobs } from "./jobs.ts"
 import { createOutbox, type Outbox } from "./outbox.ts"
 import {
+  costOf,
+  createLimits,
+  BRAINS_FAILED_REPLY,
+  RATE_LIMIT_REPLY,
+  STEP_CAP_REPLY,
+  type Limits,
+} from "./limits.ts"
+import {
   createProactive,
   PROACTIVE_JOB,
   type ScheduleRequest,
@@ -159,6 +167,12 @@ export interface Agent {
    * or take one without a conversation to do it in.
    */
   readonly handovers: Handovers
+  /**
+   * LIMIT-1 to LIMIT-3, for a glue that wants to show today's spend, and
+   * for a test that has to put the agent at its cap without spending
+   * anything.
+   */
+  readonly limits: Limits
   /** API-1: writes the message down and returns. The turn runs behind it. */
   receive(inbound: Inbound): Promise<ReceiveResult>
   /**
@@ -312,6 +326,10 @@ export function createAgent(options: AgentOptions): Agent {
     ...(options.onWorkerError !== undefined ? { onError: options.onWorkerError } : {}),
   })
 
+  // LIMIT-1 to LIMIT-3. Above the handovers, because the summary call's
+  // cost is counted here too and the spend cap opens a handover.
+  const limits = createLimits({ config, store, clock })
+
   // HAND-1 to HAND-3. Above the tools as well, because `escalate`,
   // `take_over` and `resume` are three thin wrappers around this and
   // the rules about states and races belong in one place.
@@ -324,6 +342,11 @@ export function createAgent(options: AgentOptions): Agent {
     summarise,
     scheduleWaiting: scheduleHandoverWaiting,
     scheduleIdle: scheduleHandoverIdle,
+    // LIMIT-3: the summary is the one brain call outside a turn, so it is
+    // the one cost nothing else would add up.
+    spend: async (usd) => {
+      await limits.add(usd)
+    },
   })
 
   /**
@@ -390,7 +413,7 @@ export function createAgent(options: AgentOptions): Agent {
           messages: [{ role: "person", text: transcript }],
           tools: [],
         })
-        costUsd += output.usage.costUsd ?? 0
+        costUsd += costOf(config, models[index] ?? (models[0] as string), output.usage)
         const text = output.text?.trim() ?? ""
         if (text !== "") return { text, costUsd }
       } catch {
@@ -789,6 +812,7 @@ export function createAgent(options: AgentOptions): Agent {
     jobs,
     confirmations,
     handovers,
+    limits,
 
     receive: write,
 
@@ -1023,6 +1047,75 @@ export function createAgent(options: AgentOptions): Agent {
       )
     }
 
+    // LOOP-5 step 3, LIMIT-1: the rate limit. Before the handover check
+    // and before anything is spent, because a flood has to be cheap: no
+    // brain call, no decision request, no context reads.
+    //
+    // Not applied to an operator. The control channel is how a colleague
+    // says `resume`, and twenty messages in ten minutes is a normal
+    // afternoon for somebody relaying.
+    if (person.role === "end_user") {
+      const standing = await limits.rate(person)
+      if (standing !== "under") {
+        if (standing === "over") {
+          // Recorded before the reply, because this is what the next
+          // turn in this window reads to stay silent. A crash between
+          // the two costs the person a courtesy; the other order would
+          // cost them the rule.
+          await turnEvents.record("limit_hit", {
+            limit: "rate",
+            messagesPerWindow: config.limits.messagesPerWindow,
+            windowMinutes: config.limits.windowMinutes,
+          })
+          await deliver({
+            person,
+            turnId: turnRow.id,
+            text: RATE_LIMIT_REPLY,
+            key: replyKey(inboxIds),
+            kind: "reply",
+          })
+          // LIMIT-1: and an operator alert. Not a handover: nobody
+          // should be handed a conversation with somebody flooding
+          // them, and there is no reason in HAND-1 for one.
+          await handovers.tellOperators({
+            text: `${nameOf(person)} has gone over the rate limit, so they have had one fixed reply and will get silence until the window passes.`,
+            // One alert per person per window, whatever arrives next.
+            key: `rate:${person.id}:${Math.floor(clock.now().getTime() / (config.limits.windowMinutes * 60_000))}`,
+            urgent: false,
+          })
+        }
+        return finish(nothingHappened("rate_limited"), turnRow, turnEvents, startedAt, batch.length)
+      }
+    }
+
+    // LOOP-5 step 4, LIMIT-3: the spend cap. Every new turn becomes a
+    // handover trigger until midnight in the agent's timezone.
+    //
+    // Checked here, before the brain, because a cap that is read after
+    // the spending is a cap that does nothing. Operators are alerted by
+    // the handover, and the person is told by it.
+    if (person.role === "end_user") {
+      const spend = await limits.spent()
+      if (spend.over) {
+        await turnEvents.record("limit_hit", {
+          limit: "spend",
+          usd: spend.usd,
+          capUsd: config.limits.dailySpendUsd,
+        })
+        await handovers.open({
+          person,
+          reason: "spend_cap",
+          detail: `spent ${spend.usd.toFixed(4)} of ${config.limits.dailySpendUsd} today`,
+          turnId: turnRow.id,
+          // The one handover opened without HAND-2's three lines: the
+          // summary is a brain call, and this is the moment the agent
+          // must stop spending.
+          summarise: false,
+        })
+        return finish(nothingHappened("handover"), turnRow, turnEvents, startedAt, batch.length)
+      }
+    }
+
     // One Relayed per message, whichever direction this turn is. The
     // inbox row id is what keys the send, so a turn that runs twice
     // does not send the same words twice.
@@ -1170,6 +1263,38 @@ export function createAgent(options: AgentOptions): Agent {
         text: result.reply,
         key: replyKey(inboxIds),
         kind: "reply",
+      })
+    }
+
+    // LOOP-9 and LOOP-12: the two ways a turn ends with nobody answered.
+    // The person gets a fixed line, the turn is flagged, and a colleague
+    // is told, which is a handover: both of those lines are a promise
+    // that somebody will come back, and a handover is what gives a
+    // promise an owner and HAND-6's clock.
+    if (
+      result.reply === undefined &&
+      (result.outcome === "step_cap" || result.outcome === "brains_failed")
+    ) {
+      const capped = result.outcome === "step_cap"
+      await deliver({
+        person,
+        turnId: turnRow.id,
+        text: capped ? STEP_CAP_REPLY : BRAINS_FAILED_REPLY,
+        key: replyKey(inboxIds),
+        kind: "reply",
+      })
+      // LEARN-1: LOOP-9 fired. The handover raises its own flag, so
+      // this is the one the step cap adds.
+      if (capped) {
+        await turnEvents.flag("step_cap", { steps: result.steps, maxSteps: config.maxSteps })
+      }
+      await handovers.open({
+        person,
+        reason: capped ? "step_cap" : "brains_failed",
+        turnId: turnRow.id,
+        // Every brain is down, so there is nothing to write the three
+        // lines with. The alert says to read the conversation.
+        ...(capped ? {} : { summarise: false }),
       })
     }
 
@@ -1388,6 +1513,17 @@ export function createAgent(options: AgentOptions): Agent {
     messages: number,
   ): Promise<TurnResult> {
     const latencyMs = clock.now().getTime() - startedAt.getTime()
+
+    // LIMIT-3: what this turn cost joins today's total, before anything
+    // else is written, so a turn that spent money is counted even if the
+    // records below fail. A turn that spent nothing costs no write.
+    if (result.costUsd > 0 && (await limits.add(result.costUsd)) === null) {
+      reportWorker(
+        new Error(
+          `today's spend total would not take ${result.costUsd} from turn ${turnRow.id}, so the cap is now reading low`,
+        ),
+      )
+    }
     await store.turns.update(
       { id: turnRow.id },
       {

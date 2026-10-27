@@ -15,7 +15,7 @@
 // Nothing here touches the database or records an event. It answers with
 // what it decided, and the step records that, which is what lets every
 // rule below be tested without a turn.
-import type { Answer, DecisionModel, Question } from "../providers/decision/types.ts"
+import type { Answer, DecisionModel, DecisionUsage, Question } from "../providers/decision/types.ts"
 import type { Risk, Tool } from "../tools/index.ts"
 import { answerOf, within } from "./decide.ts"
 
@@ -83,6 +83,8 @@ export interface GateOptions {
   bands?: Record<string, Band> | undefined
   /** config.decisionTimeoutMs. A timeout is a failure, so it fails closed. */
   timeoutMs: number
+  /** LIMIT-3: what the call cost, when the provider did not say. */
+  price?: ((usage: DecisionUsage) => number) | undefined
 }
 
 export interface GateDecision {
@@ -187,6 +189,7 @@ export const isGated = (risk: Risk): boolean => risk !== "read"
 
 export async function gate(options: GateOptions): Promise<GateDecision> {
   const { decisionModel, tool, args, conversation, timeoutMs } = options
+  const price = options.price ?? ((usage: DecisionUsage): number => usage.costUsd ?? 0)
 
   // GATE-5: a read tool is never gated, and no request is made for it.
   // Reading at the wrong moment is harmless, and ROLE-3 already decides
@@ -205,7 +208,7 @@ export async function gate(options: GateOptions): Promise<GateDecision> {
       decisionModel.ask(gateState(tool, args, conversation), { [GATE_QUESTION]: gateQuestion() }),
       timeoutMs,
     )
-    costUsd = result.usage.costUsd ?? 0
+    costUsd = price(result.usage)
     answers = result.answers
     p = answerOf(result.answers, GATE_QUESTION, "yesno").p
   } catch (error) {

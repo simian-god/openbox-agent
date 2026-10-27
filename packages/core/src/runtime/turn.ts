@@ -21,6 +21,7 @@ import { noEvents, type EventWriter } from "./events.ts"
 import { route, ROUTING_QUESTION, type RoutingState } from "./routing.ts"
 import { WANTS_HUMAN, wantsHumanQuestion } from "./handover.ts"
 import { gate, type GateConversation } from "./gate.ts"
+import { costOf } from "./limits.ts"
 import { toolContext } from "./tool-context.ts"
 import type { FactRow, PendingActionRow, TaskRow } from "../store/index.ts"
 import type { DecisionModel } from "../providers/decision/types.ts"
@@ -132,10 +133,10 @@ export interface TurnResult {
    * ended in a way the core did not plan for, so a caller of
    * `receiveAndWait` gets a result rather than a rejection.
    *
-   * Nor are `blocked`, `handover`, `relayed`, `opted_out` and
-   * `opted_in`. All five are decided before anything in this file runs,
-   * so none of those turns reaches it (ROLE-4, HAND-5, HAND-4, LOOP-5
-   * step 2).
+   * Nor are `blocked`, `handover`, `relayed`, `opted_out`, `opted_in`
+   * and `rate_limited`. All six are decided before anything in this file
+   * runs, so none of those turns reaches it (ROLE-4, HAND-5, HAND-4,
+   * LOOP-5 steps 2 and 3).
    */
   outcome:
     | "replied"
@@ -148,6 +149,7 @@ export interface TurnResult {
     | "relayed"
     | "opted_out"
     | "opted_in"
+    | "rate_limited"
   /** Set only when the outcome is `failed`. */
   error?: string | undefined
 }
@@ -262,6 +264,14 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   const knownFacts: Record<string, string> = {}
   for (const fact of input.facts ?? []) knownFacts[fact.key] = fact.value
 
+  /**
+   * LIMIT-3: what a decision call cost, the provider's number or the
+   * pricing table. The model id is what the table is keyed by, which for
+   * a decision model is the pinned version when config names one.
+   */
+  const priceDecision = (usage: { inputTokens: number; costUsd?: number | undefined }): number =>
+    costOf(config, config.decisionModel.model ?? config.decisionModel.id, usage)
+
   const brainsUsed: string[] = []
   const toolsRun: { name: string; ok: boolean }[] = []
   const routed: TurnResult["routed"] = []
@@ -286,6 +296,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       minTools: config.routingMinTools,
       threshold: config.decisionModel.routeThreshold,
       timeoutMs: config.decisionTimeoutMs,
+      price: priceDecision,
       // LOOP-8 step 1: on the first step the same request also asks
       // whether this person wants a human (HAND-1). DM-2 is why it
       // rides along rather than being asked on its own.
@@ -382,13 +393,16 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     // Step 3: the brain, with the fallback chain (BRAIN-5 proper is M5).
     let answered = false
     let output: Awaited<ReturnType<Brain["complete"]>> | undefined
+    /** LIMIT-3: the model that answered, which the pricing table is keyed by. */
+    let answeredWith = ""
     let lastError: unknown
     const brainsFailed: { brain: string; error: string }[] = []
 
     for (const [index, brain] of brains.entries()) {
+      const model = models[index] ?? models[0] ?? ""
       try {
         output = await brain.complete({
-          model: models[index] ?? models[0] ?? "",
+          model,
           system,
           messages,
           tools: offered.map((tool) => ({
@@ -399,6 +413,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         })
         brainsUsed.push(brain.id)
         answered = true
+        answeredWith = model
         if (index > 0) {
           await events.record("fallback_used", {
             what: "brain",
@@ -450,7 +465,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       }
     }
 
-    costUsd += output.usage.costUsd ?? 0
+    costUsd += costOf(config, answeredWith, output.usage)
 
     // BRAIN-3: more than one tool call means the first is taken and the
     // rest are recorded as dropped.
@@ -558,6 +573,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       conversation: gateConversation(),
       bands: config.decisionModel.gateBands,
       timeoutMs: config.decisionTimeoutMs,
+      price: priceDecision,
     })
     const gateMs = clock.now().getTime() - gatedAt
     costUsd += decision.costUsd

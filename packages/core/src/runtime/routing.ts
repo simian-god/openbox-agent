@@ -14,7 +14,7 @@
 // Nothing here touches the database or records an event. It answers with
 // what it decided and the step records that, which is what lets every rule
 // below be tested without a turn.
-import type { Answer, DecisionModel, Question } from "../providers/decision/types.ts"
+import type { Answer, DecisionModel, DecisionUsage, Question } from "../providers/decision/types.ts"
 import type { Tool } from "../tools/index.ts"
 import { answerOf, within } from "./decide.ts"
 
@@ -67,6 +67,15 @@ export interface RouteOptions {
    * still has to ask them and one request is one request either way.
    */
   also?: Record<string, Question> | undefined
+  /**
+   * LIMIT-3: what one decision call cost.
+   *
+   * Injected because the answer depends on the config's pricing table,
+   * which this file has no business reading. Without it, only a cost the
+   * provider reported is counted, which is what every caller before
+   * T7.3 wanted.
+   */
+  price?: ((usage: DecisionUsage) => number) | undefined
 }
 
 export interface RouteDecision {
@@ -193,6 +202,7 @@ async function decide(
   extra: Record<string, Answer>,
 ): Promise<RouteDecision> {
   const { decisionModel, tools, state, minTools, threshold, timeoutMs } = options
+  const price = options.price ?? ((usage: DecisionUsage): number => usage.costUsd ?? 0)
   const also = options.also ?? {}
   const alsoNames = Object.keys(also)
   const builtins = options.builtins ?? []
@@ -219,7 +229,7 @@ async function decide(
     try {
       const only = await within(decisionModel.ask(state, also), timeoutMs)
       Object.assign(extra, only.answers)
-      return { ...everything("not_routed"), requests: 1, costUsd: only.usage.costUsd ?? 0 }
+      return { ...everything("not_routed"), requests: 1, costUsd: price(only.usage) }
     } catch (error) {
       // The same trade as ROUTE-5: an optimisation and a hint, neither
       // worth spending the person's wait on a retry.
@@ -249,7 +259,7 @@ async function decide(
 
     const first = await within(decisionModel.ask(state, questions), timeoutMs)
     requests++
-    costUsd += first.usage.costUsd ?? 0
+    costUsd += price(first.usage)
     for (const name of alsoNames) {
       const answer = first.answers[name]
       if (answer !== undefined) extra[name] = answer
@@ -290,7 +300,7 @@ async function decide(
           timeoutMs,
         )
         requests++
-        costUsd += runoff.usage.costUsd ?? 0
+        costUsd += price(runoff.usage)
         picked = pickedFrom(runoff.answers, ROUTING_QUESTION)
       }
     }
