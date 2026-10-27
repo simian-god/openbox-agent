@@ -589,6 +589,59 @@ describeDatabase("handover", (sql) => {
       expect([first.id, second.id]).toContain(handover?.operator_id ?? "")
     })
 
+    test("HAND-1: an operator naming somebody not in a handover starts one", async () => {
+      // HAND-1's last trigger, and section 10's own words: the tool takes
+      // an open handover or starts one for a named person. A colleague who
+      // has read a conversation and decided to answer it themselves is the
+      // clearest trigger there is.
+      const { agent } = agentWith([
+        { reply: "We open at 11." },
+        { tool: "take_over", input: { user_id: "9" } },
+        { reply: "They are yours." },
+      ])
+      const asha = await operator(agent, "op-1", "Asha")
+      await agent.receiveAndWait(from("9", "are you open?"))
+      expect(await agent.store.handovers.count()).toBe(0)
+      sender.reset()
+
+      await agent.receiveAndWait(from("op-1", "I will take 9 myself"))
+
+      const [handover] = await agent.store.handovers.list({}, { orderBy: "seq" })
+      expect(handover?.reason).toBe("operator")
+      expect(handover?.status).toBe("active")
+      expect(handover?.operator_id).toBe(asha.id)
+      // Told once, by the core, the same as every other trigger (HAND-2).
+      expect(sender.texts().filter((text) => text === PERSON_TOLD)).toHaveLength(1)
+      // And the agent stops answering them (LOOP-5 step 5).
+      const next = await agent.receiveAndWait(from("9", "hello?", "m-after"))
+      expect(next.turn?.outcome).toBe("handover")
+    })
+
+    test("C12: an operator resumes from their own channel", async () => {
+      // Every other part of C12 is proven end to end from a message. This
+      // one was only ever proven through the module, which is not what an
+      // operator has.
+      const { agent } = agentWith([
+        { tool: "escalate", input: { why: "they asked" } },
+        { reply: "Someone will be with you." },
+        { tool: "take_over" },
+        { reply: "It is mine." },
+        { tool: "resume" },
+        { reply: "Given back." },
+      ])
+      await operator(agent, "op-1", "Asha")
+      await agent.receiveAndWait(from("9", "get me a manager"))
+      await agent.receiveAndWait(from("op-1", "take over"))
+
+      // A slash, because anything else from a focused operator is relayed
+      // to the person word for word (HAND-4).
+      await agent.receiveAndWait(from("op-1", "/give them back to the agent", "m-op-2"))
+
+      const [handover] = await agent.store.handovers.list({}, { orderBy: "seq" })
+      expect(handover?.status).toBe("closed")
+      expect(handover?.ended_reason).toBe("resume")
+    })
+
     test("HAND-3: taking over when nothing is waiting says so", async () => {
       const { agent } = agentWith([{ reply: "Nothing is waiting." }])
       const op = await operator(agent, "op-1", "Asha")

@@ -67,6 +67,9 @@ Milestone checks that are scripted rather than run by hand:
   purpose until T11.1, see Known K13.
 - `bun run m4-check` - C9, C14 and C15, clause by clause, naming the test
   that proves each one.
+- `bun run m6-check` - C5, C11 and C12 the same way. Three clauses wait on
+  a later row and say so; it fails only on a clause that should have a
+  passing test and does not.
 
 Measuring whether routing is worth it (C8), which needs a brain key and a
 decision model key and no database:

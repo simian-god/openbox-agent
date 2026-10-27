@@ -496,7 +496,7 @@ export function createHandovers(options: HandoverOptions): Handovers {
     operator: PersonRow
     person?: PersonRow | undefined
   }): Promise<Taken> {
-    const wanted =
+    let wanted =
       request.person !== undefined
         ? await openFor(request.person)
         : // Oldest first, because the person who has waited longest is the
@@ -504,6 +504,21 @@ export function createHandovers(options: HandoverOptions): Handovers {
           (await store.handovers.list({}, { orderBy: "seq" })).find(
             (row) => row.status === "waiting" || row.status === "unanswered",
           )
+
+    // HAND-1's last trigger: an operator's own `take_over`. Section 10
+    // says the tool takes an open handover or starts one for a named
+    // person, and a colleague who has read a conversation and decided to
+    // answer it themselves is the clearest trigger there is.
+    //
+    // Opened first and claimed second, through the same two calls every
+    // other trigger uses, so the person is told once, the operators are
+    // alerted once, the flag and the event are written once, and two
+    // operators deciding this at the same moment still produce one
+    // handover with one of them on it.
+    if (wanted === undefined && request.person !== undefined) {
+      const started = await open({ person: request.person, reason: "operator" })
+      wanted = started.handover
+    }
 
     if (wanted === undefined) return { kind: "none" }
 

@@ -115,7 +115,7 @@ export function handoverTools(options: HandoverToolOptions): Tool[] {
   const takeOver = defineBuiltinTool({
     name: "take_over",
     description:
-      "Takes a handover, so you are the one replying to that person. Takes whoever has waited longest unless you name someone. Naming one you already hold moves you to it.",
+      "Takes a handover, so you are the one replying to that person. Takes whoever has waited longest unless you name someone. Naming a person who is not in a handover starts one for them, and naming one you already hold moves you to it.",
     input: z.object(WHO_OPTIONAL),
     risk: "read",
     roles: ["operator"],
@@ -126,6 +126,7 @@ export function handoverTools(options: HandoverToolOptions): Tool[] {
         // to say which one they are typing into, and section 10 has no
         // other tool for it.
         "An operator holding more than one has said which of them they are on now",
+        "An operator has said they will answer a particular person themselves, who is not in a handover yet",
       ],
       dontCallWhen: [
         "They are asking what is waiting rather than taking it",
@@ -152,13 +153,9 @@ export function handoverTools(options: HandoverToolOptions): Tool[] {
       })
 
       if (taken.kind === "none") {
-        return {
-          ok: false,
-          error:
-            args.user_id === undefined
-              ? "Nothing is waiting to be taken."
-              : `${args.user_id} is not in a handover.`,
-        }
+        // Only reachable when nobody was named: naming someone who is not
+        // in a handover starts one for them (HAND-1).
+        return { ok: false, error: "Nothing is waiting to be taken, and you named nobody." }
       }
       if (taken.kind === "already_taken") {
         return {
