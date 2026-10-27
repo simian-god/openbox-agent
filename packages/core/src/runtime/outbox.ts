@@ -121,14 +121,6 @@ export function budgetMs(attempts: number, base: number): number {
 export function createOutbox(options: OutboxOptions): Outbox {
   const { config, store, clock, sender, events, onError } = options
 
-  const report = (error: unknown): void => {
-    try {
-      onError?.(error)
-    } catch {
-      // A broken handler must not stop messages going out.
-    }
-  }
-
   async function queue(message: Queued): Promise<OutboxRow> {
     const payload = {
       ...(message.text !== undefined ? { text: message.text } : {}),

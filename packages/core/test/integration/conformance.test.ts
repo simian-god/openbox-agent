@@ -11,13 +11,12 @@
 // answers: they read the conversation and decide. A positional script
 // would pass by luck the moment the suite asked one more question, which
 // is the opposite of what this file is for.
-import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeAll, beforeEach } from "bun:test"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import {
   conformanceConfig,
   runConformance,
-  CONFORMANCE_DISH,
   type ConformanceReport,
 } from "../../src/testing/conformance.ts"
 import { scriptedDecisionModel, yesno } from "../../src/testing/scripted-decision.ts"

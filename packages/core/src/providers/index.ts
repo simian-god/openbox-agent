@@ -3,6 +3,9 @@
 // instances instead, and those win.
 //
 // CFG-2 is why the keys come from here and not from config.
+// A blank variable counts as unset, so a key pasted with a stray space
+// is refused here with the message below rather than at the vendor.
+import { envValue } from "../env.ts"
 import type { OpenboxConfig } from "../config/index.ts"
 import type { Brain } from "./brains/types.ts"
 import { openRouterBrain } from "./brains/openrouter.ts"
@@ -104,8 +107,8 @@ export interface BuiltProviders {
 function buildBrain(id: string, env: Env, problems: string[]): Brain | undefined {
   switch (id) {
     case "openrouter": {
-      const apiKey = env[ENV_KEYS.openrouter]
-      if (apiKey === undefined || apiKey === "") {
+      const apiKey = envValue(ENV_KEYS.openrouter, env)
+      if (apiKey === undefined) {
         problems.push(
           `brain openrouter needs ${ENV_KEYS.openrouter} in the environment. Secrets never go in config (CFG-2)`,
         )
@@ -115,8 +118,8 @@ function buildBrain(id: string, env: Env, problems: string[]): Brain | undefined
     }
 
     case "claude-agent-sdk": {
-      const apiKey = env[ENV_KEYS["claude-agent-sdk"]]
-      if (apiKey === undefined || apiKey === "") {
+      const apiKey = envValue(ENV_KEYS["claude-agent-sdk"], env)
+      if (apiKey === undefined) {
         problems.push(
           `brain claude-agent-sdk needs ${ENV_KEYS["claude-agent-sdk"]} in the environment. Secrets never go in config (CFG-2)`,
         )
@@ -126,8 +129,8 @@ function buildBrain(id: string, env: Env, problems: string[]): Brain | undefined
     }
 
     case "claude-code-cli": {
-      const apiKey = env[ENV_KEYS["claude-code-cli"]]
-      if (apiKey === undefined || apiKey === "") {
+      const apiKey = envValue(ENV_KEYS["claude-code-cli"], env)
+      if (apiKey === undefined) {
         problems.push(
           `brain claude-code-cli needs ${ENV_KEYS["claude-code-cli"]} in the environment. It runs \`claude --bare\`, which never reads a logged in session (BRAIN-1)`,
         )
@@ -139,7 +142,7 @@ function buildBrain(id: string, env: Env, problems: string[]): Brain | undefined
     case "codex-cli":
       // No key required: Codex keeps its own login, and one is passed only
       // when it is there.
-      return codexCliBrain({ apiKey: env[ENV_KEYS["codex-cli"]] ?? "" })
+      return codexCliBrain({ apiKey: envValue(ENV_KEYS["codex-cli"], env) ?? "" })
 
     default:
       // The OpenAI Agents SDK is parked, see Known K16. Config already rejects an id
@@ -164,8 +167,8 @@ function buildDecisionModel(
       // read. That is what stops one vendor's key reaching another.
       const route = (wanted.route ?? "openrouter") as JevRoute
       const key = route === "typesafe" ? ENV_KEYS.typesafe : ENV_KEYS.openrouter
-      const apiKey = env[key]
-      if (apiKey === undefined || apiKey === "") {
+      const apiKey = envValue(key, env)
+      if (apiKey === undefined) {
         problems.push(
           `decision model jev on the ${route} route needs ${key} in the environment. Secrets never go in config (CFG-2)`,
         )
@@ -179,8 +182,8 @@ function buildDecisionModel(
     }
 
     case "openai-decisions": {
-      const apiKey = env[ENV_KEYS["openai-agents"]]
-      if (apiKey === undefined || apiKey === "") {
+      const apiKey = envValue(ENV_KEYS["openai-agents"], env)
+      if (apiKey === undefined) {
         problems.push(
           `decision model openai-decisions needs ${ENV_KEYS["openai-agents"]} in the environment. Secrets never go in config (CFG-2)`,
         )

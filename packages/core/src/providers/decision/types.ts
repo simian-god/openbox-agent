@@ -89,16 +89,3 @@ export function confidenceOf(probabilities: Record<string, number>): number {
   const values = Object.values(probabilities)
   return values.length === 0 ? 0 : Math.max(...values)
 }
-
-/** The option a spread picks, which is the one with the most behind it. */
-export function winnerOf(probabilities: Record<string, number>): string | undefined {
-  let best: string | undefined
-  let highest = -1
-  for (const [name, p] of Object.entries(probabilities)) {
-    if (p > highest) {
-      highest = p
-      best = name
-    }
-  }
-  return best
-}

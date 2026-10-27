@@ -11,7 +11,6 @@
 // is as much a thing that happened as running.
 import type { OpenboxConfig } from "../config/index.ts"
 import type { Brain, BrainMessage } from "../providers/brains/types.ts"
-import { BrainError } from "../providers/brains/types.ts"
 import type { Store, PersonRow } from "../store/index.ts"
 import type { Tool, ToolRegistry, ToolContext } from "../tools/index.ts"
 import type { Clock } from "../testing/clock.ts"

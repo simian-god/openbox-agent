@@ -63,7 +63,10 @@ export interface ToolContext {
    * `ctx.db.table("menu_items")`.
    */
   readonly db: {
-    table<T = Record<string, unknown>>(name: string): unknown
+    // No type parameter, because this returns `unknown` and a generic
+    // here only promised typed access it never gave. Typing it properly
+    // is a change to the store's own surface, not to this declaration.
+    table(name: string): unknown
   }
   /** Goes to the turn's record, not to the person. */
   readonly log: (message: string, detail?: Record<string, unknown>) => void

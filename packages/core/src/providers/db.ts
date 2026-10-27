@@ -6,6 +6,7 @@
 // config: a service role key in a config file would be committed.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 import { ProviderError, type Env } from "./index.ts"
+import { envValue } from "../env.ts"
 
 /** Also the list in .env.example. */
 export const DB_ENV_KEYS = {
@@ -19,14 +20,14 @@ export const DB_ENV_KEYS = {
  * (DATA-5), so it cannot be used here.
  */
 export function supabaseFromEnv(env: Env = process.env): SupabaseClient {
-  const url = env[DB_ENV_KEYS.url]
-  const key = env[DB_ENV_KEYS.serviceRoleKey]
+  const url = envValue(DB_ENV_KEYS.url, env)
+  const key = envValue(DB_ENV_KEYS.serviceRoleKey, env)
 
   const problems: string[] = []
-  if (url === undefined || url === "") {
+  if (url === undefined) {
     problems.push(`the database needs ${DB_ENV_KEYS.url} in the environment`)
   }
-  if (key === undefined || key === "") {
+  if (key === undefined) {
     problems.push(
       `the database needs ${DB_ENV_KEYS.serviceRoleKey} in the environment. Secrets never go in config (CFG-2)`,
     )

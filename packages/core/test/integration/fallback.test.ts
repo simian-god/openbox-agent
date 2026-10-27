@@ -20,7 +20,7 @@ import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
 import { structuredBrain } from "../../src/providers/brains/structured.ts"
-import { BrainError, type Brain } from "../../src/providers/brains/types.ts"
+import type { Brain } from "../../src/providers/brains/types.ts"
 
 const PROMPT = "You are the host at a restaurant."
 const agents = trackAgents("fallback.test.ts")

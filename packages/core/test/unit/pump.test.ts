@@ -17,7 +17,10 @@
 // and `drain()` has nothing to wait for. That window is small, and under
 // load it is wide enough to lose a message in.
 import { test, expect, describe } from "bun:test"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { createPump } from "../../src/runtime/pump.ts"
+import { tsFiles, withoutComments } from "../support/source.ts"
 
 /** A promise someone else decides when to resolve. */
 function gate(): { open: () => void; wait: Promise<void> } {
@@ -168,5 +171,150 @@ describe("K14: work a pass has claimed but not started", () => {
 
     holding.open()
     await pump.stop()
+  })
+  // The two below are about `onError`, which nothing covered until the
+  // cleanup sweep went looking. Both take their candidates from a queue
+  // that drains, and both yield to the macrotask queue on every pass.
+  //
+  // That is not style, it is the price of a readable failure. A fake
+  // `candidates` that keeps returning the same item while `handle` fails
+  // immediately is a closed loop: the item's `finally` nudges the pump,
+  // the pump sweeps, the fake hands the item back. Nothing in that circuit
+  // awaits a timer, so it never leaves the microtask queue, so the test
+  // runner's own timeout, which is a timer, never gets to fire. The result
+  // is not a failing test. It is a pinned core, an array that grows until
+  // the machine gives out, and no output at all. `pass()` has no floor of
+  // its own by design, since a real `candidates` is a database read and an
+  // item normally stops being a candidate once it is claimed, so the only
+  // thing standing between a fake and a locked up machine is the fake.
+  //
+  // `quiet()` already carries the same guard for the same reason, with the
+  // same reasoning written beside it in pump.ts.
+
+  /** Hands each item out once, and always yields before answering. */
+  function queued(items: string[]): (slots: number) => Promise<string[]> {
+    const left = [...items]
+    return async (slots: number) => {
+      await settle()
+      return left.splice(0, Math.max(1, slots))
+    }
+  }
+
+  test("a handler that throws is reported to onError, not swallowed", async () => {
+    // Deleting the outbox's own unused copy of this wrapper only holds if
+    // the pump really does report. Nothing proved that it did. All three
+    // pumps, the worker, the outbox and the jobs loop, hand the builder's
+    // `onWorkerError` down to here.
+    const seen: unknown[] = []
+    const pump = createPump<string>({
+      pollMs: 10_000,
+      concurrency: 1,
+      candidates: queued(["one"]),
+      key: (item) => item,
+      handle: async () => {
+        throw new Error("the database went away")
+      },
+      onError: (error) => seen.push(error),
+    })
+
+    pump.start()
+    await pump.drain()
+    await pump.stop()
+
+    expect(seen).toHaveLength(1)
+    expect((seen[0] as Error).message).toBe("the database went away")
+  }, 5_000)
+
+  test("an onError that throws does not stop the pump", async () => {
+    // The rule the event writer already follows: a broken handler of the
+    // builder's must never become the reason work stops going out. Here
+    // the first item fails and the reporter for that failure fails too,
+    // and the second item still has to be worked on.
+    const handled: string[] = []
+    const pump = createPump<string>({
+      pollMs: 10_000,
+      concurrency: 1,
+      candidates: queued(["one", "two"]),
+      key: (item) => item,
+      handle: async (item) => {
+        handled.push(item)
+        if (item === "one") throw new Error("first one fails")
+      },
+      onError: () => {
+        throw new Error("and the handler for that is broken too")
+      },
+    })
+
+    pump.start()
+    await pump.drain()
+    await pump.stop()
+
+    expect(handled).toEqual(["one", "two"])
+  }, 5_000)
+})
+
+describe("every pump reports, because a pump that cannot is a silent one", () => {
+  // A probe during the cleanup removed the line that hands `onError` from
+  // the outbox down to its pump, and nothing failed. The two tests above
+  // prove the pump reports what it is given; this is the other half, that
+  // each of the three pumps is actually given it. Structural, in the shape
+  // DEP-1, DATA-1 and TIME-1 are already enforced in, because the thing
+  // worth preventing is a fourth pump arriving without it.
+  const root = join(import.meta.dir, "..", "..", "src")
+
+  /** The option object of each `createPump` call in a file. */
+  function pumpCalls(text: string): string[] {
+    const found: string[] = []
+    for (const match of text.matchAll(/createPump\s*(?:<[^>]*>)?\s*\(/g)) {
+      let depth = 0
+      let start = -1
+      for (let i = (match.index ?? 0) + match[0].length - 1; i < text.length; i++) {
+        const ch = text[i]
+        if (ch === "(" || ch === "{") {
+          if (depth === 0) start = i
+          depth++
+        } else if (ch === ")" || ch === "}") {
+          depth--
+          if (depth === 0) {
+            found.push(text.slice(start, i + 1))
+            break
+          }
+        }
+      }
+    }
+    return found
+  }
+
+  test("each createPump is handed an onError", () => {
+    const callers = tsFiles(root).filter(
+      (file) =>
+        file !== "runtime/pump.ts" && readFileSync(join(root, file), "utf8").includes("createPump"),
+    )
+    // index.ts only re-exports it.
+    const real = callers.filter((file) => file !== "index.ts")
+    expect(real.sort()).toEqual(["runtime/jobs.ts", "runtime/outbox.ts", "runtime/worker.ts"])
+
+    const missing: string[] = []
+    for (const file of real) {
+      const calls = pumpCalls(withoutComments(readFileSync(join(root, file), "utf8")))
+      expect(calls).toHaveLength(1)
+      for (const call of calls) {
+        if (!call.includes("onError")) missing.push(file)
+      }
+    }
+    expect(missing).toEqual([])
+  })
+
+  test("that rule can actually fail", () => {
+    // The rule is worth its parser and no more, so this pins the parser.
+    expect(pumpCalls("const p = createPump<Row>({ pollMs: 1, onError })")[0]).toContain("onError")
+    expect(pumpCalls("const p = createPump<Row>({ pollMs: 1 })")[0]).not.toContain("onError")
+    // A nested object must not end the call early and hide a missing one.
+    const nested = pumpCalls("createPump<Row>({ a: { b: 1 }, handle: async () => {}, onError })")
+    expect(nested).toHaveLength(1)
+    expect(nested[0]).toContain("onError")
+    expect(pumpCalls("createPump<Row>({ a: { b: 1 }, handle: async () => {} })")[0]).not.toContain(
+      "onError",
+    )
   })
 })

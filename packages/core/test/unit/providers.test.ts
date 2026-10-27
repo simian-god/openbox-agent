@@ -7,6 +7,8 @@ import {
   modelsFromConfig,
   ProviderError,
   ENV_KEYS,
+  supabaseFromEnv,
+  DB_ENV_KEYS,
 } from "../../src/providers/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { scriptedBrain } from "../../src/testing/scripted-brain.ts"
@@ -79,9 +81,45 @@ describe("DEP-3: building providers from config", () => {
   })
 
   test("CFG-2: an empty key counts as missing, not as a key", () => {
-    expect(() => providersFromConfig(config(), {}, { [ENV_KEYS.openrouter]: "" })).toThrow(
-      ProviderError,
-    )
+    // Asserts which provider complained, not merely that something did.
+    // A probe caught this passing for the wrong reason: the decision
+    // model in this config reads the OpenRouter key too, so it raised the
+    // problem first and the test went green even with the brain's own
+    // check removed.
+    let problems: string[] = []
+    try {
+      providersFromConfig(config(), {}, { [ENV_KEYS.openrouter]: "" })
+    } catch (error) {
+      problems = (error as ProviderError).problems
+    }
+
+    expect(problems.join("\n")).toContain("brain openrouter")
+  })
+
+  test("CFG-2: a key that is only whitespace counts as missing too", () => {
+    // New with the cleanup that put every key read behind `envValue`. A
+    // key pasted with a stray space or newline used to pass this check
+    // and then come back from the vendor as a 401, which says nothing
+    // about what is actually wrong. It is refused here instead, with the
+    // message that names the variable to set.
+    for (const blank of [" ", "   ", "\n", " \t "]) {
+      let problems: string[] = []
+      try {
+        providersFromConfig(config(), {}, { [ENV_KEYS.openrouter]: blank })
+      } catch (error) {
+        problems = (error as ProviderError).problems
+      }
+      expect(problems.join("\n")).toContain(ENV_KEYS.openrouter)
+    }
+  })
+
+  test("CFG-2: a real key pasted with a newline still works, trimmed", () => {
+    // The other half, and the reason trimming rather than refusing: a key
+    // copied out of a terminal usually arrives with a newline on it, and
+    // that is a real key, not a blank one.
+    expect(() =>
+      providersFromConfig(config(), {}, { [ENV_KEYS.openrouter]: " sk-real-key\n" }),
+    ).not.toThrow()
   })
 
   test("DEP-3: brains passed in win, and the environment is never read", () => {
@@ -214,5 +252,54 @@ describe("DM-1: building the decision model from config", () => {
     expect(problems).toHaveLength(2)
     expect(problems.join(" / ")).toContain("brain openrouter")
     expect(problems.join(" / ")).toContain("decision model jev")
+  })
+})
+
+describe("DEP-3: the database the agent runs against", () => {
+  // `supabaseFromEnv` had no tests of its own, which the cleanup turned up:
+  // its two variables moved behind `envValue` and nothing would have said
+  // so if that had gone wrong. The checks it makes are the same ones the
+  // brains make, and a database with a blank URL is the one that matters
+  // most, because every table in the core is behind it.
+  test("CFG-2: a missing URL or key is a clear error naming the variable", () => {
+    let problems: string[] = []
+    try {
+      supabaseFromEnv({})
+    } catch (error) {
+      problems = (error as ProviderError).problems
+    }
+
+    expect(problems.join("\n")).toContain(DB_ENV_KEYS.url)
+    expect(problems.join("\n")).toContain(DB_ENV_KEYS.serviceRoleKey)
+    // Both in one pass, not the first one only.
+    expect(problems).toHaveLength(2)
+  })
+
+  test("CFG-2: a blank URL counts as missing, not as a URL", () => {
+    for (const blank of ["", " ", "\n"]) {
+      expect(() =>
+        supabaseFromEnv({ [DB_ENV_KEYS.url]: blank, [DB_ENV_KEYS.serviceRoleKey]: "k" }),
+      ).toThrow(ProviderError)
+    }
+  })
+
+  test("CFG-2: a blank service role key counts as missing", () => {
+    for (const blank of ["", " ", "\n"]) {
+      expect(() =>
+        supabaseFromEnv({
+          [DB_ENV_KEYS.url]: "http://127.0.0.1:54321",
+          [DB_ENV_KEYS.serviceRoleKey]: blank,
+        }),
+      ).toThrow(ProviderError)
+    }
+  })
+
+  test("CFG-2: both set, pasted with newlines, builds a client", () => {
+    expect(() =>
+      supabaseFromEnv({
+        [DB_ENV_KEYS.url]: " http://127.0.0.1:54321\n",
+        [DB_ENV_KEYS.serviceRoleKey]: " service-role-key\n",
+      }),
+    ).not.toThrow()
   })
 })

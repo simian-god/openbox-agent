@@ -6,7 +6,7 @@
 // means every one of them breaks the day the core adds a field to it. That
 // happened here first, in nine places, when `ctx.time` arrived.
 import type { OpenboxConfig } from "../config/index.ts"
-import type { PersonRow, Store } from "../store/index.ts"
+import type { Store } from "../store/index.ts"
 import { createTimeHelpers } from "../time/index.ts"
 import type { ToolContext } from "../tools/index.ts"
 import { systemClock, type Clock } from "./clock.ts"
@@ -47,22 +47,4 @@ export function fakeToolContext(options: FakeToolContextOptions): ToolContext {
       logged.push(message)
     },
   }
-}
-
-/** The same, for a person already in the database. */
-export function fakeToolContextFor(
-  person: PersonRow,
-  options: Omit<FakeToolContextOptions, "person">,
-): ToolContext {
-  return fakeToolContext({
-    ...options,
-    person: {
-      id: person.id,
-      role: person.role,
-      channel: person.channel,
-      channelUserId: person.channel_user_id,
-      displayName: person.display_name,
-      language: person.language,
-    },
-  })
 }

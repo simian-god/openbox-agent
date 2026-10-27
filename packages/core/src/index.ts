@@ -161,7 +161,6 @@ export {
   BrainError,
   DecisionError,
   confidenceOf,
-  winnerOf,
   type DecisionModel,
   type DecisionRequest,
   type DecisionResult,
@@ -190,7 +189,7 @@ export {
   type ScriptedAnswers,
 } from "./testing/scripted-decision.ts"
 
-export { fakeToolContext, fakeToolContextFor } from "./testing/tool-context.ts"
+export { fakeToolContext } from "./testing/tool-context.ts"
 
 export {
   createTimeHelpers,

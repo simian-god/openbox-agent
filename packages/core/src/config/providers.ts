@@ -37,7 +37,6 @@ export const EMBEDDER_IDS = ["openai"] as const
 export type BrainId = (typeof BRAIN_IDS)[number]
 export type CliBrainId = (typeof CLI_BRAIN_IDS)[number]
 export type DecisionModelId = (typeof DECISION_MODEL_IDS)[number]
-export type DecisionRouteId = (typeof DECISION_ROUTE_IDS)[number]
 export type TranscriberId = (typeof TRANSCRIBER_IDS)[number]
 export type RetrieverId = (typeof RETRIEVER_IDS)[number]
 export type EmbedderId = (typeof EMBEDDER_IDS)[number]

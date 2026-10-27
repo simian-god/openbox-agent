@@ -75,14 +75,6 @@ describeDatabase("the job loop", (sql) => {
     return createAgent({ config: config(over), deps, prompt: PROMPT, tools: [] })
   }
 
-  const hello = (over: Record<string, unknown> = {}) => ({
-    channel: "whatsapp",
-    channelUserId: "42",
-    channelMessageId: "msg-1",
-    text: "Any space on Monday?",
-    ...over,
-  })
-
   /**
    * Waits for the row, not for the handler.
    *

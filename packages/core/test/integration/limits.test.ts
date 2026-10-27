@@ -162,9 +162,6 @@ describeDatabase("limits", (sql) => {
     }
   }
 
-  const personOf = async (agent: Agent): Promise<PersonRow> =>
-    (await agent.store.people.list({ role: "end_user" }))[0] as PersonRow
-
   describe("LIMIT-1: the rate limit", () => {
     test("LIMIT-1: under the limit the turn is answered as usual", async () => {
       const { agent, brain } = agentWith()
