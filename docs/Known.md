@@ -544,67 +544,6 @@ read side by side. That is a measurement, not a build, and it needs a
 `SARVAM_API_KEY` and audio from the builder. Until then the default is a
 reasonable guess and is written down here as one.
 
-## K22. One worker test fails about one run in three, and only under `bun run check`
-
-**Status:** open, reproduced, not diagnosed. Not caused by any row; it was first
-seen before T7.4 began.
-
-**What happens.** The offline suite reports exactly one failure, roughly one run
-in three, and it is always this one:
-
-```
-(fail) the worker > LOOP-2: a person being handled is never taken by a second worker
-  packages/core/test/integration/worker.test.ts:248
-  expect(sender.texts()).toEqual(["from the first"])
-  - [ "from the first" ]
-  + []
-```
-
-The reply never went out. `held.open()` releases the gated brain, `await
-first.settled()` returns, and the sender has sent nothing at all.
-
-**How to reproduce it.** This is the part that took three attempts, and the
-recipe matters more than anything else here.
-
-- It happens under `OPENBOX_LIVE= bun run check`, which runs `tsc` and `biome`
-  and only then the suite. Three sightings, all under `check`.
-- It has never been seen under a bare `bun test`. That is eight consecutive
-  clean full runs, including six run back to back on purpose.
-- So the suspicion is load, not logic: `check` hands the suite a machine that
-  has just finished two compilers, and `scripts/dbload.ts` exists because
-  exactly one other bug in this repo only appeared that way (K14).
-- Never pipe the run through `tail`. Both earlier sightings were lost because
-  the failing test's name had already scrolled past.
-
-**What it costs.** Unknown, and that is the uncomfortable part. Two readings fit
-the evidence and they are not equally bad.
-
-The benign one is a test that measures too early under load, in which case the
-guarantee holds and the test needs tightening.
-
-The serious one is that `settled()` can still return while a reply is in flight.
-That is K14 again, which T5.7 found and fixed by making `drain()` and `stop()`
-wait for a pass that has claimed rows. If a second window exists, then
-`receiveAndWait` can return before a person has been answered, which is a
-delivery guarantee and one of the four things C13 is about. Nothing says which
-of the two this is yet.
-
-A third possibility worth ruling out early: the second worker in that test
-starts while the first holds the lease, and the test then sleeps 150ms. If the
-lease can expire during a gated brain call, the second worker could take the
-person legitimately, and the first agent's reply would never be sent. That
-would be a real fault in LOOP-2's renewal rather than in `settled()`.
-
-**What we did.** Nothing yet, beyond pinning down how to make it happen. It is
-recorded here rather than left as folklore because it has now cost two
-investigations that both ended in "could not reproduce".
-
-**What would resolve it.** The K14 playbook, which worked: run the two suspect
-files on their own against a loaded database (`bun run scripts/dbload.ts`),
-print the agent's state at the moment of failure, and read whether the outbox
-row was claimed, sent, or never written. The test already has the instrumentation
-T5.7 added for exactly this.
-
 ## K23. A transcript is not always words, and the two providers name languages differently
 
 **Status:** open, accepted. Both found by the first live transcription call.

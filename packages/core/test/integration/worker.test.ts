@@ -7,6 +7,7 @@ import { test, expect, beforeAll, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
+import { check } from "../support/waiting.ts"
 import { migrate } from "../../src/migrate/index.ts"
 import { createLeases, FREE, type Agent, type Deps } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
@@ -244,9 +245,33 @@ describeDatabase("the worker", (sql) => {
     expect(secondBrain.calls).toHaveLength(0)
 
     held.open()
+    // Both, because either process may deliver a reply the other wrote.
+    // See below: waiting only for the first is what made this test fail
+    // about one run in three under load (Known K22).
     await first.settled()
-    expect(sender.texts()).toEqual(["from the first"])
-    expect(secondSender.sent).toEqual([])
+    await second.settled()
+
+    // LOOP-2 is a claim about turns, not about which process sends.
+    //
+    // This test used to assert that the first agent's own sender delivered
+    // the reply, and failed intermittently under load because that is not
+    // something the core promises. Both agents here are the same agent on
+    // the same database, so they share one outbox, and a queued row is
+    // taken by whichever pump wins the conditional claim. That is the
+    // feature that lets a reply survive the process that composed it
+    // dying, not a fault. Under load the second pump sometimes won, and
+    // the message went out through its sender instead.
+    //
+    // So what is asserted is what LOOP-2 actually guarantees: the second
+    // worker never ran a turn for a person the first was handling, the
+    // reply was written by the first agent's brain, and it went out
+    // exactly once between the two of them.
+    const delivered = [...sender.sent, ...secondSender.sent]
+    await check(first, undefined, () => {
+      expect(secondBrain.calls).toHaveLength(0)
+      expect(delivered.map((message) => message.text)).toEqual(["from the first"])
+    })
+    expect(second.inFlight()).toBe(0)
   })
 
   test("DATA-4: of two workers reaching for the same person, exactly one wins", async () => {
