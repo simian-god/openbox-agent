@@ -527,6 +527,8 @@ agent.trigger({ personId, event: "order_ready", data: { ... }, urgent? })
 
 **PRO-1.** Scheduled messages are jobs, so they survive restarts. `dedupeKey` makes scheduling the same reminder twice a no op.
 
+**PRO-5.** `config.triggers` maps an event name to the template that carries it, as `{ order_ready: "order_ready_v1" }`. A triggered message for an event named there goes out as that template, with `data` as its variables, and so reaches a person outside the channel's window (PRO-3). An event not named there is composed by the brain as before, and is refused outside the window like any other free text. `trigger` itself takes no template: which template an event uses is a property of the agent, not of the code that fires the event, so adding a triggered message is a config change and the glue never has to know a template name.
+
 **JOB-1.** A job is claimed by one conditional update (DATA-4) and runs under a lease, the same way a person is. A job a process claimed and never finished is taken over once that lease expires, by a second conditional update rather than an OR.
 
 **JOB-2.** A job that throws is tried again, the wait doubling from `jobBackoffMs` *(5000 default)*, up to `jobAttempts` *(5 default)*, then `failed`. A job of a kind with no registered handler fails at once, since waiting cannot make a handler appear. Jobs are more patient than sends: nobody is waiting at the other end of a retention sweep.
@@ -703,6 +705,7 @@ export default defineConfig({
   handover: { noOperatorMinutes: 10, idleMinutes: 30, alertRepeatMinutes: 60, wantsHumanThreshold: 0.8 },  // HAND-6
   pendingActionMinutes: 15,
   quietHours: ["21:00", "09:00"],
+  triggers: { order_ready: "order_ready_v1" },
   taskTypes: { booking: { fields: { date: "required", time: "required", size: "required", notes: "optional" }, idleHours: 24 } },
 
   notice: "...",                       // required
