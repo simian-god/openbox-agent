@@ -394,6 +394,14 @@ export {
   type LabeledExample,
 } from "./tune/index.ts"
 
+export {
+  chunkMarkdown,
+  loadKnowledge,
+  CHUNK_WORDS,
+  KNOWLEDGE_DIR,
+  type KnowledgeDoc,
+  type LoadKnowledgeOptions,
+} from "./knowledge/index.ts"
 export { CORE_VERSION } from "./version.ts"
 export { fixedClock, systemClock, type Clock, type FixedClock } from "./testing/clock.ts"
 export { fakeSender, type FakeSender, type FakeSenderOptions } from "./testing/fake-sender.ts"
