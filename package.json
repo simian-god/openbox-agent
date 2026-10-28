@@ -17,6 +17,7 @@
     "m3-check": "bun run scripts/m3-check.ts",
     "m4-check": "bun run scripts/m4-check.ts",
     "m6-check": "bun run scripts/m6-check.ts",
+    "m7-check": "bun run scripts/m7-check.ts",
     "db:up": "supabase start",
     "db:down": "supabase stop",
     "db:status": "supabase status"

@@ -70,6 +70,9 @@ Milestone checks that are scripted rather than run by hand:
 - `bun run m6-check` - C5, C11 and C12 the same way. Three clauses wait on
   a later row and say so; it fails only on a clause that should have a
   passing test and does not.
+- `bun run m7-check` - C10, C16, C17 and M7's own clause about a dependency
+  that never answers, clause by clause. One clause waits on real Hindi or
+  Hinglish audio from the builder (Known K21) and says so.
 
 Measuring whether routing is worth it (C8), which needs a brain key and a
 decision model key and no database:
