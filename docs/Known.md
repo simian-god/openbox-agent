@@ -273,22 +273,41 @@ re-run in one command rather than rebuilt from the Plan.
 
 ## K15. The privacy design is one reading of the DPDP rules, not a lawyer's
 
-**Status:** open, and waiting on the builder. Needed before M9 is built, not
-after.
+**Status:** parked by decision, 2026-10-28. T9.3 is not built and the lawyer
+conversation is not pending. It comes back when there is a use case for it.
+
+**The decision.** The builder parked the whole of it rather than build three
+quarters of it on a reading nobody has checked. When it is built it is to be a
+block that is called or not depending on the situation, rather than something
+woven through the turn, which is also how it was always specified: PRIV-1 is one
+message before the first reply, PRIV-2 is a daily job, PRIV-3 is one operator
+tool, PRIV-4 is one read. None of them is in the hot path, so parking costs
+nothing structurally and building it later changes nothing that exists.
+
+**What this leaves true, and worth knowing.** `notice` and `retentionDays` are
+still required in config and still validated, because PRIV-1 and PRIV-2 say so
+and config has always refused an agent without them. Nothing enforces either at
+runtime. So an agent today has a notice string it never sends and a retention
+number that deletes nothing. That is a promise the config makes and the code
+does not keep, and it is the thing to remember before telling anybody this
+library handles retention.
 
 **What happens.** Intent goal 21 says the design is "to be confirmed with a
 lawyer", and it has not been. So PRIV-1 to PRIV-4 in the Spec are a careful
 reading of India's DPDP Rules, written by someone who is not a lawyer. M9 turns
 that reading into code.
 
-**What it costs.** Everything in M9 except one thing is only a rewrite if the
+**What it costs.** Everything here except one thing is only a rewrite if the
 reading is wrong. The exception is erasure, which deletes rows: PRIV-3 is the
 one operation in this system that cannot be walked back. Finding out afterwards
 that something had to be kept means it is already gone, from the test agent and
-from anything running.
+from anything running. Erasure is also not a `DELETE *`, which is part of why
+the reading matters: it deletes seven things, redacts two more down to ids and
+timestamps, and writes one row proving it happened. Which bucket each thing
+goes in is question 1 below, and it is a judgement rather than a line of code.
 
-The obligations that matter apply from 13 May 2027, so there is time. This is
-about order, not urgency: the answer wants to arrive before the code.
+The obligations that matter apply from 13 May 2027, so there is time, which is
+what makes parking reasonable rather than reckless.
 
 **The questions to take into that conversation.** Each one is a place the Spec
 is currently a guess, and each changes what gets built.
