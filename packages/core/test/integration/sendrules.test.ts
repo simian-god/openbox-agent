@@ -88,14 +88,20 @@ describeDatabase("the send rules", (sql) => {
   }
 
   function agentWith(
-    options: { reply?: string; channel?: FakeSenderOptions["capabilities"]; start?: boolean } = {},
+    options: {
+      reply?: string
+      channel?: FakeSenderOptions["capabilities"]
+      start?: boolean
+      /** PRO-5: the event to template map. */
+      triggers?: Record<string, string>
+    } = {},
   ): Built {
     const brain = scriptedBrain([{ reply: options.reply ?? "We open at 11." }], {
       exhaustedReply: "Anything else?",
     })
     sender = fakeSender(options.channel !== undefined ? { capabilities: options.channel } : {})
     const build: AgentOptions = {
-      config: config(),
+      config: config(options.triggers !== undefined ? { triggers: options.triggers } : {}),
       deps: {
         brains: [brain],
         decisionModel: scriptedDecisionModel([
@@ -450,6 +456,36 @@ describeDatabase("the send rules", (sql) => {
 
       expect(done.status).toBe("sent")
       expect(sender.sent[0]?.template).toMatchObject({ name: "table_reminder" })
+      expect(await agent.store.flags.count()).toBe(0)
+    })
+
+    test("PRO-5 and PRO-3: a triggered event reaches somebody outside the window", async () => {
+      // Known K20, closed, end to end. Before PRO-5 this exact case was
+      // the gap: Intent 16's own example, "order ready" to a customer who
+      // last wrote two days ago. The brain wrote a sentence, the window
+      // rule refused it because free text needs the window, and the
+      // person never heard. One brain call spent on nothing.
+      //
+      // Now config names the template for the event, so the message that
+      // reaches the outbox is already a template and the window rule lets
+      // it through. Nothing is written by the brain at all.
+      const { agent, brain } = agentWith({
+        channel: whatsapp,
+        triggers: { order_ready: "order_ready_v1" },
+      })
+      const who = await person(agent)
+
+      await agent.trigger({ personId: who.id, event: "order_ready", data: { order: "41" } })
+      const job = (await agent.store.jobs.list({}, { orderBy: "seq" }))[0]
+      await agent.jobs.run(job as never)
+
+      const row = await agent.store.outbox.find({ person_id: who.id })
+      const done = await agent.outbox.attempt(row as never)
+
+      expect(done.status).toBe("sent")
+      expect(sender.sent[0]?.template).toMatchObject({ name: "order_ready_v1" })
+      // No brain call, and nothing flagged, which is the whole saving.
+      expect(brain.calls).toHaveLength(0)
       expect(await agent.store.flags.count()).toBe(0)
     })
 

@@ -409,44 +409,6 @@ PRIV-3 saying so.
 
 ---
 
-## K20. A trigger can only compose, so an "order ready" message cannot be a template
-
-**Status:** open, decided, scheduled at T7.7. Still true until that is built.
-
-**What happens.** Section 12's signature for `trigger` takes an event, its
-data and `urgent`. It has no `text` and no `template`, so every triggered
-message is written by the brain. PRO-3's third rule says that outside the
-channel's window, which is 24 hours on WhatsApp, only a template goes out,
-and a free text message with no template becomes `failed` and flagged. So
-the one example Intent 16 gives for a trigger, "order ready", cannot reach
-a WhatsApp customer who last wrote two days ago. It gets written, refused
-and flagged.
-
-**What we did.** Built `trigger` exactly as the signature reads. A glue
-that needs a template for an event today can call `schedule` with `at` set
-to now, which is the same job row and the same code path, so nothing is
-blocked meanwhile.
-
-**What it costs.** As of T7.2, which built the window rule, it costs a
-brain call per blocked event. A triggered message is composed first and
-refused afterwards, because PRO-3's rules live in the outbox, just before
-the send, which is where the Spec puts them. The refusal is recorded and
-flagged as `send_blocked`, so it is visible rather than silent, but the
-message still does not arrive.
-
-**What would resolve it.** T7.7, which is now decided and scheduled. The
-builder chose a map in config over a `template` argument on `trigger`, on the
-general ground that things should be as swappable as possible, and it holds
-here in particular: a template is a property of the agent's WhatsApp account
-the way opening hours are a property of the restaurant, so config is where it
-belongs. Adding a triggered message becomes a config change rather than a code
-change, and the glue that fires "order ready" never has to know a template
-name or be redeployed when one is renamed. The Spec now carries it as PRO-5
-and the decisions log has the reasoning. Until T7.7 is built, everything above
-is still true.
-
----
-
 ## K16. Four brains ship, not the five Intent names
 
 **Status:** open by decision. Resolved by building T5.3, which now sits in After

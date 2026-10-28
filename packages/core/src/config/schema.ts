@@ -194,6 +194,18 @@ export const configSchema = z
     brain: BRAIN,
     decisionModel: DECISION_MODEL,
     transcriber: TRANSCRIBER.optional(),
+    // PRO-5: which template carries each triggered event, as
+    // `{ order_ready: "order_ready_v1" }`.
+    //
+    // Here rather than as an argument to `trigger`, because a template is
+    // a property of the agent's channel account the way opening hours are
+    // a property of the restaurant. So adding a triggered message is a
+    // config change, and the glue that fires the event never has to know
+    // a template name or be redeployed when one is renamed.
+    //
+    // An event that is not named here is composed by the brain, exactly as
+    // every triggered message was before this existed.
+    triggers: z.record(z.string().min(1), z.string().min(1)).default({}),
     retriever: RETRIEVER,
 
     history: z.number().int().positive().default(30),

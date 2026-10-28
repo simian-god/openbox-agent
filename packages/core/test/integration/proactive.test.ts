@@ -103,12 +103,20 @@ describeDatabase("proactive messages", (sql) => {
   /** An agent nobody has started, since most of these drive a job by hand. */
   function agentWith(
     script: ScriptedStep[] = [{ reply: "Your table is at 8." }],
-    options: { tools?: Tool[]; gate?: number; start?: boolean } = {},
+    options: {
+      tools?: Tool[]
+      gate?: number
+      start?: boolean
+      over?: Record<string, unknown>
+      templates?: boolean
+    } = {},
   ): Built {
     const brain = scriptedBrain(script, { exhaustedReply: "Anything else?" })
-    sender = fakeSender()
+    sender = fakeSender(
+      options.templates === undefined ? {} : { capabilities: { templates: options.templates } },
+    )
     const build: AgentOptions = {
-      config: config(),
+      config: config(options.over ?? {}),
       deps: {
         brains: [brain],
         decisionModel: scriptedDecisionModel([
@@ -622,6 +630,112 @@ describeDatabase("proactive messages", (sql) => {
       expect(job.status).toBe("queued")
       expect(job.attempts).toBe(1)
       expect(job.error).toMatch(/being handled/i)
+    })
+  })
+
+  describe("PRO-5: an event config maps to a template", () => {
+    const WITH_MAP = { triggers: { order_ready: "order_ready_v1" } }
+
+    test("PRO-5: a mapped event goes out as that template, with no brain call", async () => {
+      // The whole of Known K20. Before this every triggered message was
+      // written by the brain, and PRO-3 lets only a template past the
+      // channel's window, so an "order ready" to somebody who last wrote
+      // two days ago was composed, refused and flagged. One brain call
+      // spent on a message nobody received.
+      const { agent, brain } = agentWith(undefined, { over: WITH_MAP, templates: true })
+      const who = await person(agent)
+
+      await agent.trigger({ personId: who.id, event: "order_ready", data: { order: "41" } })
+      await agent.jobs.run(await jobOf(agent))
+
+      expect(brain.calls).toHaveLength(0)
+      const row = await agent.store.outbox.find({ person_id: who.id })
+      const template = (row?.payload as { template?: { name: string; vars: unknown } }).template
+      expect(template?.name).toBe("order_ready_v1")
+      // No text of its own: a template carries the words, not the agent.
+      expect((row?.payload as { text?: unknown }).text).toBeUndefined()
+    })
+
+    test("PRO-5: the event's data becomes the template's variables", async () => {
+      const { agent } = agentWith(undefined, { over: WITH_MAP, templates: true })
+      const who = await person(agent)
+
+      await agent.trigger({
+        personId: who.id,
+        event: "order_ready",
+        data: { order: "41", items: 3, express: true },
+      })
+      await agent.jobs.run(await jobOf(agent))
+
+      const row = await agent.store.outbox.find({ person_id: who.id })
+      const template = (row?.payload as { template: { vars: Record<string, string> } }).template
+      // Strings, because a channel template substitutes text.
+      expect(template.vars).toEqual({ order: "41", items: "3", express: "true" })
+    })
+
+    test("PRO-5: an event config does not name is still composed by the brain", async () => {
+      // Nothing changes for an event nobody mapped, which is what makes
+      // this safe to add to an agent that already has triggers firing.
+      // The channel can carry a template, so the only reason this one is
+      // composed is that config does not name the event.
+      const { agent, brain } = agentWith([{ reply: "Your order is on its way." }], {
+        over: WITH_MAP,
+        templates: true,
+      })
+      const who = await person(agent)
+
+      await agent.trigger({ personId: who.id, event: "delivery_late" })
+
+      agent.start()
+      await until(() => sender.texts().length > 0)
+      await agent.settled()
+
+      expect(brain.calls).toHaveLength(1)
+      expect(sender.texts()).toEqual(["Your order is on its way."])
+    })
+
+    test("PRO-5: the trace still says which event it was, not only what was sent", async () => {
+      // The payload keeps the event name even though the template decides
+      // the words. Somebody reading the trace wants to know what happened.
+      const { agent } = agentWith(undefined, { over: WITH_MAP, templates: true })
+      const who = await person(agent)
+
+      await agent.trigger({ personId: who.id, event: "order_ready" })
+      const job = await jobOf(agent)
+
+      expect((job.payload as { event?: string }).event).toBe("order_ready")
+    })
+
+    test("PRO-5: on a channel with no templates it composes instead", async () => {
+      // The terminal has no templates and no sending window either, so
+      // composing there is both possible and better than queueing
+      // something the channel cannot deliver.
+      const { agent, brain } = agentWith([{ reply: "Your order is ready." }], {
+        over: WITH_MAP,
+        templates: false,
+      })
+      const who = await person(agent)
+
+      await agent.trigger({ personId: who.id, event: "order_ready" })
+
+      agent.start()
+      await until(() => sender.texts().length > 0)
+      await agent.settled()
+
+      expect(brain.calls).toHaveLength(1)
+      expect(sender.texts()).toEqual(["Your order is ready."])
+    })
+
+    test("PRO-5: a mapped event with no data sends the template with no variables", async () => {
+      const { agent } = agentWith(undefined, { over: WITH_MAP, templates: true })
+      const who = await person(agent)
+
+      await agent.trigger({ personId: who.id, event: "order_ready" })
+      await agent.jobs.run(await jobOf(agent))
+
+      const row = await agent.store.outbox.find({ person_id: who.id })
+      const template = (row?.payload as { template: { vars: Record<string, string> } }).template
+      expect(template.vars).toEqual({})
     })
   })
 })

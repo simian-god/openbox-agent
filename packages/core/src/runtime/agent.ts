@@ -776,6 +776,9 @@ export function createAgent(options: AgentOptions): Agent {
     jobs,
     compose: composeProactive,
     handoverFor: (person) => handovers.openFor(person),
+    // PRO-5: the sender lives here, so the question about templates is
+    // answered here rather than by the proactive module holding one.
+    canSendTemplates: (channel) => deps.sender.capabilities(channel).templates,
   })
 
   jobs.on(PROACTIVE_JOB, async (job) => {

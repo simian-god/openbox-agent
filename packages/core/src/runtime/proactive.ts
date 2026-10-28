@@ -120,6 +120,16 @@ export interface ProactiveOptions {
   }): Promise<"composed" | "silent">
   /** C11: the handover this person is in, if they are in one. */
   handoverFor(person: PersonRow): Promise<{ id: string } | undefined>
+  /**
+   * PRO-5: whether this channel can carry a template at all.
+   *
+   * Injected rather than read from a sender here, because this module has
+   * no business holding one (DEP-1). It decides whether a mapped event
+   * really goes out as a template: the terminal channel has no templates
+   * and no sending window either, so composing there is both possible and
+   * better than queueing something the channel cannot deliver.
+   */
+  canSendTemplates?: ((channel: string) => boolean) | undefined
 }
 
 export interface Proactive {
@@ -163,6 +173,28 @@ export function noteFor(request: {
     "Do not answer a question they did not ask, and do not greet them as if they had just written.",
   )
   return lines.join("\n")
+}
+
+/**
+ * PRO-5: an event's data as a template's variables, which are strings.
+ *
+ * A channel template substitutes text, so everything becomes text. An
+ * object or a list is written out as JSON rather than dropped, because a
+ * variable missing from a template send is refused by the channel and
+ * "[object Object]" in a customer's message is worse than either.
+ */
+export function varsOf(data: Record<string, unknown> | undefined): Record<string, string> {
+  const vars: Record<string, string> = {}
+  for (const [key, value] of Object.entries(data ?? {})) {
+    if (value === undefined || value === null) continue
+    vars[key] =
+      typeof value === "string"
+        ? value
+        : typeof value === "number" || typeof value === "boolean"
+          ? String(value)
+          : JSON.stringify(value)
+  }
+  return vars
 }
 
 /** How a template is written into the conversation (see `store` below). */
@@ -238,6 +270,19 @@ export function createProactive(options: ProactiveOptions): Proactive {
     if (request.event.trim() === "") throw new Error("a trigger needs an event name")
 
     const person = await recipient(request.personId)
+
+    // PRO-5: an event config names goes out as that template, with `data`
+    // as its variables. That is what lets a triggered message reach
+    // somebody outside the channel's window, which PRO-3 only lets a
+    // template past, and it costs no brain call: nothing is written and
+    // then refused, which was the whole of Known K20.
+    //
+    // Only where the channel can carry one. On a channel with no
+    // templates there is also no window to get past, so composing is both
+    // possible and better than queueing something undeliverable.
+    const named = config.triggers[request.event]
+    const asTemplate = named !== undefined && (options.canSendTemplates?.(person.channel) ?? true)
+
     // Now, through the same job row as a scheduled message. One path, and
     // an event that arrives while the process is restarting is not lost.
     return book(
@@ -245,6 +290,7 @@ export function createProactive(options: ProactiveOptions): Proactive {
         personId: person.id,
         event: request.event,
         ...(request.data !== undefined ? { data: request.data } : {}),
+        ...(asTemplate ? { template: { name: named as string, vars: varsOf(request.data) } } : {}),
         ...(request.urgent === true ? { urgent: true } : {}),
       },
       clock.now(),
@@ -343,7 +389,13 @@ export function createProactive(options: ProactiveOptions): Proactive {
       return record({ did: "dropped", why: "handover" }, person.id)
     }
 
-    const composed = typeof payload.compose === "string" || typeof payload.event === "string"
+    // PRO-5: a triggered message that config gave a template is fixed, not
+    // composed, even though the payload still names the event. The event
+    // stays on the row because the trace should say what happened, not
+    // only what was sent.
+    const hasTemplate = payload.template !== undefined && payload.template !== null
+    const composed =
+      !hasTemplate && (typeof payload.compose === "string" || typeof payload.event === "string")
     if (!composed) {
       await sendFixed(person, payload, key)
       return record({ did: "sent" }, person.id)
