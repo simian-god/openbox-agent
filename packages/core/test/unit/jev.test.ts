@@ -77,13 +77,19 @@ interface WireBody {
 
 /** A fetch that answers from a canned payload and records what was sent. */
 function fakeFetch(payload: unknown, init: { status?: number } = {}) {
-  const requests: { url: string; headers: Record<string, string>; body: WireBody }[] = []
+  const requests: {
+    url: string
+    headers: Record<string, string>
+    body: WireBody
+    signal: AbortSignal | null | undefined
+  }[] = []
 
   const call: FetchLike = async (url, options) => {
     requests.push({
       url: String(url),
       headers: (options?.headers ?? {}) as Record<string, string>,
       body: JSON.parse(String(options?.body ?? "{}")) as WireBody,
+      signal: options?.signal ?? null,
     })
     return new Response(JSON.stringify(payload), {
       status: init.status ?? 200,
@@ -558,5 +564,33 @@ describe("GATE-4 groundwork: a failure says whether it is worth trying again", (
 
     expect(error).toBeInstanceOf(DecisionError)
     expect((error as DecisionError).id).toBe("jev")
+  })
+})
+
+describe("K10: a request that is given up on is cancelled", () => {
+  test("K10: the signal reaches fetch, so an abandoned request can be stopped", async () => {
+    // The whole of K10. Before this the request stayed in flight after the
+    // step moved on, still billed and still holding a socket, because
+    // `ask` had no signal to pass on.
+    const { requests, model } = onOpenRouter(ANSWERED)
+    const controller = new AbortController()
+
+    await model.ask(
+      "hello",
+      { asks_refund: { type: "yesno", instructions: "The customer asks for a refund." } },
+      { signal: controller.signal },
+    )
+
+    expect(requests[0]?.signal).toBe(controller.signal)
+  })
+
+  test("K10: no signal given means none sent, rather than a dead one", async () => {
+    const { requests, model } = onOpenRouter(ANSWERED)
+
+    await model.ask("hello", {
+      asks_refund: { type: "yesno", instructions: "The customer asks for a refund." },
+    })
+
+    expect(requests[0]?.signal ?? null).toBeNull()
   })
 })

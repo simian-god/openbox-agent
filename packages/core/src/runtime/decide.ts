@@ -7,6 +7,7 @@
 // both, so that part lives here and each decides for itself what to do
 // with it.
 import type { Answer } from "../providers/decision/types.ts"
+import { isTimeout, withDeadline } from "./deadline.ts"
 
 /**
  * No usable answer, for any of the reasons there are: the request threw,
@@ -20,23 +21,24 @@ import type { Answer } from "../providers/decision/types.ts"
 export class NoAnswer extends Error {}
 
 /**
- * Gives up after `ms`.
+ * Gives up after `ms`, and cancels the request on the way out.
  *
- * The request itself is abandoned rather than cancelled, because the Spec's
- * `DecisionModel.ask` takes no abort signal (docs/Known.md K10). The timer
- * is always cleared, so a fast answer never holds the process open.
+ * It used to abandon it instead, because `DecisionModel.ask` took no abort
+ * signal, and the abandoned request stayed in flight, still billed and
+ * still holding a connection. That was Known K10 and it is closed here:
+ * `ask` takes a signal, both adapters hand it to `fetch`, and the deadline
+ * aborts it.
+ *
+ * A timeout still arrives as `NoAnswer`, so routing keeps failing open and
+ * the gate keeps failing closed. Neither should care how the silence
+ * happened, only that it did.
  */
-export async function within<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
+export async function within<T>(run: (signal: AbortSignal) => Promise<T>, ms: number): Promise<T> {
   try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new NoAnswer(`no answer within ${ms} ms`)), ms)
-      }),
-    ])
-  } finally {
-    if (timer !== undefined) clearTimeout(timer)
+    return await withDeadline("the decision model", ms, run)
+  } catch (error) {
+    if (isTimeout(error)) throw new NoAnswer(`no answer within ${ms} ms`)
+    throw error
   }
 }
 

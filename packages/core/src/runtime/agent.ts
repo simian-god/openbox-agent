@@ -71,6 +71,7 @@ import type { Inbound, Sender } from "./sender.ts"
 import { runTurn, type TurnResult } from "./turn.ts"
 import { createConfirmations, EXPIRE_JOB, type Confirmations, type Resolution } from "./confirm.ts"
 import { toolContext } from "./tool-context.ts"
+import { waitNoLongerThan } from "./deadline.ts"
 import type { ToolContext } from "../tools/index.ts"
 import type { DecisionModel } from "../providers/decision/types.ts"
 import type { Transcriber } from "../providers/transcribers/types.ts"
@@ -921,11 +922,33 @@ export function createAgent(options: AgentOptions): Agent {
     },
 
     async stop(): Promise<void> {
+      // Known K3: a deadline, so a shutdown that cannot drain still ends.
+      //
+      // Nothing is cancelled here, and that is the point. A turn in flight
+      // is answering somebody, and a brain call has its own deadline now
+      // (BRAIN-6), so the thing this guards against is not a slow provider
+      // but a drain that will never finish: a tool ignoring its signal, a
+      // database that has stopped answering. Giving up is reported rather
+      // than thrown, because `stop()` runs in cleanup hooks and signal
+      // handlers where a throw turns a slow exit into a crash.
+      //
       // The outbox stops last, so a reply a turn just decided on still
       // goes out rather than being left queued.
-      await jobs.pump.stop()
-      await worker.stop()
-      await outbox.pump.stop()
+      const drained = await waitNoLongerThan(
+        config.stopTimeoutMs,
+        (async () => {
+          await jobs.pump.stop()
+          await worker.stop()
+          await outbox.pump.stop()
+        })(),
+      )
+      if (drained === "gave up") {
+        reportWorker(
+          new Error(
+            `stop() gave up after ${config.stopTimeoutMs}ms with ${worker.busy()} turn(s) still in flight`,
+          ),
+        )
+      }
     },
 
     inFlight: () => worker.busy(),

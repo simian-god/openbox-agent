@@ -62,7 +62,18 @@ export interface DecisionModel {
    * DM-2: all the questions for one step, in one request, so the state is
    * paid for once.
    */
-  ask(state: unknown, questions: Record<string, Question>): Promise<DecisionResult>
+  /**
+   * DM-2: every question for a step, in one request.
+   *
+   * `signal` closes Known K10: a request given up on is aborted rather
+   * than left in flight, where it was still billed and still holding a
+   * connection. An adapter passes it to `fetch`.
+   */
+  ask(
+    state: unknown,
+    questions: Record<string, Question>,
+    options?: { signal?: AbortSignal | undefined },
+  ): Promise<DecisionResult>
 }
 
 /**

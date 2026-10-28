@@ -21,6 +21,7 @@ import {
   withoutImages,
   type Said,
 } from "./context.ts"
+import { isTimeout, withDeadline } from "./deadline.ts"
 import type { MessageRow } from "../store/index.ts"
 import { noEvents, type EventWriter } from "./events.ts"
 import { route, ROUTING_QUESTION, type RoutingState } from "./routing.ts"
@@ -419,19 +420,28 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     for (const [index, brain] of brains.entries()) {
       const model = models[index] ?? models[0] ?? ""
       try {
-        output = await brain.complete({
-          model,
-          system,
-          // MEDIA-2, per brain rather than per turn: BRAIN-5's chain can
-          // hold brains that differ on this, and a fallback that cannot
-          // read pictures must still be able to answer the caption.
-          messages: brain.supportsImages ? messages : withoutImages(messages),
-          tools: offered.map((tool) => ({
-            name: tool.name,
-            description: tool.brainDescription,
-            inputSchema: tool.inputSchema,
-          })),
-        })
+        // BRAIN-6: a brain that never answers used to hold the turn open
+        // and `stop()` behind it (Known K3). Now it is given up on and
+        // cancelled, and BRAIN-5 moves to the next brain, which is what a
+        // brain that is down already does. A timeout is treated as a
+        // failure of that brain rather than of the turn, deliberately: a
+        // slow provider and a broken one look the same to the person.
+        output = await withDeadline(`brain ${brain.id}`, config.brainTimeoutMs, (signal) =>
+          brain.complete({
+            model,
+            system,
+            // MEDIA-2, per brain rather than per turn: BRAIN-5's chain can
+            // hold brains that differ on this, and a fallback that cannot
+            // read pictures must still be able to answer the caption.
+            messages: brain.supportsImages ? messages : withoutImages(messages),
+            tools: offered.map((tool) => ({
+              name: tool.name,
+              description: tool.brainDescription,
+              inputSchema: tool.inputSchema,
+            })),
+            signal,
+          }),
+        )
         brainsUsed.push(brain.id)
         answered = true
         answeredWith = model
@@ -703,7 +713,19 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
 
     const ranAt = clock.now().getTime()
     try {
-      const result = await tool.handler(parsed.data, ctx)
+      // LOOP-10: the timeout the Spec has always specified and nothing
+      // enforced. A tool talks to somebody else's system, so this is the
+      // call most likely to hang, and a hung tool held the turn open and
+      // `stop()` behind it exactly as a hung brain did (Known K3).
+      //
+      // The signal is not handed to the handler, because `ToolContext` is
+      // the agent builder's surface and a tool that ignored it would hang
+      // anyway. What this guarantees is that the turn stops waiting; a
+      // handler doing its own I/O can still be running when it does, which
+      // is the same trade K10 describes and is written down in K26.
+      const result = await withDeadline(`tool ${tool.name}`, config.toolTimeoutMs, () =>
+        tool.handler(parsed.data, ctx),
+      )
       toolsRun.push({ name: tool.name, ok: true })
       const durationMs = clock.now().getTime() - ranAt
       await events.record("tool_ran", {
@@ -727,8 +749,15 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       })
       messages.push({ role: "tool_result", id: call.id, name: tool.name, result })
     } catch (error) {
-      // LOOP-10: a thrown error goes back to the brain as an error result.
-      const message = error instanceof Error ? error.message : String(error)
+      // LOOP-10: a thrown error goes back to the brain as an error
+      // result, and a timeout is one of those. Worded so the brain can
+      // act on it: "took too long" is something it can tell the person
+      // or work around, where a stack trace is not.
+      const message = isTimeout(error)
+        ? `${tool.name} took too long and was given up on after ${config.toolTimeoutMs}ms`
+        : error instanceof Error
+          ? error.message
+          : String(error)
       toolsRun.push({ name: tool.name, ok: false })
       const durationMs = clock.now().getTime() - ranAt
       await events.record("tool_ran", {

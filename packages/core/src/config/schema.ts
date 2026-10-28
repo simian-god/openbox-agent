@@ -202,6 +202,20 @@ export const configSchema = z
     // ROUTE-5: how long a step waits for the decision model before
     // carrying on with every tool exposed.
     decisionTimeoutMs: z.number().int().positive().default(3000),
+    // BRAIN-6: how long one brain call may take before it is given up on
+    // and cancelled. Generous, because a CLI brain spawns a process per
+    // call and the installed Claude CLI's own timeout is 120 s, so a
+    // tighter default here would time out a brain that was working. Zero
+    // turns it off, for a builder who would rather wait than lose a turn.
+    brainTimeoutMs: z.number().int().min(0).default(120_000),
+    // LOOP-10: the Spec's own 15 s. A tool talks to somebody else's
+    // system, so this is the one a builder is most likely to change.
+    toolTimeoutMs: z.number().int().min(0).default(15_000),
+    // Known K3: how long `stop()` waits for the turns in flight before it
+    // stops waiting. Nothing is cancelled, because a turn mid flight is
+    // answering somebody. This is the difference between a deploy that
+    // drains slowly and one that never drains.
+    stopTimeoutMs: z.number().int().min(0).default(30_000),
     maxSteps: z.number().int().positive().default(8),
 
     // LOOP-2: how long a worker owns a person before the claim expires.

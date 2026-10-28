@@ -178,7 +178,8 @@ export async function answerExamples(options: TuneOptions): Promise<{
 
     try {
       const result = await within(
-        decisionModel.ask(stateOf(example), { [ROUTING_QUESTION]: question }),
+        (signal) =>
+          decisionModel.ask(stateOf(example), { [ROUTING_QUESTION]: question }, { signal }),
         timeoutMs,
       )
       requests++

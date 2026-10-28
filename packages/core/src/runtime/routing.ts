@@ -227,7 +227,7 @@ async function decide(
     // small agent is exactly the case where this is the only request.
     if (alsoNames.length === 0) return everything("not_routed")
     try {
-      const only = await within(decisionModel.ask(state, also), timeoutMs)
+      const only = await within((signal) => decisionModel.ask(state, also, { signal }), timeoutMs)
       Object.assign(extra, only.answers)
       return { ...everything("not_routed"), requests: 1, costUsd: price(only.usage) }
     } catch (error) {
@@ -257,7 +257,10 @@ async function decide(
       questions[groupNames[index]!] = routingQuestion(group)
     })
 
-    const first = await within(decisionModel.ask(state, questions), timeoutMs)
+    const first = await within(
+      (signal) => decisionModel.ask(state, questions, { signal }),
+      timeoutMs,
+    )
     requests++
     costUsd += price(first.usage)
     for (const name of alsoNames) {
@@ -290,13 +293,18 @@ async function decide(
         picked = winners[0]!
       } else {
         const runoff = await within(
-          decisionModel.ask(state, {
-            [ROUTING_QUESTION]: routingQuestion(
-              winners
-                .map((group) => byName.get(group.choice))
-                .filter((t): t is Tool => t !== undefined),
+          (signal) =>
+            decisionModel.ask(
+              state,
+              {
+                [ROUTING_QUESTION]: routingQuestion(
+                  winners
+                    .map((group) => byName.get(group.choice))
+                    .filter((t): t is Tool => t !== undefined),
+                ),
+              },
+              { signal },
             ),
-          }),
           timeoutMs,
         )
         requests++

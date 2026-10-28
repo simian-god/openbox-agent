@@ -205,7 +205,12 @@ export async function gate(options: GateOptions): Promise<GateDecision> {
   let costUsd = 0
   try {
     const result = await within(
-      decisionModel.ask(gateState(tool, args, conversation), { [GATE_QUESTION]: gateQuestion() }),
+      (signal) =>
+        decisionModel.ask(
+          gateState(tool, args, conversation),
+          { [GATE_QUESTION]: gateQuestion() },
+          { signal },
+        ),
       timeoutMs,
     )
     costUsd = price(result.usage)

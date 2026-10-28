@@ -67,26 +67,6 @@ different assertion style in Bun's test runner.
 
 ---
 
-## K3. A brain has no timeout, so `stop()` can wait for ever
-
-**Status:** open. Scheduled at T7.6.
-
-**What happens.** LOOP-10 gives a tool a 15 second timeout. Nothing gives a brain
-one. A brain that never answers leaves the turn running, and `stop()` waits for
-the turns in flight, so a shutdown waits with it.
-
-**What it costs.** In development, a hung provider call means `openbox chat` or a
-worker will not exit. In production it would mean a deploy that will not drain.
-
-**What we did.** Nothing yet. It was found while writing T2.5's tests, where a
-brain held on a gate did exactly this and a cleanup hook timed out.
-
-**What would resolve it.** A timeout around `Brain.complete`, and a deadline on
-`stop()`. Both are T7.6, along with the tool timeout and K10, because the three
-timeouts are one piece of code used in three places.
-
----
-
 ## K4. `settled()` waits only for work that is ready
 
 **Status:** open by design, and documented.
@@ -199,31 +179,6 @@ reports for usage, so running it once answers the question.
 settles the usage object in one request. The limits need the endpoint to leave
 beta, or an answer from OpenAI. Worth re-checking when the beta ends, which is
 also when Spec section 23's first line can be struck.
-
----
-
-## K10. A timed out decision request is abandoned, not cancelled
-
-**Status:** open, documented. Scheduled at T7.6.
-
-**What happens.** ROUTE-5 gives routing `decisionTimeoutMs` to answer, 3 seconds
-by default. When it runs out, the step carries on with every tool exposed, but
-the HTTP request is still in flight. Nothing cancels it, because the Spec's
-`DecisionModel.ask` takes no abort signal.
-
-**What it costs.** The abandoned request is still billed, and its connection is
-held until the provider answers or the socket drops. At one request per step and
-a 3 second timeout, a few per turn at worst. It also means a provider that is
-slow rather than down is paid for and ignored.
-
-**What we did.** The timer is always cleared, so a fast answer never holds the
-process open, and the result is ignored rather than applied late. The alternative
-is adding a signal to `DecisionModel`, which changes an interface in the Spec for
-a cost that is small today.
-
-**What would resolve it.** An abort signal on `DecisionModel.ask`, passed
-through to both adapters' `fetch`. Scheduled at T7.6, with K3, which is the same
-gap on the brain.
 
 ---
 
@@ -677,3 +632,76 @@ piece that knows how to turn a WhatsApp media id into something fetchable, and
 it is the piece that should decide whether that is a signed url or bytes. If
 several channels turn out to need bytes, the honest fix is a `fetchImages`
 option on the brain adapter rather than a change here.
+
+## K26. A timed out tool is given up on, not cancelled
+
+**Status:** open by design, and documented.
+
+**What happens.** LOOP-10 gives a tool `toolTimeoutMs`, 15 s by default. When it
+runs out the turn stops waiting and the brain is told the call took too long.
+The handler itself is not cancelled, because `ToolContext` carries no abort
+signal, so a handler doing its own HTTP request or query can still be running
+after the turn has moved on.
+
+This is the same shape K10 described for the decision model, which is now
+closed. The difference is whose code it is: `DecisionModel` is an interface the
+core owns and could change, while a tool handler is written by the agent
+builder.
+
+**What it costs.** The work is abandoned rather than stopped, so whatever it was
+doing may still complete: a row may be written, a request may be charged, a
+third party may be told something after the agent has given up hearing about
+it. An irreversible call cannot do that unnoticed, because CONF-1 means it was
+confirmed and recorded before it ran, but a write tool can.
+
+**What we did.** Timed out the wait rather than the work, and said so here. The
+alternative is putting an `AbortSignal` on `ToolContext`, which is cheap to add
+and does nothing on its own: a handler that ignores it hangs exactly as it does
+now, so the guarantee would read stronger than it is while every existing tool
+stayed as it was.
+
+**What would resolve it.** An `AbortSignal` on `ToolContext`, with TOOL-4
+saying plainly that a tool doing I/O should pass it on, and the built in tools
+leading by example. Worth doing when a real tool is slow enough to need it,
+rather than before.
+
+## K27. A `stop()` that gives up leaves work running, and nothing can see it
+
+**Status:** open by design, and documented. The direct cost of fixing K3.
+
+**What happens.** `stop()` now waits at most `stopTimeoutMs`, 30 s by default,
+for the turns in flight. That is what closed K3: a deploy drains slowly instead
+of never. But giving up is not stopping. The worker has been told not to take
+anything new and the pumps have been told to stop, and a turn already inside a
+brain call or a tool keeps going until it finishes.
+
+Two things follow, and the second is sharper than it looks.
+
+A person may be answered after the process was asked to stop, because the
+outbox row is written and sent by the turn that was still running. That is the
+right outcome, and it is still surprising.
+
+And nothing can tell. `stop()` returns `Promise<void>` either way, by Spec
+section 5, so a caller cannot ask whether it drained. The test registry in
+`test/support/agents.ts` drops an agent from its list once `stop()` resolves,
+so `stillRunning()` reports nothing even when an agent is still polling. That
+is not hypothetical: writing T7.6's own K3 test left one behind and sixteen
+tests failed across six files that have nothing to do with deadlines, all with
+the same symptom, a reply that never arrived. The leaked agent had claimed
+their people and was hanging on a brain that never answers.
+
+**What it costs.** In production, little: the work finishes or the process is
+killed, and the deadline is generous. In the suite it is a trap, and the trap
+is worse than the bug it replaced, because a leak shows up as other files
+failing rather than as the test that caused it.
+
+**What we did.** `stop()` reports giving up through `onWorkerError`, naming how
+many turns were still in flight, so it is visible rather than silent. T7.6's own
+test releases its hang and stops the agent properly afterwards, with a comment
+saying why.
+
+**What would resolve it.** Either `stop()` returning what happened, which is a
+change to Spec section 5's signature, or the test registry checking that an
+agent really is idle rather than trusting `stop()` to have finished. The second
+is cheaper and catches the case that actually bites. Both are worth doing the
+next time anything touches shutdown.

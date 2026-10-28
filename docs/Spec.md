@@ -176,12 +176,14 @@ offers. `id` ties a result to the call that asked for it.
 
 **BRAIN-5.** Fallback. On a timeout, an error, or output that fails BRAIN-2's shape twice in a row, the step moves to the next brain in the list. Any error, including one that is not a `BrainError`: an adapter with a bug costs the person their answer exactly as an outage does, and the brain, the error and the fallback are all recorded either way. The turn records which brain answered, and the fallback is per step, so a provider that was down for a moment does not cost the rest of the turn. A turn that runs out of brains leaves its inbox rows findable rather than done (LOOP-12).
 
+**BRAIN-6.** One brain call has `brainTimeoutMs` to answer, 120 s *(default)*. When it runs out the request is cancelled, not abandoned, and BRAIN-5 treats it as that brain failing, so the step moves to the next brain. The default is generous because a CLI brain spawns a process per call. Zero turns it off, for a builder who would rather wait than lose a turn.
+
 ### Decision model
 
 ```ts
 interface DecisionModel {
   id: string
-  ask(state: unknown, questions: Record<string, Question>): Promise<{
+  ask(state: unknown, questions: Record<string, Question>, options?: { signal?: AbortSignal }): Promise<{
     answers: Record<string, Answer>
     usage: { inputTokens: number; costUsd?: number }
   }>
@@ -361,7 +363,7 @@ type Outbound = {
 
 **LOOP-9.** A turn has at most 8 steps *(default)*. On the limit, the person gets a fixed "let me check and come back to you" reply, the turn is flagged, and an operator is alerted.
 
-**LOOP-10.** Tools run with a timeout of 15 s *(default)*. A timeout or a thrown error goes back to the brain as an error result. The same tool failing twice in a row for the same person, within this turn or across turns, is a handover trigger.
+**LOOP-10.** Tools run with a timeout of `toolTimeoutMs`, 15 s *(default)*. The turn stops waiting and the call is given up on; a handler doing its own I/O may still be running, because `ToolContext` carries no abort signal (Known K26). A timeout or a thrown error goes back to the brain as an error result. The same tool failing twice in a row for the same person, within this turn or across turns, is a handover trigger.
 
 ### Ending
 
@@ -704,6 +706,7 @@ export default defineConfig({
 
   handover: { noOperatorMinutes: 10, idleMinutes: 30, alertRepeatMinutes: 60, wantsHumanThreshold: 0.8 },  // HAND-6
   pendingActionMinutes: 15,
+  brainTimeoutMs: 120000, toolTimeoutMs: 15000, stopTimeoutMs: 30000,
   quietHours: ["21:00", "09:00"],
   triggers: { order_ready: "order_ready_v1" },
   taskTypes: { booking: { fields: { date: "required", time: "required", size: "required", notes: "optional" }, idleHours: 24 } },

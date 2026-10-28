@@ -288,9 +288,17 @@ describe("ROUTE-5: when the decision model does not answer", () => {
   })
 
   test("ROUTE-5: a timeout exposes every tool, and does not wait longer than it was given", async () => {
+    // K10: the request is cancelled as well as given up on. It used to be
+    // abandoned mid flight, still billed and still holding a socket.
+    let aborted = false
     const hangs: DecisionModel = {
       id: "hangs",
-      ask: () => new Promise(() => {}),
+      ask: (_state, _questions, asking) =>
+        new Promise(() => {
+          asking?.signal?.addEventListener("abort", () => {
+            aborted = true
+          })
+        }),
     }
 
     const started = Date.now()
@@ -299,7 +307,11 @@ describe("ROUTE-5: when the decision model does not answer", () => {
 
     expect(decision.reason).toBe("fallback")
     expect(names(decision)).toEqual(SIX.map((t) => t.name))
-    expect(decision.error).toMatch(/50/)
+    expect(aborted).toBe(true)
+    // The wording the trace carries, not merely a number that happens to
+    // appear. A reader of the trace should see that nothing answered,
+    // which is what `NoAnswer` means, rather than a class name.
+    expect(decision.error).toBe("no answer within 50 ms")
     // Generous, because a loaded machine is slow, but far below the
     // default 3 seconds this would otherwise have waited.
     expect(waited).toBeLessThan(1500)

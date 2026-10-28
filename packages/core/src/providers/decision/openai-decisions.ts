@@ -215,7 +215,11 @@ export function openaiDecisionsModel(options: OpenaiDecisionsOptions): DecisionM
   return {
     id: ID,
 
-    async ask(state: unknown, questions: Record<string, Question>): Promise<DecisionResult> {
+    async ask(
+      state: unknown,
+      questions: Record<string, Question>,
+      asking?: { signal?: AbortSignal | undefined },
+    ): Promise<DecisionResult> {
       const names = Object.keys(questions)
       if (names.length === 0) {
         throw fail("a step asked no questions, so there is nothing to decide")
@@ -244,6 +248,9 @@ export function openaiDecisionsModel(options: OpenaiDecisionsOptions): DecisionM
             input: typeof state === "string" ? state : JSON.stringify(state),
             questions: wire,
           }),
+          // K10: a request given up on is cancelled rather than left in
+          // flight, where it was still billed and still holding a socket.
+          ...(asking?.signal !== undefined ? { signal: asking.signal } : {}),
         })
       } catch (error) {
         throw fail(`request failed: ${String(error)}`, true)
