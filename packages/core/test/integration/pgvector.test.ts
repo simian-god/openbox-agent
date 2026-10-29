@@ -24,7 +24,7 @@ import { defineConfig } from "../../src/config/index.ts"
 import { defineTool } from "../../src/tools/index.ts"
 import { scriptedBrain, type ScriptedStep } from "../../src/testing/scripted-brain.ts"
 import { scriptedDecisionModel, yesno } from "../../src/testing/scripted-decision.ts"
-import { fakeSender } from "../../src/testing/fake-sender.ts"
+import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
 import type { BrainInput } from "../../src/providers/brains/types.ts"
 import type { Retriever } from "../../src/providers/retrievers/types.ts"
@@ -107,8 +107,9 @@ const table = defineTool({
 function buildAgent(
   script: ScriptedStep[],
   how: { knowledge: KnowledgeDoc[]; retriever: Retriever },
-): { agent: Agent; calls: BrainInput[] } {
+): { agent: Agent; calls: BrainInput[]; sender: FakeSender } {
   const scripted = scriptedBrain(script, { exhaustedReply: "Anything else?" })
+  const sender = fakeSender()
   const made: AgentOptions = {
     secret: SECRET,
     config: defineConfig({
@@ -131,14 +132,14 @@ function buildAgent(
         { [WANTS_HUMAN]: yesno(0), [GATE_QUESTION]: yesno(1) },
       ]),
       db: localSupabase(),
-      sender: fakeSender(),
+      sender,
       clock: fixedClock("2026-10-19T07:00:00Z"),
       retriever: how.retriever,
     },
     prompt: "You are the host at a restaurant.",
     tools: [table],
   }
-  return { agent: agents.create(made), calls: scripted.calls }
+  return { agent: agents.create(made), calls: scripted.calls, sender }
 }
 
 const message = (who: string, text: string) => ({
@@ -406,6 +407,25 @@ describeDatabase("C18: an agent answering from its documents on pgvector", (sql)
     const handed = JSON.stringify(calls[1]?.messages.at(-1))
     expect(handed).toContain("free lot behind the building")
     expect(handed).toContain("faq.md#Parking")
+  })
+
+  // The same clause as on `local`, for the same reason: every other test
+  // here stops at the brain, and C18 is about the person being answered.
+  test("C18: the answer out of the file reaches the person, on pgvector", async () => {
+    const { agent, sender } = buildAgent(
+      [
+        { tool: "search_knowledge", input: { query: "where do I park" } },
+        { reply: "There is a free lot behind the building." },
+      ],
+      {
+        knowledge: [PARKING, MENU],
+        retriever: pgvectorRetriever({ agentId: "restaurant", embedder, sql: sql() }),
+      },
+    )
+
+    await agent.receiveAndWait(message("9", "where do I park?"))
+
+    expect(sender.texts()).toEqual(["There is a free lot behind the building."])
   })
 
   test("C18: the documents really went to Postgres, not to an index in memory", async () => {

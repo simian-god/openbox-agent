@@ -73,6 +73,14 @@ Milestone checks that are scripted rather than run by hand:
 - `bun run m7-check` - C10, C16, C17 and M7's own clause about a dependency
   that never answers, clause by clause. One clause waits on real Hindi or
   Hinglish audio from the builder (Known K21) and says so.
+- `bun run m8-check` - C18 on both retrievers, clause by clause. One clause
+  waits on sqlite-vec support in evals-agent, which the bar itself says it
+  does (Known K29).
+
+All four read the suite's own results rather than asserting the same things
+a second time, through `scripts/support/results.ts`. They need the local
+database, like the integration tests they run. Without it they report UNRUN
+and fail, rather than passing on tests that never ran.
 
 Measuring whether routing is worth it (C8), which needs a brain key and a
 decision model key and no database:

@@ -432,6 +432,18 @@ describeDatabase("knowledge from handovers", (sql) => {
       expect((events[0]?.props as { retriever?: string }).retriever).toBe("local")
     })
 
+    // C18 is about the person getting the answer, not about the brain
+    // getting the chunk. Every other test here stops at the brain, so
+    // without this one the whole criterion could pass while the reply was
+    // built and never sent.
+    test("C18: the answer out of the file reaches the person, on local", async () => {
+      const { agent } = build(asking, { knowledge: DOCS })
+
+      await agent.receiveAndWait(from("9", "where do I park?"))
+
+      expect(sender.texts()).toEqual(["There is a free lot behind the building."])
+    })
+
     test("KNOW-1: an agent with no documents searches nothing, rather than failing", async () => {
       const { agent, calls } = build([
         { tool: "search_knowledge", input: { query: "parking" } },

@@ -16,10 +16,14 @@
 // is re-read whenever something near it changes.
 //
 // Usage: bun run m4-check
-import { spawnSync } from "node:child_process"
-import { readFileSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
 import { join } from "node:path"
+import {
+  type ClauseState,
+  type Outcome,
+  describeClause,
+  NO_DATABASE,
+  runSuite,
+} from "./support/results.ts"
 
 const root = join(import.meta.dir, "..")
 
@@ -148,58 +152,12 @@ const CLAUSES: Clause[] = [
 
 export interface ClauseResult extends Clause {
   pass: boolean
+  state: ClauseState
   detail: string
 }
 
-/**
- * Every test name the suite reported, with whether it passed.
- *
- * Read from the JUnit report rather than the console, because `bun test`
- * prints only the failures by default: a check that read the console would
- * see nothing at all on a clean run, which is exactly when it has to work.
- */
-export function readResults(xml: string): Map<string, boolean> {
-  const found = new Map<string, boolean>()
-
-  // Each <testcase ...> either self closes, or wraps a <failure>.
-  for (const match of xml.matchAll(/<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g)) {
-    const attributes = match[1] ?? ""
-    const body = match[3] ?? ""
-    const name = /\bname="([^"]*)"/.exec(attributes)?.[1]
-    if (name === undefined) continue
-
-    const passed = !/<(failure|error)\b/.test(body)
-    found.set(unescapeXml(name), (found.get(unescapeXml(name)) ?? true) && passed)
-  }
-  return found
-}
-
-function unescapeXml(text: string): string {
-  return text
-    .replace(/&apos;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-}
-
-export function checkClauses(results: Map<string, boolean>): ClauseResult[] {
-  return CLAUSES.map((clause) => {
-    const matching = [...results.entries()].filter(([name]) => name.includes(clause.test))
-
-    if (matching.length === 0) {
-      return {
-        ...clause,
-        pass: false,
-        detail: `no test named "${clause.test}". It was renamed or removed.`,
-      }
-    }
-
-    const failed = matching.filter(([, passed]) => !passed).map(([name]) => name)
-    return failed.length === 0
-      ? { ...clause, pass: true, detail: matching[0]?.[0] ?? clause.test }
-      : { ...clause, pass: false, detail: `failing: ${failed.join("; ")}` }
-  })
+export function checkClauses(results: Map<string, Outcome>): ClauseResult[] {
+  return CLAUSES.map((clause) => ({ ...clause, ...describeClause(results, clause.test) }))
 }
 
 export function format(clauses: ClauseResult[], ran: number): string {
@@ -210,40 +168,40 @@ export function format(clauses: ClauseResult[], ran: number): string {
   for (const criterion of ["C9", "C14", "C15"] as const) {
     const mine = clauses.filter((clause) => clause.criterion === criterion)
     const ok = mine.every((clause) => clause.pass)
-    lines.push("", `${ok ? "PASS" : "FAIL"}  ${criterion}`)
+    const unrun = mine.filter((clause) => clause.state === "skip")
+    const broken = mine.filter((clause) => !clause.pass && clause.state !== "skip")
+    const verdict = ok
+      ? "PASS"
+      : broken.length > 0
+        ? "FAIL"
+        : `UNRUN (${unrun.length} of ${mine.length} clause(s) did not run)`
+    lines.push("", `${verdict}  ${criterion}`)
     for (const clause of mine) {
-      lines.push(`      ${clause.pass ? "ok  " : "FAIL"} ${clause.what}`)
+      const mark = clause.pass ? "ok  " : clause.state === "skip" ? "skip" : "FAIL"
+      lines.push(`      ${mark} ${clause.what}`)
       if (!clause.pass) lines.push(`           ${clause.detail}`)
     }
   }
 
-  const failed = clauses.filter((clause) => !clause.pass)
-  lines.push(
-    "",
-    failed.length === 0
-      ? "All three criteria pass."
-      : `${failed.length} clause(s) have no passing test.`,
-  )
+  const skipped = clauses.filter((clause) => clause.state === "skip")
+  const failed = clauses.filter((clause) => !clause.pass && clause.state !== "skip")
+
+  lines.push("")
+  if (failed.length === 0 && skipped.length === 0) {
+    lines.push("All three criteria pass.")
+  } else {
+    if (skipped.length > 0) {
+      lines.push(`${skipped.length} clause(s) rest on tests that were skipped.`, NO_DATABASE)
+    }
+    if (failed.length > 0) {
+      lines.push(`${failed.length} clause(s) have no passing test.`)
+    }
+  }
   return lines.join("\n")
 }
 
 if (import.meta.main) {
-  const report = join(tmpdir(), `openbox-m4-${process.pid}.xml`)
-  const run = spawnSync(
-    "bun",
-    ["test", ...FILES, "--reporter=junit", `--reporter-outfile=${report}`],
-    { cwd: root, encoding: "utf8", shell: true },
-  )
-  const output = `${run.stdout ?? ""}${run.stderr ?? ""}`
-
-  let results = new Map<string, boolean>()
-  try {
-    results = readResults(readFileSync(report, "utf8"))
-  } catch {
-    // Falls through to the error below, which prints what the suite said.
-  } finally {
-    rmSync(report, { force: true })
-  }
+  const { results, output } = runSuite(FILES, root, "m4")
 
   if (results.size === 0) {
     console.error("No test results were read. The suite did not run:\n")

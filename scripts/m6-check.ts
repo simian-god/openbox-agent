@@ -20,10 +20,14 @@
 //   its other half are checked here now and Known K18 is closed.
 //
 // Usage: bun run m6-check
-import { spawnSync } from "node:child_process"
-import { readFileSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
 import { join } from "node:path"
+import {
+  type ClauseState,
+  type Outcome,
+  describeClause,
+  NO_DATABASE,
+  runSuite,
+} from "./support/results.ts"
 
 const root = join(import.meta.dir, "..")
 
@@ -194,60 +198,15 @@ const CLAUSES: Clause[] = [
 
 export interface ClauseResult extends Clause {
   pass: boolean
+  state: ClauseState
   detail: string
 }
 
-/**
- * Every test name the suite reported, with whether it passed.
- *
- * Read from the JUnit report rather than the console, because `bun test`
- * prints only the failures by default: a check that read the console would
- * see nothing at all on a clean run, which is exactly when it has to work.
- */
-export function readResults(xml: string): Map<string, boolean> {
-  const found = new Map<string, boolean>()
-
-  for (const match of xml.matchAll(/<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g)) {
-    const attributes = match[1] ?? ""
-    const body = match[3] ?? ""
-    const name = /\bname="([^"]*)"/.exec(attributes)?.[1]
-    if (name === undefined) continue
-
-    const passed = !/<(failure|error)\b/.test(body)
-    found.set(unescapeXml(name), (found.get(unescapeXml(name)) ?? true) && passed)
-  }
-  return found
-}
-
-function unescapeXml(text: string): string {
-  return text
-    .replace(/&apos;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-}
-
-export function checkClauses(results: Map<string, boolean>): ClauseResult[] {
-  return CLAUSES.map((clause) => {
-    const matching = [...results.entries()].filter(([name]) => name.includes(clause.test))
-
-    if (matching.length === 0) {
-      return {
-        ...clause,
-        pass: false,
-        detail:
-          clause.waitingOn === undefined
-            ? `no test named "${clause.test}". It was renamed or removed.`
-            : `not built yet: waiting on ${clause.waitingOn}`,
-      }
-    }
-
-    const failed = matching.filter(([, passed]) => !passed).map(([name]) => name)
-    return failed.length === 0
-      ? { ...clause, pass: true, detail: matching[0]?.[0] ?? clause.test }
-      : { ...clause, pass: false, detail: `failing: ${failed.join("; ")}` }
-  })
+export function checkClauses(results: Map<string, Outcome>): ClauseResult[] {
+  return CLAUSES.map((clause) => ({
+    ...clause,
+    ...describeClause(results, clause.test, clause.waitingOn),
+  }))
 }
 
 export function format(clauses: ClauseResult[], ran: number): string {
@@ -258,27 +217,52 @@ export function format(clauses: ClauseResult[], ran: number): string {
   for (const criterion of ["C5", "C11", "C12"] as const) {
     const mine = clauses.filter((clause) => clause.criterion === criterion)
     const ok = mine.every((clause) => clause.pass)
-    const scheduled = mine.filter((clause) => !clause.pass && clause.waitingOn !== undefined)
-    const news = mine.filter((clause) => !clause.pass && clause.waitingOn === undefined)
+    const unrun = mine.filter((clause) => clause.state === "skip")
+    const scheduled = mine.filter(
+      (clause) => !clause.pass && clause.state === "missing" && clause.waitingOn !== undefined,
+    )
+    const news = mine.filter(
+      (clause) => !clause.pass && clause.state !== "skip" && clause.waitingOn === undefined,
+    )
 
+    // Order matters. A real failure outranks a skip, and a skip outranks
+    // a clause that is only waiting: the worst news goes in the heading.
     const verdict = ok
       ? "PASS"
       : news.length > 0
         ? "FAIL"
-        : `PART  (${scheduled.length} clause(s) not built yet)`
+        : unrun.length > 0
+          ? `UNRUN (${unrun.length} of ${mine.length} clause(s) did not run)`
+          : `PART  (${scheduled.length} clause(s) not built yet)`
     lines.push("", `${verdict}  ${criterion}`)
     for (const clause of mine) {
-      const mark = clause.pass ? "ok  " : clause.waitingOn === undefined ? "FAIL" : "wait"
+      const mark = clause.pass
+        ? "ok  "
+        : clause.state === "skip"
+          ? "skip"
+          : clause.waitingOn === undefined
+            ? "FAIL"
+            : "wait"
       lines.push(`      ${mark} ${clause.what}`)
       if (!clause.pass) lines.push(`           ${clause.detail}`)
     }
   }
 
-  const news = clauses.filter((clause) => !clause.pass && clause.waitingOn === undefined)
-  const scheduled = clauses.filter((clause) => !clause.pass && clause.waitingOn !== undefined)
+  const unrun = clauses.filter((clause) => clause.state === "skip")
+  const news = clauses.filter(
+    (clause) => !clause.pass && clause.state !== "skip" && clause.waitingOn === undefined,
+  )
+  const scheduled = clauses.filter(
+    (clause) => !clause.pass && clause.state === "missing" && clause.waitingOn !== undefined,
+  )
 
   lines.push("")
-  if (news.length > 0) {
+  if (unrun.length > 0) {
+    lines.push(
+      `${unrun.length} clause(s) rest on tests that were skipped, so nothing is proven.`,
+      NO_DATABASE,
+    )
+  } else if (news.length > 0) {
     lines.push(`${news.length} clause(s) have no passing test. That is news, not a schedule.`)
   } else if (scheduled.length > 0) {
     lines.push(
@@ -294,22 +278,7 @@ export function format(clauses: ClauseResult[], ran: number): string {
 }
 
 if (import.meta.main) {
-  const report = join(tmpdir(), `openbox-m6-${process.pid}.xml`)
-  const run = spawnSync(
-    "bun",
-    ["test", ...FILES, "--reporter=junit", `--reporter-outfile=${report}`],
-    { cwd: root, encoding: "utf8", shell: true },
-  )
-  const output = `${run.stdout ?? ""}${run.stderr ?? ""}`
-
-  let results = new Map<string, boolean>()
-  try {
-    results = readResults(readFileSync(report, "utf8"))
-  } catch {
-    // Falls through to the error below, which prints what the suite said.
-  } finally {
-    rmSync(report, { force: true })
-  }
+  const { results, output } = runSuite(FILES, root, "m6")
 
   if (results.size === 0) {
     console.error("No test results were read. The suite did not run:\n")
@@ -319,9 +288,12 @@ if (import.meta.main) {
 
   const clauses = checkClauses(results)
   console.log(format(clauses, results.size))
-  // A clause that is waiting on a later row is not a surprise, so it does
-  // not fail the command: what fails it is a clause that should have a
-  // passing test and does not.
-  const news = clauses.filter((clause) => !clause.pass && clause.waitingOn === undefined)
-  process.exit(news.length === 0 ? 0 : 1)
+  // A clause waiting on a later row or on the builder is not a surprise,
+  // so it does not fail the command. What fails it is a clause that should
+  // have a passing test and does not, and a clause whose test did not run
+  // at all, which means this check proved nothing.
+  const unproven = clauses.filter(
+    (clause) => !clause.pass && (clause.state === "skip" || clause.waitingOn === undefined),
+  )
+  process.exit(unproven.length === 0 ? 0 : 1)
 }
