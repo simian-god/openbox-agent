@@ -23,6 +23,7 @@
     "@supabase/supabase-js": "^2.118.0",
     "chrono-node": "^2.10.3",
     "luxon": "^3.7.2",
+    "minisearch": "^7.2.0",
     "zod": "^4.6.7"
   },
   "bin": {

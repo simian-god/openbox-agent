@@ -686,3 +686,44 @@ change to Spec section 5's signature, or the test registry checking that an
 agent really is idle rather than trusting `stop()` to have finished. The second
 is cheaper and catches the case that actually bites. Both are worth doing the
 next time anything touches shutdown.
+
+## K28. The OpenAI embedder ships untested, because OpenAI is parked
+
+**Status:** open, accepted. Blocked by a decision rather than by work.
+
+**What happens.** T8.2 built the OpenAI embedder from OpenAI's own API
+reference, read on 2026-10-28, and it has never been run against the API. There
+is no `OPENAI_API_KEY` here: the builder parked OpenAI on 2026-10-27, so the
+key that would prove this is deliberately absent.
+
+So the adapter is proven against recorded responses, which shows it matches the
+documentation and nothing more. It is the same position the Sarvam transcriber
+is in (K21), and the Claude Agent SDK brain was in before T7.3a found that a
+green offline suite was hiding a brain which could not answer anybody.
+
+**What it costs.** Less than those two, for three reasons worth stating.
+
+Nothing reaches it unless an agent's config says `embedder: "openai"`, and the
+default is `null`. KNOW-4 makes the keyword half the whole of search without
+one, and that half is proven.
+
+The one documented behaviour most likely to bite is already handled and tested:
+`data` is not promised to come back in the order the inputs went up, every item
+carries an `index`, and the adapter maps by it. Ignoring that would give every
+chunk another chunk's vector, and the only symptom would be search quietly
+getting worse rather than anything failing.
+
+And an embedding failure cannot produce a wrong answer, only a worse one. A
+throw from `embed` during indexing stops the index being built, which is loud.
+A throw during a search is a search that found less than it could.
+
+**What we did.** Built it from the reference, tested every documented field and
+every error class against recorded responses, and wrote this down rather than
+implying the adapter had been exercised.
+
+**What would resolve it.** An `OPENAI_API_KEY` and one opt-in live test, in the
+shape of the transcriber's: embed two short texts, assert a vector of the
+documented length comes back for each, and assert the `index` mapping by
+sending something whose order can be checked. A fraction of a cent. It needs
+the builder to un-park OpenAI, or to want embeddings enough to make an
+exception for this one key.

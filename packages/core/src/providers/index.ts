@@ -17,6 +17,10 @@ import { openaiDecisionsModel } from "./decision/openai-decisions.ts"
 import type { Transcriber } from "./transcribers/types.ts"
 import { openRouterTranscriber } from "./transcribers/openrouter.ts"
 import { sarvamTranscriber } from "./transcribers/sarvam.ts"
+import type { Retriever } from "./retrievers/types.ts"
+import { localRetriever } from "./retrievers/local.ts"
+import type { Embedder } from "./embedders/types.ts"
+import { openaiEmbedder } from "./embedders/openai.ts"
 
 export * from "./brains/types.ts"
 export { openRouterBrain, toWireMessages, readResponse } from "./brains/openrouter.ts"
@@ -79,6 +83,20 @@ export {
   DEFAULT_SARVAM_MODEL,
   type SarvamTranscriberOptions,
 } from "./transcribers/sarvam.ts"
+export { type Found, type Retriever } from "./retrievers/types.ts"
+export {
+  localRetriever,
+  cosine,
+  DEFAULT_WEIGHTS,
+  EMBED_BATCH,
+  type LocalRetrieverOptions,
+} from "./retrievers/local.ts"
+export { EmbedError, type Embedder } from "./embedders/types.ts"
+export {
+  openaiEmbedder,
+  DEFAULT_EMBED_MODEL,
+  type OpenaiEmbedderOptions,
+} from "./embedders/openai.ts"
 
 /** Where a provider's key is read from. Also the list in .env.example. */
 export const ENV_KEYS = {
@@ -123,6 +141,8 @@ export interface ProvidersOverride {
   decisionModel?: DecisionModel | undefined
   /** Used as given, so a test transcribes without a key or network. */
   transcriber?: Transcriber | undefined
+  /** Used as given, so a test searches without a key or network. */
+  retriever?: Retriever | undefined
 }
 
 export interface BuiltProviders {
@@ -130,6 +150,8 @@ export interface BuiltProviders {
   decisionModel: DecisionModel
   /** MEDIA-1: undefined when config names none, which is allowed. */
   transcriber?: Transcriber | undefined
+  /** KNOW-3: what `search_knowledge` searches. Required in config. */
+  retriever: Retriever
 }
 
 /** One brain from a config entry, or a problem explaining why not. */
@@ -280,6 +302,47 @@ function buildTranscriber(
 }
 
 /**
+ * KNOW-4: the retriever an agent searches, and its optional embedder.
+ *
+ * Required in config, so always built. The embedder is not: KNOW-4 says
+ * keyword ranking alone unless one is configured, so `embedder: null` is
+ * the ordinary case and not a missing setting.
+ */
+function buildRetriever(
+  config: OpenboxConfig,
+  env: Env,
+  problems: string[],
+): Retriever | undefined {
+  let embedder: Embedder | undefined
+  if (config.retriever.embedder === "openai") {
+    const apiKey = envValue(ENV_KEYS["openai-agents"], env)
+    if (apiKey === undefined) {
+      problems.push(
+        `the openai embedder needs ${ENV_KEYS["openai-agents"]} in the environment. Secrets never go in config (CFG-2)`,
+      )
+      return undefined
+    }
+    embedder = openaiEmbedder({ apiKey })
+  }
+
+  switch (config.retriever.id) {
+    case "local":
+      return localRetriever(embedder === undefined ? {} : { embedder })
+
+    case "pgvector":
+      // T8.3. Named plainly rather than falling through to the local one,
+      // which would be an agent searching something other than what its
+      // config says.
+      problems.push("retriever pgvector is not built yet")
+      return undefined
+
+    default:
+      problems.push(`retriever ${String(config.retriever.id)} is not built yet`)
+      return undefined
+  }
+}
+
+/**
  * Just the decision model, for a command that needs nothing else.
  *
  * `openbox tune` measures a dial on the decision model. It never calls a
@@ -334,11 +397,15 @@ export function providersFromConfig(
       ? override.transcriber
       : buildTranscriber(config, env, problems)
 
+  const retriever =
+    override.retriever !== undefined ? override.retriever : buildRetriever(config, env, problems)
+
   if (problems.length > 0) throw new ProviderError(problems)
 
   return {
     brains,
     decisionModel: decisionModel as DecisionModel,
+    retriever: retriever as Retriever,
     ...(transcriber !== undefined ? { transcriber } : {}),
   }
 }

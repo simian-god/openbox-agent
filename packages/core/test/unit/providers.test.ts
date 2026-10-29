@@ -366,3 +366,67 @@ describe("DEP-2: the transcriber built from config", () => {
     expect(() => config({ transcriber: { id: "openai" } })).toThrow()
   })
 })
+
+describe("KNOW-4: the retriever built from config", () => {
+  test("KNOW-4: local is built, with keyword ranking and no embedder", () => {
+    const built = providersFromConfig(config(), {}, { [ENV_KEYS.openrouter]: "sk-test" })
+
+    expect(built.retriever.id).toBe("local")
+  })
+
+  test("KNOW-4: an embedder is built only when config names one", () => {
+    // `embedder: null` is the ordinary case, not a missing setting:
+    // KNOW-4 says keyword ranking alone unless one is configured.
+    let problems: string[] = []
+    try {
+      providersFromConfig(
+        config({ retriever: { id: "local", embedder: "openai" } }),
+        {},
+        { [ENV_KEYS.openrouter]: "sk-test" },
+      )
+    } catch (error) {
+      problems = (error as ProviderError).problems
+    }
+
+    expect(problems.join("\n")).toContain("openai embedder")
+    expect(problems.join("\n")).toContain(ENV_KEYS["openai-agents"])
+  })
+
+  test("KNOW-4: with the key, the embedded retriever builds", () => {
+    const built = providersFromConfig(
+      config({ retriever: { id: "local", embedder: "openai" } }),
+      {},
+      { [ENV_KEYS.openrouter]: "sk-test", [ENV_KEYS["openai-agents"]]: "sk-openai" },
+    )
+
+    expect(built.retriever.id).toBe("local")
+  })
+
+  test("DEP-3: a retriever passed in wins, and no key is read for it", () => {
+    const fake = { id: "fake", index: async () => {}, search: async () => [] }
+    const built = providersFromConfig(
+      config({ retriever: { id: "pgvector" } }),
+      { retriever: fake },
+      { [ENV_KEYS.openrouter]: "sk-test" },
+    )
+
+    expect(built.retriever).toBe(fake)
+  })
+
+  test("T8.3: pgvector is named plainly rather than quietly becoming local", () => {
+    // An agent searching something other than what its config says would
+    // be worse than a refusal to start.
+    let problems: string[] = []
+    try {
+      providersFromConfig(
+        config({ retriever: { id: "pgvector" } }),
+        {},
+        { [ENV_KEYS.openrouter]: "sk-test" },
+      )
+    } catch (error) {
+      problems = (error as ProviderError).problems
+    }
+
+    expect(problems.join("\n")).toContain("pgvector is not built yet")
+  })
+})
