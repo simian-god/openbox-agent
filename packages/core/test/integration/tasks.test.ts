@@ -172,7 +172,13 @@ describeDatabase("tasks", (sql) => {
       const offered = brain.calls[0]?.tools.map((tool) => tool.name) ?? []
       // The core's own come first, as ROUTE-2 exposes them: the two fact
       // tools and `escalate`, which every end user has (section 10).
-      expect(offered).toEqual(["remember", "forget_fact", "escalate", "parking"])
+      expect(offered).toEqual([
+        "remember",
+        "forget_fact",
+        "escalate",
+        "search_knowledge",
+        "parking",
+      ])
     })
 
     test("BUILTIN-1: built in tools do not count toward routingMinTools", async () => {
@@ -195,8 +201,9 @@ describeDatabase("tasks", (sql) => {
       // and routing is not one of its questions.
       expect(decisions.calls).toHaveLength(1)
       expect(Object.keys(decisions.calls[0]?.questions ?? {})).toEqual([WANTS_HUMAN])
-      // Two agent tools, four task tools, remember, forget_fact, escalate.
-      expect(brain.calls[0]?.tools).toHaveLength(9)
+      // Two agent tools, four task tools, remember, forget_fact,
+      // escalate and search_knowledge.
+      expect(brain.calls[0]?.tools).toHaveLength(10)
     })
   })
 

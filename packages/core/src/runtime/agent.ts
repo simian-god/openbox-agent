@@ -75,6 +75,10 @@ import { waitNoLongerThan } from "./deadline.ts"
 import type { ToolContext } from "../tools/index.ts"
 import type { DecisionModel } from "../providers/decision/types.ts"
 import type { Transcriber } from "../providers/transcribers/types.ts"
+import type { Retriever } from "../providers/retrievers/types.ts"
+import { localRetriever } from "../providers/retrievers/local.ts"
+import { entryDoc, type KnowledgeDoc } from "../knowledge/index.ts"
+import { knowledgeTools } from "../tools/knowledge.ts"
 import { ensureVersionRow, versionHash } from "./version.ts"
 
 export interface Deps {
@@ -92,6 +96,16 @@ export interface Deps {
   /** EVT-1: told about every event, alongside the agent's own table. */
   events?: EventSink | undefined
   /**
+   * KNOW-3: what `search_knowledge` searches.
+   *
+   * Optional here and required in Spec section 4, which is the same shape
+   * `clock` already has and for the same reason: there is one obvious
+   * default. `providersFromConfig` always builds one, config always names
+   * one, and an agent assembled by hand gets the local retriever with
+   * nothing in it, so a search finds nothing rather than throwing.
+   */
+  retriever?: Retriever | undefined
+  /**
    * MEDIA-1: turns a voice note into words.
    *
    * Optional in a way the brain is not. An agent that never expects audio
@@ -106,6 +120,13 @@ export interface Deps {
 
 export interface AgentOptions {
   config: OpenboxConfig
+  /**
+   * KNOW-1: the agent's own documents, already chunked.
+   *
+   * Content rather than a path, like `prompt` and `tools`. `loadKnowledge`
+   * turns a folder into these and `loadProject` calls it.
+   */
+  knowledge?: KnowledgeDoc[] | undefined
   deps: Deps
   /** The static system prompt, prompt.md in a real agent (SKILL-8). */
   prompt: string
@@ -443,6 +464,44 @@ export function createAgent(options: AgentOptions): Agent {
     return undefined
   }
 
+  const retriever = deps.retriever ?? localRetriever()
+
+  /**
+   * KNOW-1's second half: everything searchable, indexed once.
+   *
+   * The files were loaded by whoever built this agent, because
+   * `createAgent` takes content rather than paths: a prompt is a string
+   * and tools are objects, so documents are documents. `loadProject` is
+   * what turns a folder into them.
+   *
+   * LEARN-6 adds every approved entry and no candidate, which is the whole
+   * of that rule: a candidate is an answer nobody has checked.
+   *
+   * One promise, kept. `start()` begins it so KNOW-1's "at start" is true,
+   * and `search_knowledge` awaits the same one, so a question asked in the
+   * first second waits for a complete index instead of searching half of
+   * it. Done once: the retriever's own `index` is additive after that
+   * (KNOW-2).
+   */
+  let indexing: Promise<void> | undefined
+  const indexKnowledge = (): Promise<void> => {
+    indexing ??= (async () => {
+      const approved = await store.knowledge.list(
+        { status: "approved" },
+        { orderBy: "seq", limit: 1000 },
+      )
+      const docs = [...(options.knowledge ?? []), ...approved.map(entryDoc)]
+      if (docs.length > 0) await retriever.index(docs)
+    })().catch((error) => {
+      // Reported rather than thrown: an agent whose documents could not
+      // be read still answers, it just cannot search. Cleared so the next
+      // search tries again rather than failing for ever on one bad read.
+      indexing = undefined
+      reportWorker(error)
+    })
+    return indexing
+  }
+
   const tools = createToolRegistry([
     ...(options.tools ?? []),
     // Section 10: `remember` and `forget_fact`, for every agent. Unlike
@@ -458,6 +517,18 @@ export function createAgent(options: AgentOptions): Agent {
     // Section 10: `escalate` for the person's side, `take_over` and
     // `resume` for the operator's. ROLE-3 keeps them apart.
     ...handoverTools({ store, handovers, clock }),
+    // Section 10: `search_knowledge` for both roles, and the two
+    // decisions only an operator is offered (ROLE-3). Every agent gets
+    // them: an agent with no documents searches nothing and says so,
+    // which is a better answer than not being able to look.
+    ...knowledgeTools({
+      config,
+      store,
+      clock,
+      retriever,
+      events,
+      indexed: indexKnowledge,
+    }),
     ...(hasTaskTypes
       ? taskTools({
           config,
@@ -919,6 +990,10 @@ export function createAgent(options: AgentOptions): Agent {
     trigger: (request) => proactive.trigger(request),
 
     start(): void {
+      // KNOW-1: at start. Not awaited, because `start()` returns nothing
+      // and a deploy should not block on reading documents; a search that
+      // arrives first waits for the same promise.
+      void indexKnowledge()
       worker.start()
       outbox.pump.start()
       jobs.pump.start()

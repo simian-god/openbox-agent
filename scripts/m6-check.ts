@@ -9,14 +9,15 @@
 // believe.
 //
 // Two clauses are expected to fail here, and say so rather than being
-// quietly left out:
+// quietly left out. A third, C12's `approve_knowledge`, waited on T8.4
+// until 2026-10-29 and now has a passing test:
 //
 // - C5 and C11 both end "checked by evals-agent cases", and the harness is
 //   T11.2. What is checked here is the integration half, which is what the
 //   Plan's own criteria map means by "M6, M11".
-// - C12 wants an operator to approve knowledge from their channel.
-//   `approve_knowledge` is T8.4, in M8. T6.5 saves the candidates; nothing
-//   can approve one yet (Known K18).
+// - C12 wanted an operator to approve knowledge from their channel. T8.4
+//   built `approve_knowledge` and `reject_knowledge`, so that clause and
+//   its other half are checked here now and Known K18 is closed.
 //
 // Usage: bun run m6-check
 import { spawnSync } from "node:child_process"
@@ -182,8 +183,12 @@ const CLAUSES: Clause[] = [
   {
     criterion: "C12",
     what: "approve knowledge, from a message on their channel",
-    test: "LEARN-6: approving a candidate makes it searchable",
-    waitingOn: "T8.4, which is `approve_knowledge`, `reject_knowledge` and the index (Known K18)",
+    test: "KNOW-2: approving makes it searchable at once, with no restart",
+  },
+  {
+    criterion: "C12",
+    what: "and reject it, which is the same decision the other way",
+    test: "LEARN-6: rejecting keeps the record and never makes it searchable",
   },
 ]
 

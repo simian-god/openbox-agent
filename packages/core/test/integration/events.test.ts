@@ -218,6 +218,7 @@ describeDatabase("events and versions", (sql) => {
       "remember",
       "forget_fact",
       "escalate",
+      "search_knowledge",
       "check_availability",
     ])
   })

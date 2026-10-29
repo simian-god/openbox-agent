@@ -209,6 +209,10 @@ export const configSchema = z
     retriever: RETRIEVER,
 
     history: z.number().int().positive().default(30),
+    // KNOW-3: how many chunks `search_knowledge` hands the brain. Five is
+    // the Spec's own default: enough to answer from, few enough that a
+    // wrong one does not crowd out the right one.
+    knowledgeResults: z.number().int().positive().default(5),
     burstWindowMs: z.number().int().min(0).default(3000),
     routingMinTools: z.number().int().min(0).default(5),
     // ROUTE-5: how long a step waits for the decision model before

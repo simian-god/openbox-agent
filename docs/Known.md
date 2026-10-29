@@ -359,30 +359,6 @@ changes they imply. Before M9, which is five milestones out.
 
 ---
 
-## K18. Knowledge candidates have nobody to approve them until T8.4
-
-**Status:** open, scheduled. Not a workaround.
-
-**What happens.** T6.5 saves the question and answer from every exchange
-in a handover as a `candidate`. LEARN-6 says a candidate is not searchable
-until an operator approves it, and `approve_knowledge` and
-`reject_knowledge` are T8.4, with the index. So candidates accumulate and
-nobody can act on them.
-
-**What it costs.** Nothing is wrong, and nothing is lost: the rows are the
-point, and a candidate that cannot be searched is exactly what LEARN-6
-asks for. What is missing is the operator's half, so the agent does not
-yet get any better for having learned something.
-
-**What would resolve it.** T8.4, which is `search_knowledge`, the two
-approval tools and KNOW-2's live indexing.
-
-**What to do meanwhile.** Read `ob_knowledge` in the database to see what
-the agent would have learned. Nothing has to be cleaned up first: an
-approval tool arriving later finds the candidates waiting.
-
----
-
 ## K19. PRIV-3's erasure list predates knowledge entries
 
 **Status:** open, and waiting on the builder. Needed before M9 is built.

@@ -192,3 +192,21 @@ export function loadKnowledge(dir: string, options: LoadKnowledgeOptions = {}): 
     .sort((left, right) => left.localeCompare(right))
     .flatMap((file) => chunkMarkdown(readFileSync(join(root, file), "utf8"), file, options.limit))
 }
+
+/**
+ * KNOW-1 and LEARN-6: an approved knowledge entry, as a document.
+ *
+ * The question and the answer both go in the text, because somebody
+ * searching usually phrases it like the question rather than like the
+ * answer, and the answer is what they need back.
+ *
+ * The source names the entry rather than describing it. KNOW-3 hands this
+ * to the brain as where the answer came from, and `entry:3f2a` can be
+ * found again in the table while "an operator said so" cannot.
+ */
+export function entryDoc(entry: { id: string; question: string; answer: string }): KnowledgeDoc {
+  const text = `${entry.question.trim()}
+
+${entry.answer.trim()}`
+  return { id: `entry:${entry.id}`, text, source: `entry:${entry.id}` }
+}

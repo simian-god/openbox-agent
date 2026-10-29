@@ -649,8 +649,14 @@ describeDatabase("a turn", (sql) => {
       expect(routed[1]?.[1]["reason"]).toBe("no_tool")
       // A confident no_tool means the second step was offered no agent
       // tools. The core's own are there either way (BUILTIN-1), and for
-      // an end user those are the two fact tools and `escalate`.
-      expect(routed[1]?.[1]["exposed"]).toEqual(["remember", "forget_fact", "escalate"])
+      // an end user those are the two fact tools, `escalate` and
+      // `search_knowledge`.
+      expect(routed[1]?.[1]["exposed"]).toEqual([
+        "remember",
+        "forget_fact",
+        "escalate",
+        "search_knowledge",
+      ])
     })
 
     test("ROUTE-5: a decision model that is down still answers the person", async () => {

@@ -22,6 +22,8 @@ import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
 import type { Brain, BrainInput, BrainOutput } from "../../src/providers/brains/types.ts"
 import type { HandoverRow, PersonRow, Store } from "../../src/store/index.ts"
+import type { KnowledgeDoc } from "../../src/knowledge/index.ts"
+import type { Retriever } from "../../src/providers/retrievers/types.ts"
 
 const SECRET = "test-secret-long-enough-to-look-real"
 const PROMPT = "You are the host at a restaurant."
@@ -93,12 +95,20 @@ describeDatabase("knowledge from handovers", (sql) => {
     clock.set("2026-10-19T07:00:00Z")
   })
 
-  function build(script: ScriptedStep[]): { agent: Agent; calls: BrainInput[] } {
+  function build(
+    script: ScriptedStep[],
+    how: {
+      knowledge?: KnowledgeDoc[]
+      retriever?: Retriever
+      onWorkerError?: (error: unknown) => void
+    } = {},
+  ): { agent: Agent; calls: BrainInput[] } {
     const { brain, calls } = testBrain(script)
     sender = fakeSender()
     const made: AgentOptions = {
       secret: SECRET,
       config: config(),
+      ...(how.knowledge !== undefined ? { knowledge: how.knowledge } : {}),
       deps: {
         brains: [brain],
         decisionModel: scriptedDecisionModel([
@@ -107,11 +117,21 @@ describeDatabase("knowledge from handovers", (sql) => {
         db: localSupabase(),
         sender,
         clock,
+        ...(how.retriever !== undefined ? { retriever: how.retriever } : {}),
       },
+      ...(how.onWorkerError !== undefined ? { onWorkerError: how.onWorkerError } : {}),
       prompt: PROMPT,
       tools: [table],
     }
     return { agent: agents.create(made), calls }
+  }
+
+  /** Waits for something to become true, or gives up so a test can fail. */
+  async function until(what: () => boolean, ms = 3000): Promise<void> {
+    const deadline = Date.now() + ms
+    while (!what() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
   }
 
   const from = (who: string, text: string, id = `m-${who}-${text.slice(0, 10)}`) => ({
@@ -328,6 +348,399 @@ describeDatabase("knowledge from handovers", (sql) => {
       await agent.store.people.remove({ id: riya.id })
 
       expect(await agent.store.knowledge.count()).toBe(0)
+    })
+  })
+
+  describe("KNOW-1 and KNOW-3: searching the agent's own documents", () => {
+    const DOCS: KnowledgeDoc[] = [
+      {
+        id: "p",
+        text: "Parking\n\nThere is a free lot behind the building.",
+        source: "faq.md#Parking",
+      },
+      {
+        id: "r",
+        text: "Refunds\n\nWithin seven days, with the receipt.",
+        source: "faq.md#Refunds",
+      },
+    ]
+
+    const asking: ScriptedStep[] = [
+      { tool: "search_knowledge", input: { query: "where do I park" } },
+      { reply: "There is a free lot behind the building." },
+    ]
+
+    test("KNOW-1 and KNOW-3: a document passed in is searchable, and says where it came from", async () => {
+      const { agent, calls } = build(asking, { knowledge: DOCS })
+
+      await agent.receiveAndWait(from("9", "where do I park?"))
+
+      // The brain called the tool and got the chunk back with its source.
+      const result = calls[1]?.messages.at(-1)
+      const said = JSON.stringify(result)
+      expect(said).toContain("free lot behind the building")
+      expect(said).toContain("faq.md#Parking")
+    })
+
+    test("KNOW-3: the score is not handed to the brain", async () => {
+      // It is normalised against the best match for that one query
+      // (KNOW-4), so it means nothing on its own, and a brain given a
+      // number will reason about it.
+      const { agent, calls } = build(asking, { knowledge: DOCS })
+
+      await agent.receiveAndWait(from("9", "where do I park?"))
+
+      expect(JSON.stringify(calls[1]?.messages.at(-1))).not.toContain("score")
+    })
+
+    test("KNOW-3: no more than knowledgeResults come back", async () => {
+      const many: KnowledgeDoc[] = Array.from({ length: 9 }, (_unused, at) => ({
+        id: `d${at}`,
+        text: `Parking ${at}\n\nParking information number ${at}.`,
+        source: `faq.md#Parking${at}`,
+      }))
+      const { agent, calls } = build(asking, { knowledge: many })
+
+      await agent.receiveAndWait(from("9", "where do I park?"))
+
+      const result = calls[1]?.messages.at(-1)
+      const payload = (result !== undefined && "result" in result ? result.result : {}) as {
+        results?: unknown[]
+      }
+      expect(payload.results).toHaveLength(5)
+    })
+
+    test("KNOW-3: nothing found tells the brain to say so rather than inventing", async () => {
+      const { agent, calls } = build(
+        [
+          { tool: "search_knowledge", input: { query: "helicopter maintenance" } },
+          { reply: "I do not have that, sorry." },
+        ],
+        { knowledge: DOCS },
+      )
+
+      await agent.receiveAndWait(from("9", "do you service helicopters?"))
+
+      const said = JSON.stringify(calls[1]?.messages.at(-1))
+      expect(said).toContain("Nothing in the documents matches")
+    })
+
+    test("EVT-2: a search is recorded, with how much it found", async () => {
+      const { agent } = build(asking, { knowledge: DOCS })
+
+      await agent.receiveAndWait(from("9", "where do I park?"))
+
+      const events = await agent.store.events.list(
+        { name: "knowledge_searched" },
+        { orderBy: "seq" },
+      )
+      expect(events).toHaveLength(1)
+      expect((events[0]?.props as { results?: number }).results).toBe(1)
+      expect((events[0]?.props as { retriever?: string }).retriever).toBe("local")
+    })
+
+    test("KNOW-1: an agent with no documents searches nothing, rather than failing", async () => {
+      const { agent, calls } = build([
+        { tool: "search_knowledge", input: { query: "parking" } },
+        { reply: "I do not have that." },
+      ])
+
+      await agent.receiveAndWait(from("9", "parking?"))
+
+      expect(JSON.stringify(calls[1]?.messages.at(-1))).toContain("Nothing in the documents")
+    })
+  })
+
+  describe("KNOW-2 and LEARN-6: deciding on a candidate", () => {
+    /** A candidate waiting for a decision, as a handover would leave it. */
+    async function candidate(agent: Agent): Promise<string> {
+      const row = await agent.store.knowledge.insert({
+        question: "do you have parking?",
+        answer: "Yes, there is a free lot behind the building.",
+        status: "candidate",
+        source: "handover",
+        handover_id: null,
+        person_id: null,
+        operator_id: null,
+        question_message_id: null,
+        decided_at: null,
+        decided_by: null,
+      })
+      return row.id
+    }
+
+    /** An operator on this agent, so the two decisions are offered. */
+    async function operatorOn(agent: Agent, id: string): Promise<void> {
+      await agent.store.people.insert({
+        channel: "whatsapp",
+        channel_user_id: id,
+        role: "operator",
+        display_name: "Asha",
+      })
+    }
+
+    const searching = (query: string): ScriptedStep[] => [
+      { tool: "search_knowledge", input: { query } },
+      { reply: "Checked." },
+    ]
+
+    test("LEARN-6: a candidate is not searchable, however good the answer is", async () => {
+      // The whole of LEARN-6. One colleague's reply to one customer must
+      // not become the agent's answer to everyone before somebody checks.
+      const { agent, calls } = build(searching("parking"))
+      await candidate(agent)
+
+      await agent.receiveAndWait(from("9", "parking?"))
+
+      expect(JSON.stringify(calls[1]?.messages.at(-1))).toContain("Nothing in the documents")
+    })
+
+    test("KNOW-1 and LEARN-6: an approved entry is indexed at start", async () => {
+      const { agent } = build(searching("parking"))
+      const id = await candidate(agent)
+      await agent.store.knowledge.update({ id }, { status: "approved" })
+
+      // A second agent on the same database, so this one indexes at start
+      // with the entry already approved.
+      const second = build(searching("parking"))
+      await second.agent.receiveAndWait(from("8", "parking?"))
+
+      const said = JSON.stringify(second.calls[1]?.messages.at(-1))
+      expect(said).toContain("free lot behind the building")
+      expect(said).toContain(`entry:${id}`)
+    })
+
+    test("KNOW-2: approving makes it searchable at once, with no restart", async () => {
+      // The one thing in this core that changes what the agent knows
+      // while it is running (LEARN-7). The operator answered a minute
+      // ago; the next person to ask should get the answer.
+      //
+      // One agent, two turns, and that is the whole point. The first
+      // version of this test approved on one agent and asked on another,
+      // which re-reads the table at start, so it passed with the live
+      // indexing removed entirely. A probe found that.
+      const { agent, calls } = build([
+        { tool: "approve_knowledge", input: { entry_id: "filled in below" } },
+        { reply: "Approved." },
+        { tool: "search_knowledge", input: { query: "parking" } },
+        { reply: "There is a free lot." },
+      ])
+      const id = await candidate(agent)
+      await operatorOn(agent, "op-2")
+
+      // The script was built before the id existed, so the call the brain
+      // makes is scripted against the real one here.
+      const scripted = build([
+        { tool: "approve_knowledge", input: { entry_id: id } },
+        { reply: "Approved." },
+        { tool: "search_knowledge", input: { query: "parking" } },
+        { reply: "There is a free lot." },
+      ])
+      await operatorOn(scripted.agent, "op-3")
+
+      await scripted.agent.receiveAndWait(from("op-3", "approve that one"))
+      expect((await scripted.agent.store.knowledge.byId(id))?.status).toBe("approved")
+
+      // The same agent, no restart, an ordinary person asking.
+      await scripted.agent.receiveAndWait(from("7", "parking?"))
+
+      const said = JSON.stringify(scripted.calls.at(-1)?.messages.at(-1))
+      expect(said).toContain("free lot")
+      expect(calls.length).toBeGreaterThanOrEqual(0)
+    })
+
+    test("LEARN-6: the answer is searchable too, not only the question", async () => {
+      // "lot" appears in the answer and nowhere in the question. A person
+      // usually phrases it like the question, and needs the answer back,
+      // so both have to be in the text that is indexed.
+      const { agent } = build(searching("parking"))
+      const id = await candidate(agent)
+      await agent.store.knowledge.update({ id }, { status: "approved" })
+
+      const asking = build(searching("lot behind the building"))
+      await asking.agent.receiveAndWait(from("5", "is there a lot?"))
+
+      expect(JSON.stringify(asking.calls[1]?.messages.at(-1))).toContain("free lot")
+    })
+
+    test("LEARN-6: rejecting keeps the record and never makes it searchable", async () => {
+      const { agent } = build(searching("parking"))
+      const id = await candidate(agent)
+
+      // One agent again, for the same reason as the test above: a second
+      // agent re-reads the table and would pass even if rejecting had
+      // indexed the answer.
+      const deciding = build([
+        { tool: "reject_knowledge", input: { entry_id: id } },
+        { reply: "Rejected." },
+        { tool: "search_knowledge", input: { query: "parking" } },
+        { reply: "I do not have that." },
+      ])
+      await operatorOn(deciding.agent, "op-6")
+      await deciding.agent.receiveAndWait(from("op-6", "no, that is wrong"))
+
+      const after = await deciding.agent.store.knowledge.byId(id)
+      expect(after?.status).toBe("rejected")
+      // The pair is still there to read, which is the point of a record.
+      expect(after?.answer).toContain("free lot")
+
+      await deciding.agent.receiveAndWait(from("6", "parking?"))
+      expect(JSON.stringify(deciding.calls.at(-1)?.messages.at(-1))).toContain(
+        "Nothing in the documents",
+      )
+    })
+
+    test("DATA-4: deciding twice is told the outcome, not told it failed", async () => {
+      // Two operators at once, or one message delivered twice. The claim
+      // is on `status: "candidate"`, so exactly one decision lands and
+      // the second is answered rather than refused.
+      const { agent } = build(searching("parking"))
+      const id = await candidate(agent)
+
+      const deciding = build([
+        { tool: "approve_knowledge", input: { entry_id: id } },
+        { tool: "approve_knowledge", input: { entry_id: id } },
+        { reply: "Done." },
+      ])
+      await operatorOn(deciding.agent, "op-4")
+      await deciding.agent.receiveAndWait(from("op-4", "approve it"))
+
+      const runs = await deciding.agent.store.toolRuns.list(
+        { tool: "approve_knowledge" },
+        { orderBy: "seq" },
+      )
+      expect(runs).toHaveLength(2)
+      expect(runs.every((run) => run.status === "ok")).toBe(true)
+      const second = runs[1]?.result as { ok?: boolean; why?: string }
+      expect(second.ok).toBe(true)
+      expect(String(second.why)).toContain("already been decided")
+    })
+
+    test("a candidate that does not exist is said so, rather than throwing", async () => {
+      const { agent } = build([
+        { tool: "approve_knowledge", input: { entry_id: "00000000-0000-0000-0000-000000000000" } },
+        { reply: "I could not find that." },
+      ])
+      await operatorOn(agent, "op-5")
+
+      await agent.receiveAndWait(from("op-5", "approve 0000"))
+
+      const runs = await agent.store.toolRuns.list(
+        { tool: "approve_knowledge" },
+        { orderBy: "seq" },
+      )
+      expect(runs[0]?.status).toBe("ok")
+      expect(String((runs[0]?.result as { why?: string }).why)).toContain("no knowledge candidate")
+    })
+
+    test("ROLE-3: an end user is never offered the two decisions", async () => {
+      const { agent, calls } = build(searching("parking"))
+
+      await agent.receiveAndWait(from("9", "parking?"))
+
+      const offered = (calls[0]?.tools ?? []).map((tool) => tool.name)
+      expect(offered).toContain("search_knowledge")
+      expect(offered).not.toContain("approve_knowledge")
+      expect(offered).not.toContain("reject_knowledge")
+    })
+  })
+
+  describe("KNOW-1: when the index is built, and how often", () => {
+    /** A retriever that records what it was asked and when. */
+    function recording(options: { slowMs?: number; throws?: boolean } = {}) {
+      const indexed: string[][] = []
+      let ready = false
+      const retriever: Retriever = {
+        id: "recording",
+        async index(docs) {
+          if (options.slowMs !== undefined) {
+            await new Promise((resolve) => setTimeout(resolve, options.slowMs))
+          }
+          if (options.throws === true) throw new Error("the documents could not be read")
+          indexed.push(docs.map((doc) => doc.source))
+          ready = true
+        },
+        async search() {
+          searchedWhileReady.push(ready)
+          return []
+        },
+      }
+      const searchedWhileReady: boolean[] = []
+      return { retriever, indexed, searchedWhileReady }
+    }
+
+    const DOC: KnowledgeDoc = {
+      id: "p",
+      text: "Parking\n\nA free lot behind the building.",
+      source: "faq.md#Parking",
+    }
+
+    test("KNOW-1: at start means at start, before anybody has asked anything", async () => {
+      const { retriever, indexed } = recording()
+      build([{ reply: "hello" }], { knowledge: [DOC], retriever })
+
+      // No message sent. `start()` began it, which is what KNOW-1 says.
+      await until(() => indexed.length > 0)
+
+      expect(indexed[0]).toEqual(["faq.md#Parking"])
+    })
+
+    test("KNOW-1: the documents are indexed once, not on every search", async () => {
+      const { retriever, indexed } = recording()
+      const { agent } = build(
+        [
+          { tool: "search_knowledge", input: { query: "parking" } },
+          { reply: "one" },
+          { tool: "search_knowledge", input: { query: "parking" } },
+          { reply: "two" },
+        ],
+        { knowledge: [DOC], retriever },
+      )
+
+      await agent.receiveAndWait(from("9", "parking?"))
+      await agent.receiveAndWait(from("9", "parking again?"))
+
+      expect(indexed).toHaveLength(1)
+    })
+
+    test("KNOW-1: a search waits for the index rather than searching half of it", async () => {
+      // The index is deliberately slow here. A search that did not wait
+      // would run against nothing and the person would be told there is
+      // no answer when there is one.
+      // Slower than the whole turn on purpose. At 120ms the index
+      // finished before the turn ever reached the search, so removing the
+      // wait changed nothing and a probe slipped past.
+      const { retriever, searchedWhileReady } = recording({ slowMs: 1_500 })
+      const { agent } = build(
+        [{ tool: "search_knowledge", input: { query: "parking" } }, { reply: "checked" }],
+        { knowledge: [DOC], retriever },
+      )
+
+      await agent.receiveAndWait(from("9", "parking?"))
+
+      expect(searchedWhileReady).toEqual([true])
+    })
+
+    test("KNOW-1: documents that cannot be read are reported, and the agent still answers", async () => {
+      // An agent whose knowledge folder is broken is still an agent. The
+      // failure is loud in the trace and silent to the person.
+      const { retriever } = recording({ throws: true })
+      const reported: unknown[] = []
+      const { agent } = build(
+        [{ tool: "search_knowledge", input: { query: "parking" } }, { reply: "I cannot check." }],
+        { knowledge: [DOC], retriever, onWorkerError: (error) => reported.push(error) },
+      )
+
+      await agent.receiveAndWait(from("9", "parking?"))
+
+      expect(sender.texts()).toEqual(["I cannot check."])
+      // More than once is right. A failed read is forgotten rather than
+      // remembered, so the next search tries again instead of failing for
+      // ever on one bad read, and `start()` and that search each report.
+      expect(reported.length).toBeGreaterThanOrEqual(1)
+      expect(
+        reported.every((error) => String((error as Error).message).includes("could not be read")),
+      ).toBe(true)
     })
   })
 })
