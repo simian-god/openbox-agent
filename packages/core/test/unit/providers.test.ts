@@ -9,6 +9,7 @@ import {
   ENV_KEYS,
   supabaseFromEnv,
   DB_ENV_KEYS,
+  PGVECTOR_ENV_KEY,
 } from "../../src/providers/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { scriptedBrain } from "../../src/testing/scripted-brain.ts"
@@ -413,20 +414,52 @@ describe("KNOW-4: the retriever built from config", () => {
     expect(built.retriever).toBe(fake)
   })
 
-  test("T8.3: pgvector is named plainly rather than quietly becoming local", () => {
-    // An agent searching something other than what its config says would
-    // be worse than a refusal to start.
+  test("KNOW-4: pgvector with no embedder is refused, rather than quietly becoming local", () => {
+    // KNOW-4 gives keyword ranking to the local retriever and says of this
+    // one only that it stores chunks and embeddings, so with no embedder
+    // there is nothing to compare a question against. An agent searching
+    // something other than what its config says would be worse than a
+    // refusal to start.
     let problems: string[] = []
     try {
       providersFromConfig(
         config({ retriever: { id: "pgvector" } }),
         {},
-        { [ENV_KEYS.openrouter]: "sk-test" },
+        { [ENV_KEYS.openrouter]: "sk-test", [PGVECTOR_ENV_KEY]: "postgres://localhost/x" },
       )
     } catch (error) {
       problems = (error as ProviderError).problems
     }
 
-    expect(problems.join("\n")).toContain("pgvector is not built yet")
+    expect(problems.join("\n")).toContain("needs an embedder")
+  })
+
+  test("KNOW-4: pgvector with no database connection is refused, because it ranks there", () => {
+    let problems: string[] = []
+    try {
+      providersFromConfig(
+        config({ retriever: { id: "pgvector", embedder: "openai" } }),
+        {},
+        { [ENV_KEYS.openrouter]: "sk-test", [ENV_KEYS["openai-agents"]]: "sk-openai" },
+      )
+    } catch (error) {
+      problems = (error as ProviderError).problems
+    }
+
+    expect(problems.join("\n")).toContain(PGVECTOR_ENV_KEY)
+  })
+
+  test("KNOW-4: with an embedder and a connection, the pgvector retriever builds", () => {
+    const built = providersFromConfig(
+      config({ retriever: { id: "pgvector", embedder: "openai" } }),
+      {},
+      {
+        [ENV_KEYS.openrouter]: "sk-test",
+        [ENV_KEYS["openai-agents"]]: "sk-openai",
+        [PGVECTOR_ENV_KEY]: "postgres://localhost/x",
+      },
+    )
+
+    expect(built.retriever.id).toBe("pgvector")
   })
 })

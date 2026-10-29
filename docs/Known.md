@@ -703,3 +703,53 @@ documented length comes back for each, and assert the `index` mapping by
 sending something whose order can be checked. A fraction of a cent. It needs
 the builder to un-park OpenAI, or to want embeddings enough to make an
 exception for this one key.
+
+---
+
+## K29. The pgvector retriever is proven on Postgres and nowhere else
+
+**Status:** open, accepted. Two separate gaps that happen to sit in one row.
+
+**What happens.** T8.3 built the pgvector retriever and its optional migration
+and proved both against the real extension, pgvector 0.8.2 on Postgres 17.11:
+the table, the row level security, the upsert, the ranking, the agent filter
+and an agent answering a knowledge question through it. Two things around it
+are not proven.
+
+The first is the embedder. Every test runs on a stub that returns vectors a
+test wrote, because the only real embedder built is OpenAI and the builder has
+parked it (K28). So what is proven is that the retriever stores, ranks and
+returns correctly for whatever vectors it is handed. Whether a real embedder's
+vectors make the right chunk the nearest one is the same open question K28
+already holds, and this retriever has no keyword half to fall back on, so it
+matters more here than it does for `local`.
+
+The second is evals-agent. Its SQLite world has neither a `vector` type nor a
+`<=>` operator, and this retriever is raw Postgres SQL using both. Adding
+sqlite-vec to that world would not be enough on its own: sqlite-vec works
+through `vec0` virtual tables and its own syntax, so an agent that wants
+knowledge search under evals-agent needs a retriever written for it rather
+than this one translated. evals-agent is not a dependency of this repo, so
+nothing here could be checked against it.
+
+**What it costs.** Nothing reaches either gap by accident. The retriever is
+only built when a config names `retriever: { id: "pgvector" }`, and that
+config is refused at startup unless an embedder is named too, so there is no
+path where an agent quietly runs this with no embeddings. An agent on the
+default `local` retriever never installs the extension and never opens the
+second connection.
+
+The evals-agent half is already written into M8's own bar, which says pgvector
+passes on Postgres and waits for sqlite-vec support under evals-agent. So the
+M8 check can pass honestly without it.
+
+**What we did.** Built it, proved it on the real extension, and used a stub
+embedder rather than implying a real one had ever run. Said plainly in the
+migration and in the retriever that this needs a direct Postgres connection,
+which is the deployment limit nobody would guess.
+
+**What would resolve it.** For the first half, the same `OPENAI_API_KEY` that
+would close K28, plus one opt-in live test that indexes three chunks and
+checks the right one wins a real question. For the second, a sqlite-vec
+retriever in evals-agent's world, which belongs there rather than here, and
+the Spec section 23 line about it should stay open until somebody has looked.

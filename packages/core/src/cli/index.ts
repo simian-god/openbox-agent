@@ -26,6 +26,9 @@ Usage:
 Options for migrate:
   --database-url <url>   Postgres connection. Defaults to DATABASE_URL
   --migrations <dir>     the agent's migrations. Defaults to db/migrations
+  --pgvector             also create the pgvector table. Only for an agent
+                         whose config names the pgvector retriever: it
+                         installs an extension, so it is off by default
 
 Options for chat:
   --dir <dir>            the agent project. Defaults to this folder
@@ -95,11 +98,14 @@ async function runMigrate(flags: Map<string, string>): Promise<number> {
   }
 
   const agentMigrationsDir = flags.get("migrations") ?? join(process.cwd(), "db", "migrations")
+  // DATA-3: the pgvector table is a separate migration, asked for by name.
+  const pgvector = flags.get("pgvector") === "true"
 
   try {
     const result = await migrate({
       databaseUrl,
       agentMigrationsDir,
+      pgvector,
       log: (line) => console.log(line),
     })
 

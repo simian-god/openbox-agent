@@ -29,7 +29,7 @@
 // traffic: a thousand chunks at 1536 dimensions is about six megabytes.
 import MiniSearch from "minisearch"
 import type { KnowledgeDoc } from "../../knowledge/index.ts"
-import type { Embedder } from "../embedders/types.ts"
+import { EMBED_BATCH, type Embedder } from "../embedders/types.ts"
 import type { Found, Retriever } from "./types.ts"
 
 /** How much each half counts when both are available (KNOW-4). */
@@ -50,9 +50,6 @@ export const DEFAULT_WEIGHTS = { keyword: 0.5, vector: 0.5 } as const
  * "opening". Without it that question matches nothing at all.
  */
 const FUZZY = (term: string): number | false => (term.length > 5 ? 0.2 : false)
-
-/** How many texts go up in one embedding call. */
-export const EMBED_BATCH = 96
 
 export interface LocalRetrieverOptions {
   /** KNOW-4: blending is on only when one is given. */

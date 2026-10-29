@@ -13,6 +13,15 @@ import { join } from "node:path"
 /** Where the core's own migrations live inside the package. */
 export const CORE_MIGRATIONS_DIR = join(import.meta.dir, "..", "..", "migrations")
 
+/**
+ * DATA-3: the pgvector table's own migration, applied only when asked.
+ *
+ * A subdirectory of the core's, which `readMigrations` ignores because it
+ * only reads `.sql` files in the one directory it is given. So the core's
+ * own run cannot pick this up by accident.
+ */
+export const PGVECTOR_MIGRATIONS_DIR = join(CORE_MIGRATIONS_DIR, "pgvector")
+
 export interface Migration {
   /** Unique and sortable, like `core/0001_core.sql`. */
   name: string
@@ -28,6 +37,12 @@ export interface MigrateOptions {
   agentMigrationsDir?: string | undefined
   /** Overrides the core's directory. Tests use it; agents do not. */
   coreMigrationsDir?: string | undefined
+  /**
+   * DATA-3: also apply the pgvector table, for an agent whose config names
+   * the pgvector retriever. Off by default, so no agent installs an
+   * extension it does not use.
+   */
+  pgvector?: boolean | undefined
   log?: ((line: string) => void) | undefined
 }
 
@@ -71,6 +86,9 @@ export function readMigrations(dir: string, prefix: string): Migration[] {
 export function collectMigrations(options: MigrateOptions): Migration[] {
   return [
     ...readMigrations(options.coreMigrationsDir ?? CORE_MIGRATIONS_DIR, "core"),
+    // Between the two, because it belongs to the core and an agent's own
+    // migration may want to reference the table.
+    ...(options.pgvector === true ? readMigrations(PGVECTOR_MIGRATIONS_DIR, "pgvector") : []),
     ...(options.agentMigrationsDir ? readMigrations(options.agentMigrationsDir, "agent") : []),
   ]
 }

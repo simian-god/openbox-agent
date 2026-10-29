@@ -15,6 +15,15 @@ export interface Embedder {
   embed(texts: string[]): Promise<number[][]>
 }
 
+/**
+ * How many texts go up in one embedding call.
+ *
+ * Here rather than in a retriever, because it is a property of how
+ * embedding providers charge and rate limit, and both retrievers batch the
+ * same way.
+ */
+export const EMBED_BATCH = 96
+
 /** An embedding call that did not happen. */
 export class EmbedError extends Error {
   readonly id: string

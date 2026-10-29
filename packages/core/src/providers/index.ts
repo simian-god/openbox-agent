@@ -19,6 +19,7 @@ import { openRouterTranscriber } from "./transcribers/openrouter.ts"
 import { sarvamTranscriber } from "./transcribers/sarvam.ts"
 import type { Retriever } from "./retrievers/types.ts"
 import { localRetriever } from "./retrievers/local.ts"
+import { pgvectorRetriever } from "./retrievers/pgvector.ts"
 import type { Embedder } from "./embedders/types.ts"
 import { openaiEmbedder } from "./embedders/openai.ts"
 
@@ -88,10 +89,15 @@ export {
   localRetriever,
   cosine,
   DEFAULT_WEIGHTS,
-  EMBED_BATCH,
   type LocalRetrieverOptions,
 } from "./retrievers/local.ts"
-export { EmbedError, type Embedder } from "./embedders/types.ts"
+export {
+  pgvectorRetriever,
+  PGVECTOR_TABLE,
+  PGVECTOR_DIMENSIONS,
+  type PgvectorRetrieverOptions,
+} from "./retrievers/pgvector.ts"
+export { EmbedError, EMBED_BATCH, type Embedder } from "./embedders/types.ts"
 export {
   openaiEmbedder,
   DEFAULT_EMBED_MODEL,
@@ -99,6 +105,12 @@ export {
 } from "./embedders/openai.ts"
 
 /** Where a provider's key is read from. Also the list in .env.example. */
+/**
+ * KNOW-4: the pgvector retriever ranks in the database, so it needs a
+ * connection string of its own. The same variable `openbox migrate` uses.
+ */
+export const PGVECTOR_ENV_KEY = "DATABASE_URL"
+
 export const ENV_KEYS = {
   openrouter: "OPENROUTER_API_KEY",
   "claude-agent-sdk": "ANTHROPIC_API_KEY",
@@ -329,12 +341,32 @@ function buildRetriever(
     case "local":
       return localRetriever(embedder === undefined ? {} : { embedder })
 
-    case "pgvector":
-      // T8.3. Named plainly rather than falling through to the local one,
-      // which would be an agent searching something other than what its
-      // config says.
-      problems.push("retriever pgvector is not built yet")
-      return undefined
+    case "pgvector": {
+      // KNOW-4 gives keyword ranking to the local retriever and says of
+      // this one only that it stores chunks and embeddings. With no
+      // embedder there is nothing to compare a question against, so this
+      // is a misconfiguration, and hearing it at startup beats a search
+      // that quietly finds nothing all day.
+      if (embedder === undefined) {
+        problems.push(
+          "the pgvector retriever needs an embedder: it ranks by embedding and has no keyword half. Name one in `retriever.embedder`, or use the local retriever",
+        )
+      }
+
+      // It ranks in the database, so it needs a real connection and not
+      // just the Supabase URL and key. That is a deployment limit worth
+      // hearing about now rather than on the first question.
+      const databaseUrl = envValue(PGVECTOR_ENV_KEY, env)
+      if (databaseUrl === undefined) {
+        problems.push(
+          `the pgvector retriever needs ${PGVECTOR_ENV_KEY} in the environment, because it ranks in the database and PostgREST cannot express the distance operator (DATA-3 rules out the stored function that would let it)`,
+        )
+      }
+
+      if (embedder === undefined || databaseUrl === undefined) return undefined
+
+      return pgvectorRetriever({ agentId: config.name, embedder, databaseUrl })
+    }
 
     default:
       problems.push(`retriever ${String(config.retriever.id)} is not built yet`)
