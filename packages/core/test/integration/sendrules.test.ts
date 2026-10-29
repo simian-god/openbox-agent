@@ -10,10 +10,9 @@
 // Two of them are also C16's bar, so they are tested the way C16 reads
 // them: after STOP nothing goes out until the person opts back in, and
 // nothing non urgent goes out in quiet hours.
-import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
+import { test, expect, describe, beforeEach } from "bun:test"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import {
   OPTED_IN_REPLY,
   OPTED_OUT_REPLY,
@@ -70,12 +69,6 @@ function config(over: Record<string, unknown> = {}): OpenboxConfig {
 describeDatabase("the send rules", (sql) => {
   const clock = fixedClock(DAYTIME)
   let sender: FakeSender
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

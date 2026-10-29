@@ -8,11 +8,10 @@
 // Every one of those four is a test here, written as the attack rather
 // than as the feature. A confirmation flow that only gets tested happy
 // path is a confirmation flow that does not work.
-import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
+import { test, expect, describe, beforeEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import {
   createAgent as buildAgent,
   type Agent,
@@ -91,12 +90,6 @@ const brokenTool = defineTool({
 describeDatabase("structured confirmation", (sql) => {
   let sender: FakeSender
   const clock = fixedClock("2026-10-19T06:00:00Z")
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

@@ -20,9 +20,8 @@
 //
 // A CLI brain spawns a process per step, so one of those runs takes
 // minutes. Each brain is its own test, so a failing one names itself.
-import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeEach } from "bun:test"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { conformanceConfig, runConformance } from "../../src/testing/conformance.ts"
 import { providersFromConfig } from "../../src/providers/index.ts"
 import { DEFAULT_CLAUDE_MODEL } from "../../src/providers/brains/claude-agent-sdk.ts"
@@ -81,12 +80,6 @@ const CANDIDATES: Candidate[] = [
 ]
 
 describeDatabase("C2: the conformance conversation on a real brain", (sql) => {
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
-
   // Every brain uses the same person, so one run must not find the
   // previous run's pending action.
   beforeEach(async () => {

@@ -2,7 +2,6 @@
 // the agent_id scope is proven end to end and not only against a fake.
 import { test, expect, beforeAll, beforeEach } from "bun:test"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { createStore, type Store } from "../../src/store/index.ts"
 
 describeDatabase("the store", (sql) => {
@@ -10,11 +9,6 @@ describeDatabase("the store", (sql) => {
   let dentist: Store
 
   beforeAll(async () => {
-    await migrate({ sql: sql() })
-    // PostgREST caches the schema, so it must be told when tables appear.
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-
     const db = localSupabase("service_role")
     restaurant = createStore(db, "restaurant")
     dentist = createStore(db, "dentist")

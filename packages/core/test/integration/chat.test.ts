@@ -2,13 +2,12 @@
 //
 // Everything is real except the brain and the terminal: a scripted brain so
 // no key or network is needed (TEST-3), and a fake io so no tty is needed.
-import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { join } from "node:path"
 import { describe } from "bun:test"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { createStore } from "../../src/store/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
@@ -50,12 +49,6 @@ function config(over: Record<string, unknown> = {}): OpenboxConfig {
 
 describeDatabase("openbox chat", (sql) => {
   const clock = fixedClock("2026-10-19T06:00:00Z")
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())
@@ -217,12 +210,6 @@ describeDatabase("openbox chat", (sql) => {
 })
 
 describeDatabase("openbox chat against the demo agent", (sql) => {
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
-
   beforeEach(async () => {
     await resetDatabase(sql())
   })

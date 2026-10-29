@@ -5,11 +5,10 @@
 // are written as the outage rather than as the feature: a brain that
 // throws, a brain that cannot produce the shape, a brain that is simply a
 // bug, and every brain gone at once.
-import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
+import { test, expect, describe, beforeEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions } from "../../src/runtime/index.ts"
 import { BRAINS_FAILED_REPLY } from "../../src/runtime/limits.ts"
 import { PERSON_TOLD } from "../../src/runtime/handover.ts"
@@ -106,12 +105,6 @@ function brainAsking(names: string[]): Brain {
 describeDatabase("the fallback chain", (sql) => {
   let sender: FakeSender
   const clock = fixedClock("2026-10-19T06:00:00Z")
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

@@ -1,12 +1,11 @@
 // Turn v0 end to end: a message arrives, a person is created, the brain
 // runs its steps, and a reply goes out through the sender.
-import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
+import { test, expect, describe, beforeEach } from "bun:test"
 import { scriptedDecisionModel, choice, yesno } from "../../src/testing/scripted-decision.ts"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
 import { check } from "../support/waiting.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { BRAINS_FAILED_REPLY } from "../../src/runtime/limits.ts"
 import { PERSON_TOLD } from "../../src/runtime/handover.ts"
@@ -149,12 +148,6 @@ const updateBooking = defineTool({
 describeDatabase("a turn", (sql) => {
   let sender: FakeSender
   const clock = fixedClock("2026-10-19T06:00:00Z")
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

@@ -6,11 +6,10 @@
 // the pair is never saved, or it is saved and treated as true, which
 // would let one colleague's reply to one customer become the agent's
 // answer to everyone.
-import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
+import { test, expect, describe, beforeEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions } from "../../src/runtime/index.ts"
 import { createHandovers, WANTS_HUMAN } from "../../src/runtime/handover.ts"
 import { GATE_QUESTION } from "../../src/runtime/gate.ts"
@@ -83,12 +82,6 @@ function testBrain(script: ScriptedStep[]): { brain: Brain; calls: BrainInput[] 
 describeDatabase("knowledge from handovers", (sql) => {
   const clock = fixedClock("2026-10-19T07:00:00Z")
   let sender: FakeSender
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

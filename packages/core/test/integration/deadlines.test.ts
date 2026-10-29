@@ -9,11 +9,10 @@
 //
 // Small millisecond deadlines rather than a frozen clock, because a
 // deadline is about real elapsed time. The helper itself says why.
-import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
+import { test, expect, describe, beforeEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import type { Agent, AgentOptions } from "../../src/runtime/index.ts"
 import { WANTS_HUMAN } from "../../src/runtime/handover.ts"
 import { GATE_QUESTION } from "../../src/runtime/gate.ts"
@@ -84,12 +83,6 @@ const slowTool = (): Tool =>
 
 describeDatabase("deadlines", (sql) => {
   let sender: FakeSender
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

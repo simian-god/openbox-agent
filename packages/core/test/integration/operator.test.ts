@@ -5,12 +5,11 @@
 // nobody else can, and a blocked person can do nothing at all. Both rest
 // on the same rule: role comes from the database and nothing in a message
 // can change it (ROLE-1, API-3).
-import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
+import { test, expect, describe, beforeEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
 import { fakeIo } from "../support/chat.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { defineTool } from "../../src/tools/index.ts"
@@ -75,12 +74,6 @@ const bookTable = defineTool({
 describeDatabase("operators, and the people they block", (sql) => {
   const clock = fixedClock("2026-10-19T06:00:00Z")
   let sender: FakeSender
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

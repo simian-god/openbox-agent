@@ -5,7 +5,13 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { SQL } from "bun"
-import { describeDatabase, dropAllTables } from "../support/db.ts"
+import {
+  describeDatabase,
+  dropAllTables,
+  ensureSchema,
+  localSupabase,
+  waitForRest,
+} from "../support/db.ts"
 import { failure } from "../support/throws.ts"
 import {
   migrate,
@@ -307,5 +313,48 @@ describeDatabase("migrations", (sql) => {
   test("PKG-4: the core migrations directory is inside the published package", () => {
     expect(CORE_MIGRATIONS_DIR).toContain("migrations")
     expect(collectMigrations({})[0]?.sql).toContain("ob_people")
+  })
+
+  // Also a harness requirement. PostgREST caches the schema, so a table it
+  // has never served is a 404 until it reloads. This is the cold start that
+  // a fresh database, or a newly added migration, hits.
+  test("the schema is only handed over once PostgREST serves it", async () => {
+    const rest = localSupabase()
+    const served = async (): Promise<boolean> => {
+      const { error } = await rest.from("ob_people").select("*").limit(1)
+      return error === null
+    }
+
+    // Make PostgREST forget the table first, so the wait has something to do.
+    await dropAllTables(sql())
+    await sql().unsafe("notify pgrst, 'reload schema'")
+    const giveUp = Date.now() + 30_000
+    while (await served()) {
+      if (Date.now() > giveUp) throw new Error("PostgREST never forgot ob_people")
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    await ensureSchema(sql())
+
+    // No sleep here, on purpose. That it is already served is the claim.
+    expect(await served()).toBe(true)
+  })
+
+  test("waiting for PostgREST gives up and names the table, rather than hanging", async () => {
+    const waiting = waitForRest(["ob_not_a_table_at_all"], 300)
+
+    await expect(waiting).rejects.toThrow("ob_not_a_table_at_all")
+  })
+
+  // Not a Spec requirement but a harness one. The schema is applied once for
+  // the whole test run, so a file that drops it has to say so, or every file
+  // after this one would look for tables that are no longer there.
+  test("dropping the schema makes the shared one get built again", async () => {
+    await ensureSchema(sql())
+    await dropAllTables(sql())
+
+    await ensureSchema(sql())
+
+    expect(await tableNames(sql())).toContain("ob_people")
   })
 })

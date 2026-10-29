@@ -9,10 +9,9 @@
 // No brain is called here, so no key and no network are needed. What is
 // proven is that the command starts, reads what is typed, answers, and
 // exits.
-import { test, expect, beforeAll } from "bun:test"
+import { test, expect } from "bun:test"
 import { join } from "node:path"
-import { describeDatabase, localApiKey, LOCAL_SUPABASE_URL, resetDatabase } from "../support/db.ts"
-import { migrate } from "../../src/migrate/index.ts"
+import { describeDatabase, localApiKey, LOCAL_SUPABASE_URL } from "../support/db.ts"
 import { envOr } from "../../src/env.ts"
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..")
@@ -46,14 +45,7 @@ async function chat(
   return { code, out, err }
 }
 
-describeDatabase("the openbox chat executable", (sql) => {
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await resetDatabase(sql())
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
-
+describeDatabase("the openbox chat executable", () => {
   test("SKILL-6: it starts against the demo agent and leaves on :quit", async () => {
     const { code, out, err } = await chat([":quit"])
 

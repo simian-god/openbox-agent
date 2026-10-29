@@ -4,11 +4,10 @@
 // The brain here is scripted to do the wrong thing on purpose, because
 // that is the only way to prove the tool is what refuses. A test where the
 // brain behaves itself proves nothing about who is holding the line.
-import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
+import { test, expect, describe, beforeEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { defineTool } from "../../src/tools/index.ts"
@@ -115,12 +114,6 @@ describeDatabase("time on a real turn", (sql) => {
   let sender: FakeSender
   // Monday 19 October 2026, 11:30 in Kolkata.
   const clock = fixedClock("2026-10-19T06:00:00Z")
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

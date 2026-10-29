@@ -13,11 +13,10 @@
 // The send rules in PRO-3, which are quiet hours, the opt out and the
 // channel window, are T7.2. What is here is the two ways a proactive
 // message is made and the three reasons one is dropped.
-import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
+import { test, expect, describe, beforeEach } from "bun:test"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions } from "../../src/runtime/index.ts"
 import { PROACTIVE_JOB } from "../../src/runtime/proactive.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
@@ -83,12 +82,6 @@ const bookTable = defineTool({
 describeDatabase("proactive messages", (sql) => {
   const clock = fixedClock("2026-10-19T06:00:00Z")
   let sender: FakeSender
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

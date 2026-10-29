@@ -7,11 +7,10 @@
 //
 // Nothing here sleeps. A brain held on a gate makes "the turn is still
 // running" an exact statement rather than a race.
-import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { BRAINS_FAILED_REPLY } from "../../src/runtime/limits.ts"
 import { PERSON_TOLD } from "../../src/runtime/handover.ts"
@@ -94,12 +93,6 @@ function gatedBrain(opened: Promise<void>, text = "We open at 11."): Brain {
 describeDatabase("receive", (sql) => {
   let sender: FakeSender
   const clock = fixedClock("2026-10-19T06:00:00Z")
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

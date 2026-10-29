@@ -3,12 +3,11 @@
 // These are the tests that have to hold for two processes, not one, so most
 // of them build a second agent against the same database and make the two
 // compete. Nothing sleeps where a gate will do.
-import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
 import { check } from "../support/waiting.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { createLeases, FREE, type Agent, type Deps } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { scriptedBrain, type ScriptedBrain } from "../../src/testing/scripted-brain.ts"
@@ -81,12 +80,6 @@ function gatedBrain(opened: Promise<void>, text = "We open at 11."): Brain {
 
 describeDatabase("the worker", (sql) => {
   let sender: FakeSender
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

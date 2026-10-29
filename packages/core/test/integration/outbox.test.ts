@@ -4,12 +4,11 @@
 // one is the interesting one: a send that threw may already have arrived,
 // so it is `unknown` rather than failed, and saying it again is worse than
 // not knowing.
-import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
 import { check } from "../support/waiting.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { backoffMs, type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { scriptedBrain } from "../../src/testing/scripted-brain.ts"
@@ -73,12 +72,6 @@ function scriptedSender(
 }
 
 describeDatabase("the outbox", (sql) => {
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
-
   beforeEach(async () => {
     await resetDatabase(sql())
   })

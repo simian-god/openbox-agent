@@ -3,11 +3,10 @@
 // The sweep is the one that matters. It closes the last way a message can
 // be lost outright: a process killed mid turn leaves the messages it had
 // taken marked `merged`, and nothing else ever looks at those.
-import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import {
   replyKey,
   FREE,
@@ -51,12 +50,6 @@ function config(over: Record<string, unknown> = {}): OpenboxConfig {
 
 describeDatabase("the job loop", (sql) => {
   let sender: FakeSender
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())
@@ -325,12 +318,6 @@ async function agent_count(agent: Agent, status: string): Promise<number> {
 
 describeDatabase("the recovery sweep", (sql) => {
   let sender: FakeSender
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

@@ -10,11 +10,10 @@
 // This file is about the claims as a whole, and above all about the one
 // that cannot be checked a piece at a time: two processes, one database,
 // and nobody handled twice.
-import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { systemClock } from "../../src/testing/clock.ts"
@@ -113,12 +112,6 @@ function scriptedSender(
 }
 
 describeDatabase("C13: messy delivery", (sql) => {
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
-
   beforeEach(async () => {
     await resetDatabase(sql())
   })

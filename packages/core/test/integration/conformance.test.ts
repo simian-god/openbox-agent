@@ -11,9 +11,8 @@
 // answers: they read the conversation and decide. A positional script
 // would pass by luck the moment the suite asked one more question, which
 // is the opposite of what this file is for.
-import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeEach } from "bun:test"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import {
   conformanceConfig,
   runConformance,
@@ -154,12 +153,6 @@ function structuredHost(id: string): Brain {
 }
 
 describeDatabase("the conformance suite", (sql) => {
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
-
   beforeEach(async () => {
     await resetDatabase(sql())
   })

@@ -6,10 +6,9 @@
 // and its reference is, that the language reaches the person's row, and
 // that a voice note nobody could hear still gets an answer rather than
 // costing the person their turn.
-import { test, expect, describe, beforeAll, beforeEach } from "bun:test"
+import { test, expect, describe, beforeEach } from "bun:test"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { replyKey, type Agent, type AgentOptions } from "../../src/runtime/index.ts"
 import { CANNOT_READ_IMAGES_REPLY, TYPE_INSTEAD_REPLY } from "../../src/runtime/media.ts"
 import { WANTS_HUMAN } from "../../src/runtime/handover.ts"
@@ -75,12 +74,6 @@ const deaf: Transcriber = {
 describeDatabase("a voice note", (sql) => {
   const clock = fixedClock(NOW)
   let sender: FakeSender
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())

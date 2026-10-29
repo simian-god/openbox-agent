@@ -17,7 +17,7 @@
 // duplicate paths against the real database, with the client's errors
 // rewritten into the shape the shim reports, so the core cannot quietly go
 // back to depending on a Postgres error code.
-import { test, expect, beforeAll, beforeEach } from "bun:test"
+import { test, expect, beforeEach } from "bun:test"
 import { scriptedDecisionModel } from "../../src/testing/scripted-decision.ts"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -25,7 +25,6 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
 import { code, tsFiles } from "../support/source.ts"
-import { migrate } from "../../src/migrate/index.ts"
 import { type Agent, type AgentOptions, type Deps } from "../../src/runtime/index.ts"
 import { defineConfig, type OpenboxConfig } from "../../src/config/index.ts"
 import { isUniqueViolation, StoreError } from "../../src/store/index.ts"
@@ -148,12 +147,6 @@ test("the error shapes both engines produce are read as duplicates", () => {
 
 describeDatabase("the core under a client with no SQLSTATE", (sql) => {
   let sender: FakeSender
-
-  beforeAll(async () => {
-    await migrate({ sql: sql() })
-    await sql().unsafe("notify pgrst, 'reload schema'")
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-  })
 
   beforeEach(async () => {
     await resetDatabase(sql())
