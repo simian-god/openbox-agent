@@ -167,6 +167,11 @@ export function terminalChannel(options: TerminalChannelOptions): TerminalChanne
       const tools = agent.tools.all().length
       io.write(`openbox chat - ${agent.config.name}\n`)
       io.write(`${tools} tool${tools === 1 ? "" : "s"} loaded.\n`)
+      // Things that are not errors but that a builder would rather know,
+      // such as LEARN-3's digest being switched off for want of a
+      // channel. The core collects them; this is where a builder sees
+      // them.
+      for (const notice of agent.notices) io.write(`Note: ${notice}\n`)
       io.write("Type a message and press enter. :help for commands, :quit to leave.\n\n")
 
       for await (const line of io.lines()) {

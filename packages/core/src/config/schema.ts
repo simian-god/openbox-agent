@@ -182,6 +182,15 @@ const LEARNING = z
      * not yet angry.
      */
     frustrationThreshold: z.number().min(0).max(2).default(1.5),
+    /**
+     * LEARN-3: which day the digest goes out, in the agent's timezone.
+     *
+     * Named the way `hours` names days, so a builder writing config sees
+     * one spelling of Monday rather than two.
+     */
+    digestDay: z.enum(["sun", "mon", "tue", "wed", "thu", "fri", "sat"]).default("mon"),
+    /** LEARN-3: the hour of that day, 0 to 23. The Spec's own is 09:00. */
+    digestHour: z.number().int().min(0).max(23).default(9),
   })
   .strict()
 

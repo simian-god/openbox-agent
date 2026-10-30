@@ -96,11 +96,34 @@ export interface Compare {
   isIn?: Record<string, (string | number)[]> | undefined
 }
 
+/**
+ * The narrowing methods every PostgREST query builder shares.
+ *
+ * Structural on purpose: a select, an update and a head count all return
+ * different builder types, and this is the part of them `applyCompare`
+ * touches. Naming the union of the three adds nothing a reader wants.
+ */
+interface Narrowing {
+  lt(column: string, value: never): Narrowing
+  lte(column: string, value: never): Narrowing
+  gt(column: string, value: never): Narrowing
+  gte(column: string, value: never): Narrowing
+  neq(column: string, value: never): Narrowing
+  is(column: string, value: never): Narrowing
+  in(column: string, values: never): Narrowing
+}
+
 export interface TableStore<Row> {
   /** Rows matching `where`, always within this agent. */
   list(
     where?: Where,
-    options?: { limit?: number; orderBy?: string; ascending?: boolean },
+    options?: {
+      limit?: number
+      orderBy?: string
+      ascending?: boolean
+      /** DATA-4's comparisons, for a window a `Where` cannot express. */
+      range?: Compare | undefined
+    },
   ): Promise<Row[]>
   /** The first matching row, or null. */
   find(where: Where): Promise<Row | null>
@@ -114,7 +137,7 @@ export interface TableStore<Row> {
    */
   update(where: Where, patch: Record<string, unknown>, compare?: Compare): Promise<Row[]>
   remove(where: Where): Promise<void>
-  count(where?: Where): Promise<number>
+  count(where?: Where, range?: Compare): Promise<number>
 }
 
 export interface Store {
@@ -164,9 +187,47 @@ export function createStore(db: SupabaseClient, agentId: string): Store {
 
     const base = () => db.from(name)
 
+    /**
+     * DATA-4's comparisons, applied to any query.
+     *
+     * Shared between `update`, `list` and `count` so a read narrows a
+     * range exactly as a conditional write does. It was inline in
+     * `update` until LEARN-3 needed to read one week and the week before
+     * it: without this a caller had to read everything and filter in
+     * memory, where a `limit` quietly truncates whatever it is counting.
+     */
+    const applyCompare = <Q>(query: Q, compare?: Compare): Q => {
+      let out = query as Narrowing
+      for (const [column, value] of Object.entries(compare?.lt ?? {})) {
+        out = out.lt(column, value as never)
+      }
+      for (const [column, value] of Object.entries(compare?.lte ?? {})) {
+        out = out.lte(column, value as never)
+      }
+      for (const [column, value] of Object.entries(compare?.gt ?? {})) {
+        out = out.gt(column, value as never)
+      }
+      for (const [column, value] of Object.entries(compare?.gte ?? {})) {
+        out = out.gte(column, value as never)
+      }
+      for (const [column, value] of Object.entries(compare?.neq ?? {})) {
+        out = out.neq(column, value as never)
+      }
+      for (const [column, value] of Object.entries(compare?.is ?? {})) {
+        out = out.is(column, value as never)
+      }
+      for (const [column, values] of Object.entries(compare?.isIn ?? {})) {
+        out = out.in(column, values as never)
+      }
+      return out as Q
+    }
+
     return {
       async list(where = {}, options = {}) {
-        let query = applyWhere(base().select("*").eq("agent_id", agentId), where)
+        let query = applyCompare(
+          applyWhere(base().select("*").eq("agent_id", agentId), where),
+          options.range,
+        )
         if (options.orderBy !== undefined) {
           query = query.order(options.orderBy, { ascending: options.ascending ?? true })
         }
@@ -243,10 +304,13 @@ export function createStore(db: SupabaseClient, agentId: string): Store {
         if (error) throw new StoreError(name, "delete", error)
       },
 
-      async count(where = {}) {
-        const query = applyWhere(
-          base().select("*", { count: "exact", head: true }).eq("agent_id", agentId),
-          where,
+      async count(where = {}, range) {
+        const query = applyCompare(
+          applyWhere(
+            base().select("*", { count: "exact", head: true }).eq("agent_id", agentId),
+            where,
+          ),
+          range,
         )
         const { count, error } = await query
         if (error) throw new StoreError(name, "count", error)

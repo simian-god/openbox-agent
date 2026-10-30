@@ -55,6 +55,18 @@ describeDatabase("the openbox chat executable", () => {
     expect(out).toContain("1 tool loaded")
   }, 60_000)
 
+  // LEARN-3: the builder's choice was that no builderChannel means no
+  // digest, said out loud rather than refused or passed over in silence.
+  // The demo agent sets no channel, so this is where "said out loud"
+  // either reaches a builder or does not.
+  test("LEARN-3: it says that no digest will be sent, since the demo sets no channel", async () => {
+    const { code, out } = await chat([":quit"])
+
+    expect(code).toBe(0)
+    expect(out).toContain("builderChannel")
+    expect(out).toContain("digest")
+  }, 60_000)
+
   test("SKILL-6: it answers the commands typed into it", async () => {
     const { code, out } = await chat([":help", ":version", ":quit"])
 

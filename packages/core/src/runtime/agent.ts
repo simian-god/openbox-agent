@@ -41,6 +41,7 @@ import {
   HANDOVER_WAITING_JOB,
   type Handovers,
 } from "./handover.ts"
+import { createDigests, DIGEST_JOB } from "./digest.ts"
 import { createJobs, type Jobs } from "./jobs.ts"
 import { createOutbox, type Outbox } from "./outbox.ts"
 import {
@@ -235,6 +236,16 @@ export interface Agent {
    * conversation, which the brain writes from the event and its data.
    */
   trigger(request: TriggerRequest): Promise<Scheduled>
+  /**
+   * Things a builder should know that are not errors.
+   *
+   * A config that cannot work stops the agent being built. This is for
+   * the other kind: a config that works and leaves something switched
+   * off, where the only bad outcome is not knowing. LEARN-3's digest with
+   * no `builderChannel` is the first of them. The CLI prints these on
+   * startup; a host embedding the core can read them wherever it likes.
+   */
+  readonly notices: readonly string[]
   /** Starts the worker (LOOP-2). Nothing is handled here until it runs. */
   start(): void
   /** Stops it, finishing the turns in flight and giving up every lease. */
@@ -858,6 +869,21 @@ export function createAgent(options: AgentOptions): Agent {
     await proactive.run(job)
   })
 
+  // LEARN-3: the weekly digest.
+  const digests = createDigests({ config, store, clock, jobs, sender: deps.sender })
+
+  jobs.on(DIGEST_JOB, async (job) => {
+    await digests.run(job)
+  })
+
+  const notices: string[] = []
+  if (config.builderChannel === undefined) {
+    notices.push(
+      "No builderChannel is set, so no weekly digest will be sent (LEARN-3). " +
+        "Set builderChannel in config to get one.",
+    )
+  }
+
   /**
    * CONF-2 and CONF-8: what the brain is told about a confirmation the core
    * already resolved.
@@ -989,11 +1015,21 @@ export function createAgent(options: AgentOptions): Agent {
 
     trigger: (request) => proactive.trigger(request),
 
+    notices,
+
     start(): void {
       // KNOW-1: at start. Not awaited, because `start()` returns nothing
       // and a deploy should not block on reading documents; a search that
       // arrives first waits for the same promise.
       void indexKnowledge()
+      // LEARN-3: book the next digest. Deduped on the instant it is due,
+      // so every restart books the same one and a chain broken by a
+      // failed week heals on the next deploy. The handler books the one
+      // after, which is what keeps a process that never restarts going.
+      // Not awaited, for the same reason as the knowledge index.
+      void digests.schedule().catch((error: unknown) => {
+        options.onWorkerError?.(error)
+      })
       worker.start()
       outbox.pump.start()
       jobs.pump.start()

@@ -90,6 +90,71 @@ describeDatabase("the store", (sql) => {
     expect(rows.map((row) => row.channel_user_id)).toEqual(["order-b", "order-a"])
   })
 
+  // LEARN-3 needs a week of rows and the week before it, which equality
+  // filters cannot express. `update` has had these comparisons since
+  // DATA-4; reading was the half that could not use them, so a caller
+  // wanting a date range had to read everything and filter in memory,
+  // where a limit silently truncates the numbers a digest reports.
+  test("DATA-1: a range reads one window of rows, not everything", async () => {
+    for (const day of ["2026-10-01", "2026-10-08", "2026-10-15"]) {
+      await restaurant.events.insert({
+        name: "turn_started",
+        props: {},
+        created_at: `${day}T00:00:00Z`,
+      })
+    }
+
+    const window = await restaurant.events.list(
+      {},
+      {
+        range: {
+          gte: { created_at: "2026-10-05T00:00:00Z" },
+          lt: { created_at: "2026-10-12T00:00:00Z" },
+        },
+      },
+    )
+
+    expect(window).toHaveLength(1)
+    expect(window[0]?.created_at.startsWith("2026-10-08")).toBe(true)
+  })
+
+  test("DATA-1: a range counts one window too, without reading the rows", async () => {
+    for (const day of ["2026-10-01", "2026-10-08", "2026-10-09"]) {
+      await restaurant.events.insert({
+        name: "turn_started",
+        props: {},
+        created_at: `${day}T00:00:00Z`,
+      })
+    }
+
+    const inWindow = await restaurant.events.count(
+      {},
+      { gte: { created_at: "2026-10-05T00:00:00Z" } },
+    )
+
+    expect(inWindow).toBe(2)
+  })
+
+  test("DATA-1: a range stays inside the agent, like every other read", async () => {
+    await restaurant.events.insert({
+      name: "turn_started",
+      props: {},
+      created_at: "2026-10-08T00:00:00Z",
+    })
+    await dentist.events.insert({
+      name: "turn_started",
+      props: {},
+      created_at: "2026-10-08T00:00:00Z",
+    })
+
+    const mine = await dentist.events.list(
+      {},
+      { range: { gte: { created_at: "2026-10-01T00:00:00Z" } } },
+    )
+
+    expect(mine).toHaveLength(1)
+  })
+
   test("DATA-1: the store reports a failed query rather than returning nothing", async () => {
     const broken = createStore(localSupabase("service_role"), "restaurant")
     let message = ""
