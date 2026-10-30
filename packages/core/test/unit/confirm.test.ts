@@ -16,6 +16,9 @@ import {
   payloadIsValid,
   argsHash,
   newCode,
+  shortId,
+  longId,
+  MAX_PAYLOAD_BYTES,
   PAYLOAD_PREFIX,
   CANCEL_WORD,
 } from "../../src/runtime/confirm.ts"
@@ -32,8 +35,52 @@ describe("CONF-3: the button payloads", () => {
     expect(parts).toHaveLength(4)
     expect(parts[0]).toBe(PAYLOAD_PREFIX)
     expect(parts[1]).toBe("c")
-    expect(parts[2]).toBe(ACTION)
+    // The action id in short form, which is what a 64 byte button can
+    // carry. Read back, it is the id again.
+    expect(parts[2]).toBe(shortId(ACTION))
+    expect(parsePayload(payload)?.actionId).toBe(ACTION)
     expect(parts[3]).toMatch(/^[0-9a-f]{32}$/)
+  })
+
+  // T10.4 found this against Telegram's own docs: an inline button carries
+  // 1 to 64 bytes of hidden data, and the payload was 75. Everything else
+  // we ship glue for is roomier (Discord allows 100), so the tightest
+  // channel is the one the format has to fit.
+  test("CONF-3: a payload fits the tightest button we ship glue for", () => {
+    const payload = buttonPayload("c", ACTION, PERSON, SECRET)
+
+    expect(MAX_PAYLOAD_BYTES).toBe(64)
+    expect(Buffer.byteLength(payload, "utf8")).toBeLessThanOrEqual(MAX_PAYLOAD_BYTES)
+    // Both verbs, since Cancel is the one nobody checks.
+    expect(
+      Buffer.byteLength(buttonPayload("x", ACTION, PERSON, SECRET), "utf8"),
+    ).toBeLessThanOrEqual(MAX_PAYLOAD_BYTES)
+  })
+
+  test("CONF-3: the short form is the same 16 bytes, written shorter", () => {
+    expect(shortId(ACTION)).toHaveLength(22)
+    expect(longId(shortId(ACTION))).toBe(ACTION)
+    // Anything that is not an id is left exactly as it is, so a payload
+    // built from something odd still parses the way it used to.
+    expect(shortId("")).toBe("")
+    expect(shortId("42")).toBe("42")
+    expect(longId("not-a-short-id")).toBe("not-a-short-id")
+  })
+
+  test("CONF-3: a payload carrying the id in full is still read", () => {
+    // So a button somebody was sent before an upgrade still works. The
+    // signature is over the id either way, so this is a spelling of the
+    // same authorisation and not a second way in.
+    const long = [
+      PAYLOAD_PREFIX,
+      "c",
+      ACTION,
+      buttonPayload("c", ACTION, PERSON, SECRET).split(".")[3],
+    ].join(".")
+    const parsed = parsePayload(long)
+
+    expect(parsed?.actionId).toBe(ACTION)
+    expect(payloadIsValid(parsed!, PERSON, SECRET)).toBe(true)
   })
 
   test("CONF-3: Confirm and Cancel are different payloads", () => {
@@ -58,8 +105,13 @@ describe("CONF-3: the button payloads", () => {
 
   test("CONF-3: the action id cannot be changed without breaking the signature", () => {
     const payload = buttonPayload("c", ACTION, PERSON, SECRET)
-    const forged = payload.replace(ACTION, "00000000-0000-0000-0000-000000000000")
+    const other = "00000000-0000-0000-0000-000000000000"
+    // The payload carries the id in short form, so that is what an
+    // attacker would be editing.
+    const forged = payload.replace(shortId(ACTION), shortId(other))
 
+    expect(forged).not.toBe(payload)
+    expect(parsePayload(forged)?.actionId).toBe(other)
     expect(payloadIsValid(parsePayload(forged)!, PERSON, SECRET)).toBe(false)
   })
 

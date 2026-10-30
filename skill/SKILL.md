@@ -107,8 +107,12 @@ least 5 `should` and 5 `shouldNot` example messages. The channel glue
 covers the end user channel and the operator channel, with confirm buttons
 where the channel has them.
 
-Start from `templates/`, which has a config, a tool, a migration, a seed
-and a `main.ts` already written. Each one carries its own holes, marked
+Start from `templates/`, which has a config, a tool, a migration, a seed,
+a `main.ts` and the channel glue already written. `templates/channels/`
+covers WhatsApp Cloud API, Telegram, Discord, a generic web webhook and
+the terminal, each with its own webhook verification, its tap handling
+and honest `capabilities`. Copy the ones this agent serves and delete the
+rest. Each one carries its own holes, marked
 `{{like_this}}` in a comment next to a sample the skill replaces. Four
 values in the config template are deliberately impossible, so an agent
 whose privacy round was skipped refuses to start rather than running on

@@ -63,14 +63,73 @@ function signature(verb: Verb, actionId: string, personId: string, secret: strin
     .slice(0, 32)
 }
 
-/** CONF-3: `ob1.<verb>.<actionId>.<signature>`. */
+/**
+ * The smallest hidden payload a button we ship glue for can carry.
+ *
+ * Telegram's own docs say an inline button's `callback_data` is 1 to 64
+ * bytes, which is the tightest of the four channels: Discord allows 100
+ * and WhatsApp is roomier still. T10.4 found the payload was 75, so a
+ * Telegram confirm button could not be built at all.
+ */
+export const MAX_PAYLOAD_BYTES = 64
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const SHORT_ID = /^[A-Za-z0-9_-]{22}$/
+
+/**
+ * CONF-3: an action id written as 22 characters rather than 36.
+ *
+ * The same sixteen bytes, in base64url instead of hex with dashes. That
+ * is what brings the payload to 61 bytes and inside Telegram's limit,
+ * with the signature untouched: nothing is given up here, it is only
+ * spelled shorter.
+ *
+ * Anything that is not an id is handed back exactly as it came, so a
+ * payload built from something odd parses the way it always did.
+ */
+export function shortId(id: string): string {
+  if (!UUID.test(id)) return id
+  return Buffer.from(id.replace(/-/g, ""), "hex").toString("base64url")
+}
+
+/** The other direction, for reading a payload. */
+export function longId(short: string): string {
+  if (!SHORT_ID.test(short)) return short
+  const hex = Buffer.from(short, "base64url").toString("hex")
+  if (hex.length !== 32) return short
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-")
+}
+
+/**
+ * CONF-3: `ob1.<verb>.<actionId>.<signature>`, with the action id in
+ * short form.
+ *
+ * The signature is over the id itself, never over the short form, so a
+ * payload carrying the id in full is the same authorisation written out
+ * differently and `parsePayload` reads both. 22 base64url characters hold
+ * four bits more than sixteen bytes need, so a handful of different short
+ * forms decode to the same id: they are the same action, confirmed by the
+ * same person, and CONF-5 already decides what happens when one action is
+ * resolved twice.
+ */
 export function buttonPayload(
   verb: Verb,
   actionId: string,
   personId: string,
   secret: string,
 ): string {
-  return [PAYLOAD_PREFIX, verb, actionId, signature(verb, actionId, personId, secret)].join(".")
+  return [
+    PAYLOAD_PREFIX,
+    verb,
+    shortId(actionId),
+    signature(verb, actionId, personId, secret),
+  ].join(".")
 }
 
 export interface ParsedPayload {
@@ -87,7 +146,9 @@ export function parsePayload(text: string): ParsedPayload | null {
   if (prefix !== PAYLOAD_PREFIX) return null
   if (verb !== "c" && verb !== "x") return null
   if (actionId === undefined || actionId === "" || sig === undefined || sig === "") return null
-  return { verb, actionId, signature: sig }
+  // Back to the id itself, so everything downstream, the signature check
+  // and the row lookup included, works on one shape.
+  return { verb, actionId: longId(actionId), signature: sig }
 }
 
 /**

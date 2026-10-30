@@ -16,8 +16,11 @@ Built in M10.
   `db/migrations/0001_agent.sql`, `db/seed.ts` and `main.ts`. They parse,
   the migration applies for real with row level security on, and the
   config refuses to start until the builder's own numbers are in it.
-- `templates/channels/` - WhatsApp, Telegram, Discord, web and terminal
-  glue. T10.4.
+- `templates/channels/` - built at T10.4. WhatsApp Cloud API, Telegram
+  Bot API, Discord, a generic web webhook and the terminal. Each verifies
+  its own webhook the way that channel documents, maps both shapes a tap
+  can arrive in, and answers `capabilities` honestly rather than
+  hopefully.
 
 `install/` links this directory into `~/.claude/skills/openboxagent` and
 `~/.codex/skills/openboxagent` (REL-3).
