@@ -107,9 +107,17 @@ least 5 `should` and 5 `shouldNot` example messages. The channel glue
 covers the end user channel and the operator channel, with confirm buttons
 where the channel has them.
 
-`prompt.md` uses the template's headings in the template's order, with
-every hole filled from the builder's own answers. Every migration switches
-row level security on.
+Start from `templates/`, which has a config, a tool, a migration, a seed
+and a `main.ts` already written. Each one carries its own holes, marked
+`{{like_this}}` in a comment next to a sample the skill replaces. Four
+values in the config template are deliberately impossible, so an agent
+whose privacy round was skipped refuses to start rather than running on
+numbers nobody chose.
+
+`prompt.md` uses the prompt template's headings in its order, with every
+hole filled from the builder's own answers. Every migration switches row
+level security on, in the same file that creates the table, or
+`openbox migrate` refuses to finish (DATA-5).
 
 ### 5. Run the checklist
 

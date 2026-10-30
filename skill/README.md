@@ -12,8 +12,10 @@ Built in M10.
 - `SKILL.md` - built at T10.2. The six commands, the grilling dependency
   check, the `new` flow step by step, and the personal data round that
   runs before any config is written.
-- `templates/` - config, tool, migration, seed and `main.ts` starting
-  points. T10.3.
+- `templates/` - built at T10.3. `agent.config.ts`, `tools/tool.ts`,
+  `db/migrations/0001_agent.sql`, `db/seed.ts` and `main.ts`. They parse,
+  the migration applies for real with row level security on, and the
+  config refuses to start until the builder's own numbers are in it.
 - `templates/channels/` - WhatsApp, Telegram, Discord, web and terminal
   glue. T10.4.
 

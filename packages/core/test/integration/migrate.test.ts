@@ -346,6 +346,45 @@ describeDatabase("migrations", (sql) => {
     await expect(waiting).rejects.toThrow("ob_not_a_table_at_all")
   })
 
+  // The skill's own migration template, applied for real. The unit tests
+  // on it can only read what it says; this is the one that proves it
+  // runs, that `migrate` accepts it, and that a builder's first
+  // `openbox migrate` works rather than failing on DATA-6.
+  test("DATA-5: the skill's migration template applies, with security on", async () => {
+    const dir = join(
+      import.meta.dir,
+      "..",
+      "..",
+      "..",
+      "..",
+      "skill",
+      "templates",
+      "db",
+      "migrations",
+    )
+    // Applied on top of the shared schema rather than after emptying it.
+    // The core migrations are already recorded, so only the agent's one
+    // runs, and the whole test costs one table instead of a rebuild of
+    // every table in the database.
+    await ensureSchema(sql())
+    try {
+      const result = await migrate({ sql: sql(), agentMigrationsDir: dir })
+
+      expect(result.applied).toContain("agent/0001_agent.sql")
+      // DATA-6 would have thrown before this line if the template had
+      // left security off, which is the probe for this test.
+      expect(await tablesWithoutRls(sql())).toEqual([])
+      expect(await tableNames(sql())).toContain("agent_records")
+      expect(await columnsOf(sql(), "agent_records")).toContain("agent_id")
+    } finally {
+      // The template's table is not part of the shared schema, so it goes
+      // again, along with the row that says it was applied. Otherwise the
+      // next run of this test would skip the migration it is about.
+      await sql().unsafe("drop table if exists agent_records")
+      await sql()`delete from ob_migrations where name = ${"agent/0001_agent.sql"}`
+    }
+  })
+
   // Not a Spec requirement but a harness one. The schema is applied once for
   // the whole test run, so a file that drops it has to say so, or every file
   // after this one would look for tables that are no longer there.
