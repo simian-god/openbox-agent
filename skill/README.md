@@ -9,8 +9,9 @@ Built in M10.
   `checklist.md` is SKILL-9's checks, each with how to check it and what
   makes it fail. `prompt-template.md` is SKILL-8's ten headings. Every
   command reads the first two before it writes anything (SKILL-2).
-- `SKILL.md` - the commands: `new`, `add-tool`, `swap`, `chat`, `review`,
-  `tune`. T10.2.
+- `SKILL.md` - built at T10.2. The six commands, the grilling dependency
+  check, the `new` flow step by step, and the personal data round that
+  runs before any config is written.
 - `templates/` - config, tool, migration, seed and `main.ts` starting
   points. T10.3.
 - `templates/channels/` - WhatsApp, Telegram, Discord, web and terminal
