@@ -432,7 +432,7 @@ defineTool({
 
 **GATE-3.** Two blocks in a row, or two routing picks below the threshold in a row, for the same person is a handover trigger.
 
-**GATE-4.** If the decision model fails, the gate fails closed. A `write` call is treated as Confirm. An `irreversible` call still needs a structured confirm, which never depends on the decision model.
+**GATE-4.** If the decision model fails, the gate fails closed. A `write` call is treated as Confirm. An `irreversible` call still needs a structured confirm, which never depends on the decision model. So an outage does not refuse an irreversible call, it puts it to the person: the pending action is created and the confirm message is sent, exactly as on a confident yes (CONF-1). A `write` is different because its Confirm is the brain asking in words, which needs no pending action.
 
 **GATE-5.** `read` tools are never gated. Reading at the wrong moment is harmless, and role filtering (ROLE-3) already controls who can read what.
 
@@ -440,7 +440,7 @@ defineTool({
 
 ## 9. Structured confirmation (G9)
 
-**CONF-1.** Passing the gate on an `irreversible` call creates a pending action. It holds the tool, its arguments, a hash of those arguments, the `confirmSummary` text, a random 4 digit code, the person, the active task, and an expiry 15 minutes *(default)* out.
+**CONF-1.** An `irreversible` call the gate did not block creates a pending action. That is a call the gate passed, and also one the gate could not answer at all, because the gate's answer was never what authorised an irreversible call and the structured confirm GATE-4 asks for never depended on the decision model. It holds the tool, its arguments, a hash of those arguments, the `confirmSummary` text, a random 4 digit code, the person, the active task, and an expiry 15 minutes *(default)* out.
 
 **CONF-2.** The core sends the confirm message itself, not the brain: the summary, plus a Confirm and a Cancel button when the channel has buttons, or "Reply <code> to confirm" when it doesn't. The brain is told a confirmation was requested and must not say the action is done.
 

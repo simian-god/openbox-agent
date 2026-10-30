@@ -753,3 +753,63 @@ would close K28, plus one opt-in live test that indexes three chunks and
 checks the right one wins a real question. For the second, a sqlite-vec
 retriever in evals-agent's world, which belongs there rather than here, and
 the Spec section 23 line about it should stay open until somebody has looked.
+
+---
+
+## K30. A turn that fails in a way nothing planned for tells the person nothing
+
+**Status:** open, needs a decision from the builder. Found by T9.4's failure
+sweep.
+
+**What happens.** C19 promises two things when something outside fails: no
+message is lost, and the person always gets an answer or the holding message.
+Every failure C19 names clears both. Every brain down gives the holding
+message, a decision model outage still answers, a tool error goes back to the
+brain, and a sender that is down leaves the answer written down and retried.
+
+There is one more way a turn can end, and it clears the first promise only. If
+something throws where the core had no plan for a throw, the turn ends
+`failed`. The inbox row stays `failed` and linked to that turn, so it is
+findable. `onTurnError` fires, so a builder watching will hear. The person is
+told nothing at all, and nothing books a second attempt: LOOP-12's holding
+message is written for the two outcomes the Spec names, every brain failing
+and the step cap, and the recovery sweep looks for turns that were abandoned
+by a dead process rather than turns that failed in a live one.
+
+So from where the person sits, they wrote and nobody ever replied.
+
+**What it costs.** Less than it sounds, and more than nothing. Nothing in the
+four dependencies C19 names reaches this path: they are all handled inside the
+turn, which is the whole point of the sweep. What reaches it is a bug, in the
+core or in a channel adapter a builder wrote, and the sweep's own case for it
+is exactly that: a `Sender` whose `capabilities` throws. A deterministic bug
+of that kind would silence every message from everybody, which is loud enough
+to notice. A bug that fires on one message in a thousand is the bad case: one
+person is never answered and nothing says so except a row and an event.
+
+**What we did.** Pinned today's behaviour in a test rather than wishing it
+away, in `test/integration/sweep.test.ts`, named as where C19's second half
+stops. The test asserts the row stays findable, the caller gets a clean
+return, and nothing was written for the person, so a fix shows up as a failing
+test instead of going unnoticed.
+
+**What would resolve it.** A decision from the builder, because it is a change
+to the Spec either way. Three options, in rising cost:
+
+1. Widen LOOP-12's holding message to a failed turn as well. One line of
+   config-free code, and the person hears "we will get back to you" whatever
+   went wrong. The cost is that a bug now sends a message, so a bug that fires
+   on every turn sends one to everybody, and the holding message promises a
+   colleague who has to exist.
+2. The same, plus a handover, which is what the other two unanswered outcomes
+   already do. More honest, because the promise then has an owner and HAND-6's
+   clock, and more expensive, because every such bug opens handovers.
+3. Retry it once before giving up, by leaving the row `pending` rather than
+   `failed` on the first failure. Closest to "no message is lost" in spirit
+   and the riskiest, because a turn that failed halfway may already have run a
+   tool, and LOOP-8 has no way to know how far it got.
+
+My recommendation when it comes up is 2, on the grounds that the other two
+unanswered outcomes already do exactly that and this is the same situation
+from the person's side. It is not urgent: nothing a dependency does reaches
+it.

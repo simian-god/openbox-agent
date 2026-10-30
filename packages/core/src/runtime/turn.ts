@@ -695,11 +695,22 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     }
 
     if (decision.outcome !== "run") {
-      // CONF-1: an irreversible call that passed the gate becomes a
+      // CONF-1: an irreversible call the gate did not block becomes a
       // pending action, and the core asks the person itself. Everything
       // else that is not run is simply reported back to the brain.
+      //
+      // GATE-4's second half is why `failed_closed` is here beside
+      // `needs_confirm`. The gate's answer was never what authorised an
+      // irreversible call: the person's own signed confirm is, and that
+      // path never touches the decision model. So an outage must not turn
+      // a booking into a refusal, which is what it did until the T9.4
+      // sweep asked. The builder's decision on 2026-10-30, with CONF-1
+      // reworded from "passing the gate" to "the gate did not block".
+      const putToThePerson =
+        decision.reason === "needs_confirm" ||
+        (decision.reason === "failed_closed" && tool.risk === "irreversible")
       let pending: PendingActionRow | undefined
-      if (decision.reason === "needs_confirm" && input.confirm !== undefined) {
+      if (putToThePerson && input.confirm !== undefined) {
         pending = await input.confirm.create({
           person,
           turnId,

@@ -397,15 +397,24 @@ describeDatabase("the send rules", (sql) => {
     const whatsapp = { windowHours: 24, templates: true }
 
     test("PRO-3: inside the window, free text goes out", async () => {
+      // The agent has to be started, because the window is measured from
+      // when the person last wrote and somebody has to run that turn. So
+      // the pump is running too, and this is the one test in the file
+      // that must let the pump do the sending rather than calling
+      // `attempt` by hand: `attempt` does not claim the row, so the two
+      // of them would send the same message twice. Found by a flake
+      // under the full suite during T9.4.
       const { agent } = agentWith({ channel: whatsapp, start: true })
       await agent.receiveAndWait(from("what time do you open?"))
       sender.reset()
       const who = (await agent.store.people.list())[0] as PersonRow
 
       const row = await queued(agent, who)
-      const done = await agent.outbox.attempt(row)
+      await until(() => sender.texts().length > 0)
+      await agent.settled()
 
-      expect(done.status).toBe("sent")
+      const done = await agent.store.outbox.byId(row.id)
+      expect(done?.status).toBe("sent")
       expect(sender.texts()).toEqual(["Your table is at 8 tonight."])
     })
 
