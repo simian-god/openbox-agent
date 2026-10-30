@@ -190,6 +190,26 @@ export function createConfirmations(options: ConfirmOptions): Confirmations {
   const forPerson = (person: PersonRow, turnId?: string) =>
     events.about({ personId: person.id, ...(turnId !== undefined ? { turnId } : {}) })
 
+  /**
+   * CONF-4 refusing, recorded and flagged together.
+   *
+   * One function because there are six reasons and LEARN-1 wants a flag
+   * for every one of them. Six call sites each doing both is six chances
+   * to add a seventh reason and record it without flagging it, and the
+   * missing flag would be invisible: the event would still be in the
+   * trace, so nothing would look broken until a builder wondered why the
+   * digest was quiet.
+   */
+  async function reject(
+    person: PersonRow,
+    why: RejectReason,
+    props: Record<string, unknown>,
+  ): Promise<void> {
+    const scoped = forPerson(person)
+    await scoped.record("confirmation_rejected", { why, ...props })
+    await scoped.flag("confirmation_rejected", { why, ...props })
+  }
+
   /** CONF-2: the message the core sends, not the brain. */
   async function ask(action: PendingActionRow, person: PersonRow): Promise<void> {
     const canTap = sender.capabilities(person.channel).buttons
@@ -302,18 +322,12 @@ export function createConfirmations(options: ConfirmOptions): Confirmations {
         // The signature is checked before the row is read, so an invalid
         // payload never becomes a database lookup.
         if (!payloadIsValid(parsed, person.id, secret)) {
-          await forPerson(person).record("confirmation_rejected", {
-            why: "bad_signature" satisfies RejectReason,
-            actionId: parsed.actionId,
-          })
+          await reject(person, "bad_signature", { actionId: parsed.actionId })
           return { kind: "rejected", why: "bad_signature" }
         }
         action = await store.pendingActions.byId(parsed.actionId)
         if (action === null) {
-          await forPerson(person).record("confirmation_rejected", {
-            why: "no_such_action" satisfies RejectReason,
-            actionId: parsed.actionId,
-          })
+          await reject(person, "no_such_action", { actionId: parsed.actionId })
           return { kind: "rejected", why: "no_such_action" }
         }
       } else if (text.toLowerCase() === CANCEL_WORD) {
@@ -346,10 +360,7 @@ export function createConfirmations(options: ConfirmOptions): Confirmations {
 
       // CONF-4: the same person who created it.
       if (action.person_id !== person.id) {
-        await forPerson(person).record("confirmation_rejected", {
-          why: "another_person" satisfies RejectReason,
-          actionId: action.id,
-        })
+        await reject(person, "another_person", { actionId: action.id })
         return { kind: "rejected", why: "another_person", action }
       }
 
@@ -359,28 +370,18 @@ export function createConfirmations(options: ConfirmOptions): Confirmations {
       }
 
       if (action.status !== "pending") {
-        await forPerson(person).record("confirmation_rejected", {
-          why: "not_pending" satisfies RejectReason,
-          actionId: action.id,
-          status: action.status,
-        })
+        await reject(person, "not_pending", { actionId: action.id, status: action.status })
         return { kind: "rejected", why: "not_pending", action }
       }
 
       if (new Date(action.expires_at).getTime() <= clock.now().getTime()) {
-        await forPerson(person).record("confirmation_rejected", {
-          why: "expired" satisfies RejectReason,
-          actionId: action.id,
-        })
+        await reject(person, "expired", { actionId: action.id })
         return { kind: "rejected", why: "expired", action }
       }
 
       // CONF-4: the arguments have not changed since the person saw them.
       if (argsHash(action.args) !== action.args_hash) {
-        await forPerson(person).record("confirmation_rejected", {
-          why: "arguments_changed" satisfies RejectReason,
-          actionId: action.id,
-        })
+        await reject(person, "arguments_changed", { actionId: action.id })
         return { kind: "rejected", why: "arguments_changed", action }
       }
 
@@ -409,10 +410,10 @@ export function createConfirmations(options: ConfirmOptions): Confirmations {
       if (claimed === undefined) {
         const now = await store.pendingActions.byId(action.id)
         if (now?.status === "executed") return { kind: "already_done", action: now }
-        await forPerson(person).record("confirmation_rejected", {
-          why: "not_pending" satisfies RejectReason,
-          actionId: action.id,
-        })
+        // CONF-5: the loser of two taps arriving together. A seventh
+        // rejection, and the one that proves the helper earns its keep:
+        // it is far from the other six and was easy to miss.
+        await reject(person, "not_pending", { actionId: action.id, race: true })
         return { kind: "rejected", why: "not_pending", action: now ?? action }
       }
 

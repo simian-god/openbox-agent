@@ -26,6 +26,7 @@ import type { MessageRow } from "../store/index.ts"
 import { noEvents, type EventWriter } from "./events.ts"
 import { route, ROUTING_QUESTION, type RoutingState } from "./routing.ts"
 import { WANTS_HUMAN, wantsHumanQuestion } from "./handover.ts"
+import { FRUSTRATION, frustrationQuestion, isFrustrated } from "./frustration.ts"
 import { gate, type GateConversation } from "./gate.ts"
 import { costOf } from "./limits.ts"
 import { toolContext } from "./tool-context.ts"
@@ -317,10 +318,21 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       timeoutMs: config.decisionTimeoutMs,
       price: priceDecision,
       // LOOP-8 step 1: on the first step the same request also asks
-      // whether this person wants a human (HAND-1). DM-2 is why it
-      // rides along rather than being asked on its own.
+      // whether this person wants a human (HAND-1) and how they sound
+      // (LEARN-1). DM-2 is why they ride along rather than being asked on
+      // their own: one request, one state, two answers.
+      //
+      // The same three conditions for both. An operator's mood is not
+      // what LEARN-1's digest is about, a proactive turn has no incoming
+      // message to judge a tone from, and later steps are the agent
+      // working rather than the person speaking again.
       ...(steps === 1 && person.role === "end_user" && input.proactive !== true
-        ? { also: { [WANTS_HUMAN]: wantsHumanQuestion() } }
+        ? {
+            also: {
+              [WANTS_HUMAN]: wantsHumanQuestion(),
+              [FRUSTRATION]: frustrationQuestion(),
+            },
+          }
         : {}),
     })
     const offered = routing.exposed
@@ -347,6 +359,34 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         costUsd: 0,
       })
       if (wants) handoverDue.push("wants_human")
+    }
+
+    // LEARN-1: how they sound. Recorded either way, like the question
+    // above and for the same reason: an answer that was asked for and
+    // paid for is worth reading later whichever way it went.
+    //
+    // This raises a flag and nothing else. It does not hand over, and it
+    // does not change what the agent says: a builder reads it on Monday
+    // (LEARN-3) and decides whether the agent is making people cross.
+    const mood = routing.also?.[FRUSTRATION]
+    if (mood !== undefined) {
+      const frustrated = isFrustrated(mood, config.learning.frustrationThreshold)
+      await events.decision({
+        kind: "frustration",
+        outcome: frustrated ? "flagged" : "no",
+        answers: { [FRUSTRATION]: mood },
+        model: decisionModel.id,
+        step: steps,
+        durationMs: clock.now().getTime() - routedAt,
+        costUsd: 0,
+      })
+      if (frustrated) {
+        await events.flag("frustration", {
+          step: steps,
+          threshold: config.learning.frustrationThreshold,
+          ...(mood.type === "score" ? { score: mood.score } : {}),
+        })
+      }
     }
 
     if (routing.reason !== "not_routed") {
@@ -542,6 +582,16 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     const tool = offered.find((candidate) => candidate.name === call.name)
     if (tool === undefined) {
       await events.record("unknown_tool", {
+        tool: call.name,
+        offered: offered.map((candidate) => candidate.name),
+        step: steps,
+      })
+      // LEARN-1: usually one of two builder problems, which is why it is
+      // worth a flag and not only an event. Either the prompt talks about
+      // a tool the agent does not have, or routing is hiding one it does:
+      // the offered list is recorded with it so the digest can tell those
+      // apart.
+      await events.flag("unknown_tool", {
         tool: call.name,
         offered: offered.map((candidate) => candidate.name),
         step: steps,
@@ -777,6 +827,20 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
         args: parsed.data,
         error: message,
         step: steps,
+        durationMs,
+      })
+
+      // LEARN-1: "any tool error or timeout", and both arrive here,
+      // because `withDeadline` throws. Which one it was is recorded,
+      // since they are different problems to a builder reading the
+      // digest: a timeout is usually somebody else's system being slow,
+      // an error is usually the tool.
+      await events.flag("tool_error", {
+        tool: tool.name,
+        risk: tool.risk,
+        step: steps,
+        timeout: isTimeout(error),
+        error: message,
         durationMs,
       })
 

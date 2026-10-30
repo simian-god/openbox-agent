@@ -347,6 +347,54 @@ describeDatabase("structured confirmation", (sql) => {
       expect((await agent.store.pendingActions.byId(action.id))?.status).toBe("pending")
     })
 
+    // LEARN-1: every CONF-4 refusal is a flag. Seven reasons go through
+    // one helper for that, so this proves the flag is raised and carries
+    // which rule refused, rather than proving each reason separately.
+    test("LEARN-1: a refused confirm raises a confirmation_rejected flag, with the rule", async () => {
+      const { agent } = agentWith(["I have asked them.", "Hello."])
+      const action = await askedToConfirm(agent)
+
+      await agent.receiveAndWait({
+        channel: "whatsapp",
+        channelUserId: "42",
+        channelMessageId: "forged-1",
+        text: "Confirm",
+        action: { payload: buttonPayload("c", action.id, "42", "the wrong secret") },
+      })
+
+      const [flag] = await agent.store.flags.list(
+        { kind: "confirmation_rejected" },
+        { orderBy: "seq" },
+      )
+      expect(flag).toBeDefined()
+      expect(flag?.detail).toMatchObject({ why: "bad_signature" })
+      expect(flag?.reviewed_at).toBeNull()
+    })
+
+    test("LEARN-1: an expired confirm is flagged too, so it is not only forgeries", async () => {
+      const { agent } = agentWith(["I have asked them.", "Hello."])
+      const action = await askedToConfirm(agent)
+
+      // Past the expiry the Spec gives it, so CONF-4's own clock rule is
+      // what refuses this one rather than the signature.
+      const row = await agent.store.pendingActions.byId(action.id)
+      clock.set(new Date(new Date(row?.expires_at ?? 0).getTime() + 1000).toISOString())
+
+      await agent.receiveAndWait({
+        channel: "whatsapp",
+        channelUserId: "42",
+        channelMessageId: "late-1",
+        text: "Confirm",
+        action: { payload: buttonPayload("c", action.id, action.personId, SECRET) },
+      })
+
+      const [flag] = await agent.store.flags.list(
+        { kind: "confirmation_rejected" },
+        { orderBy: "seq" },
+      )
+      expect(flag?.detail).toMatchObject({ why: "expired" })
+    })
+
     test("C9: a confirm from someone else does nothing", async () => {
       const { agent } = agentWith(["I have asked them.", "Hello."])
       const action = await askedToConfirm(agent)

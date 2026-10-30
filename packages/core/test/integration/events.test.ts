@@ -201,7 +201,12 @@ describeDatabase("events and versions", (sql) => {
     const agent = agentWith([{ tool: "delete_everything" }, { reply: "Sorry." }])
     await agent.receiveAndWait(hello())
 
-    expect(await trace(agent)).toEqual(["turn_started", "unknown_tool", "turn_ended"])
+    expect(await trace(agent)).toEqual([
+      "turn_started",
+      "unknown_tool",
+      "flag_raised",
+      "turn_ended",
+    ])
     const row = (await agent.store.events.list({ name: "unknown_tool" }))[0]
     expect(row?.props).toMatchObject({ tool: "delete_everything" })
     // BUILTIN-1: the core's own tools are offered on every step, so the
@@ -214,6 +219,47 @@ describeDatabase("events and versions", (sql) => {
       "search_knowledge",
       "check_availability",
     ])
+  })
+
+  test("LEARN-1: a tool the brain was not offered raises an unknown_tool flag", async () => {
+    const agent = agentWith([{ tool: "delete_everything" }, { reply: "Sorry." }])
+    await agent.receiveAndWait(hello())
+
+    const flags = await agent.store.flags.list({}, { orderBy: "seq" })
+    expect(flags).toHaveLength(1)
+    expect(flags[0]).toMatchObject({ kind: "unknown_tool" })
+    // What the brain asked for and what it could have had. The pair is
+    // what tells a builder whether the prompt is wrong or routing is
+    // hiding a tool the agent really has.
+    expect(flags[0]?.detail).toMatchObject({ tool: "delete_everything" })
+    expect((flags[0]?.detail as { offered?: string[] }).offered).toContain("check_availability")
+    expect(flags[0]?.reviewed_at).toBeNull()
+  })
+
+  test("LEARN-1: a tool that throws raises a tool_error flag, and says it was not a timeout", async () => {
+    const breaks = defineTool({
+      name: "check_availability",
+      description: "Checks whether a table is free.",
+      input: z.object({}),
+      risk: "read",
+      roles: ["end_user"],
+      conditions: { callWhen: ["they ask about a table"], dontCallWhen: ["they do not"] },
+      examples: { should: ["any space?"], shouldNot: ["hello"] },
+      handler: async () => {
+        throw new Error("the booking system said no")
+      },
+    })
+    const agent = agentWith(
+      [{ tool: "check_availability" }, { reply: "I could not check." }],
+      [breaks],
+    )
+
+    await agent.receiveAndWait(hello())
+
+    const [flag] = await agent.store.flags.list({ kind: "tool_error" }, { orderBy: "seq" })
+    expect(flag).toBeDefined()
+    expect(flag?.detail).toMatchObject({ tool: "check_availability", timeout: false })
+    expect(String((flag?.detail as { error?: string }).error)).toContain("booking system said no")
   })
 
   test("EVT-2: duplicate_dropped is recorded, and no turn is", async () => {

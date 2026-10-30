@@ -1,7 +1,7 @@
 // Turn v0 end to end: a message arrives, a person is created, the brain
 // runs its steps, and a reply goes out through the sender.
 import { test, expect, describe, beforeEach } from "bun:test"
-import { scriptedDecisionModel, choice, yesno } from "../../src/testing/scripted-decision.ts"
+import { scriptedDecisionModel, choice, score, yesno } from "../../src/testing/scripted-decision.ts"
 import { z } from "zod"
 import { describeDatabase, localSupabase, resetDatabase } from "../support/db.ts"
 import { trackAgents } from "../support/agents.ts"
@@ -20,6 +20,8 @@ import { fakeSender, type FakeSender } from "../../src/testing/fake-sender.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
 import { GATE_QUESTION } from "../../src/runtime/gate.ts"
 import { WANTS_HUMAN } from "../../src/runtime/handover.ts"
+import { FRUSTRATION } from "../../src/runtime/frustration.ts"
+import type { Answer } from "../../src/providers/decision/types.ts"
 
 // LOOP-2: nothing is handled until a worker runs, and a worker left running
 // keeps its poll timer alive after the test. Every agent built here is
@@ -716,12 +718,140 @@ describeDatabase("a turn", (sql) => {
       await agent.receiveAndWait(hello())
 
       // One request, and routing is not in it. LOOP-8 step 1 asks
-      // `wants_human` on every first step (HAND-1), so the question is
-      // not whether a request was made but what was in it.
+      // `wants_human` (HAND-1) and `frustration` (LEARN-1) on every first
+      // step, so the question is not whether a request was made but what
+      // was in it.
+      //
+      // DM-2 in one line: two questions, one request. An agent on one
+      // tool asks nothing else here, so if these were asked separately
+      // this would be two calls and the state would be paid for twice.
       expect(decisions.calls).toHaveLength(1)
-      expect(Object.keys(decisions.calls[0]?.questions ?? {})).toEqual([WANTS_HUMAN])
+      expect(Object.keys(decisions.calls[0]?.questions ?? {})).toEqual([WANTS_HUMAN, FRUSTRATION])
       expect(captured.filter(([name]) => name === "route_decided")).toHaveLength(0)
       expect(agentToolsIn(brain.calls[0]?.tools, agent)).toEqual(["check_availability"])
+    })
+  })
+
+  describe("LEARN-1: the frustration question", () => {
+    /** An agent whose decision model answers the mood question. */
+    function moody(
+      answers: Record<string, Answer>,
+      over: Record<string, unknown> = {},
+    ): { agent: Agent; decisions: ReturnType<typeof scriptedDecisionModel> } {
+      const brain = scriptedBrain([{ reply: "Sorry about that." }])
+      const decisions = scriptedDecisionModel([answers])
+      sender = fakeSender()
+      const agent = createAgent({
+        config: config(over),
+        deps: {
+          brains: [brain],
+          decisionModel: decisions,
+          db: localSupabase(),
+          sender,
+          clock,
+        },
+        prompt: PROMPT,
+        tools: [checkAvailability],
+      })
+      return { agent, decisions }
+    }
+
+    test("LEARN-1: an angry person is flagged, with the score that did it", async () => {
+      const { agent } = moody({ [WANTS_HUMAN]: yesno(0), [FRUSTRATION]: score(2) })
+
+      await agent.receiveAndWait(hello())
+
+      const [flag] = await agent.store.flags.list({ kind: "frustration" }, { orderBy: "seq" })
+      expect(flag).toBeDefined()
+      expect(flag?.detail).toMatchObject({ score: 2, threshold: 1.5 })
+      expect(flag?.reviewed_at).toBeNull()
+    })
+
+    test("LEARN-1: at the threshold exactly is flagged, because the Spec says at or above", async () => {
+      // 1.5 is reachable because a score comes back as the spread's
+      // expected level, not as a pick of one of the three words.
+      const { agent } = moody({
+        [WANTS_HUMAN]: yesno(0),
+        [FRUSTRATION]: score(1.5, { calm: 0, annoyed: 0.5, angry: 0.5 }),
+      })
+
+      await agent.receiveAndWait(hello())
+
+      expect(await agent.store.flags.count({ kind: "frustration" })).toBe(1)
+    })
+
+    test("LEARN-1: a calm person is not flagged", async () => {
+      const { agent } = moody({ [WANTS_HUMAN]: yesno(0), [FRUSTRATION]: score(0) })
+
+      await agent.receiveAndWait(hello())
+
+      expect(await agent.store.flags.count()).toBe(0)
+    })
+
+    test("LEARN-1: the builder's own threshold is what decides, not the default", async () => {
+      const { agent } = moody(
+        { [WANTS_HUMAN]: yesno(0), [FRUSTRATION]: score(1) },
+        { learning: { frustrationThreshold: 1 } },
+      )
+
+      await agent.receiveAndWait(hello())
+
+      expect(await agent.store.flags.count({ kind: "frustration" })).toBe(1)
+    })
+
+    test("LEARN-1: the answer is recorded either way, since it was asked for and paid for", async () => {
+      const { agent } = moody({ [WANTS_HUMAN]: yesno(0), [FRUSTRATION]: score(0) })
+
+      await agent.receiveAndWait(hello())
+
+      const [decided] = await agent.store.decisions.list(
+        { kind: "frustration" },
+        { orderBy: "seq" },
+      )
+      expect(decided).toMatchObject({ kind: "frustration", outcome: "no" })
+      expect(decided?.answers).toMatchObject({ [FRUSTRATION]: { type: "score", score: 0 } })
+    })
+
+    // The whole reason the two questions are separate. An angry person
+    // who wants the agent to finish is flagged for Monday and not handed
+    // to a colleague now.
+    test("LEARN-1: being angry is not a handover, which is HAND-1's question", async () => {
+      const { agent } = moody({ [WANTS_HUMAN]: yesno(0), [FRUSTRATION]: score(2) })
+
+      await agent.receiveAndWait(hello())
+
+      expect(await agent.store.flags.count({ kind: "frustration" })).toBe(1)
+      expect(await agent.store.handovers.count()).toBe(0)
+    })
+
+    test("LEARN-1: it is asked once a turn, on the first step, not on every step", async () => {
+      const brain = scriptedBrain([{ tool: "check_availability" }, { reply: "Monday is free." }])
+      const decisions = scriptedDecisionModel([
+        { [WANTS_HUMAN]: yesno(0), [FRUSTRATION]: score(2) },
+      ])
+      sender = fakeSender()
+      const agent = createAgent({
+        config: config(),
+        deps: {
+          brains: [brain],
+          decisionModel: decisions,
+          db: localSupabase(),
+          sender,
+          clock,
+        },
+        prompt: PROMPT,
+        tools: [checkAvailability],
+      })
+
+      await agent.receiveAndWait(hello())
+
+      // Two steps, and the mood was asked on the first one only. Asked on
+      // every step it would cost per step and flag the same turn twice.
+      const asked = decisions.calls.filter((call) =>
+        Object.keys(call.questions).includes(FRUSTRATION),
+      )
+      expect(asked).toHaveLength(1)
+      expect(await agent.store.flags.count({ kind: "frustration" })).toBe(1)
     })
   })
 

@@ -162,6 +162,29 @@ const HANDOVER = z
   })
   .strict()
 
+/**
+ * LEARN-1 and LEARN-3: the learning loop's own settings.
+ *
+ * A block of its own because LEARN-3's digest joins it, and because these
+ * decide what a builder reads on a Monday rather than how the agent
+ * behaves. Section 19's example lists neither key, and HAND-6's
+ * `alertRepeatMinutes` set the precedent: the Spec marks a number a
+ * default, and in this core every default is a config field.
+ */
+const LEARNING = z
+  .object({
+    /**
+     * LEARN-1: at or above this, a turn is flagged `frustration`.
+     *
+     * Measured on the question's own 0 to 2 scale (calm, annoyed, angry),
+     * which is why the bound is 2 rather than 1 like the thresholds on
+     * yes or no answers. The Spec's own default is 1.5: past annoyed and
+     * not yet angry.
+     */
+    frustrationThreshold: z.number().min(0).max(2).default(1.5),
+  })
+  .strict()
+
 const PRICING = z.record(
   z.string(),
   z
@@ -280,6 +303,10 @@ export const configSchema = z
     // none says so with a range of zero length, like ["09:00", "09:00"].
     quietHours: z.tuple([TIME, TIME]).default(["21:00", "09:00"]),
     taskTypes: z.record(z.string(), TASK_TYPE).default({}),
+
+    // `prefault` rather than `default`: zod 4's `default` takes the value
+    // after parsing, which would mean repeating the inner default here.
+    learning: LEARNING.prefault({}),
 
     // PRIV-1 and PRIV-2: both required, both with no default.
     notice: z.string().trim().min(1),

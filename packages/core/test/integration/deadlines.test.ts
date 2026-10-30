@@ -215,6 +215,24 @@ describeDatabase("deadlines", (sql) => {
       const failed = events.find((row) => (row.props as { ok?: boolean }).ok === false)
       expect(String((failed?.props as { error?: string }).error)).toContain("took too long")
     })
+
+    // LEARN-1 says "any tool error or timeout", and both arrive at the
+    // same place because `withDeadline` throws. The flag records which,
+    // since a timeout is usually somebody else's system being slow and an
+    // error is usually the tool.
+    test("LEARN-1: a tool that times out raises a tool_error flag marked as a timeout", async () => {
+      const brain = scriptedBrain([{ tool: "check_availability" }, { reply: "Sorry." }], {
+        id: "asking",
+      })
+      const agent = agentWith([brain], { toolTimeoutMs: 60 }, [slowTool()])
+
+      await agent.receiveAndWait(hello())
+
+      const [flag] = await agent.store.flags.list({ kind: "tool_error" }, { orderBy: "seq" })
+      expect(flag).toBeDefined()
+      expect(flag?.detail).toMatchObject({ tool: "check_availability", timeout: true })
+      expect(String((flag?.detail as { error?: string }).error)).toContain("took too long")
+    })
   })
 
   describe("K3: stopping while something will not finish", () => {

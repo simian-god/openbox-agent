@@ -176,6 +176,7 @@ describe("defaults", () => {
     expect(config.handover.idleMinutes).toBe(30)
     expect(config.handover.wantsHumanThreshold).toBe(0.8)
     expect(config.decisionModel.routeThreshold).toBe(0.6)
+    expect(config.learning.frustrationThreshold).toBe(1.5)
   })
 
   test("CFG-1: a value given in config beats the default", () => {
@@ -238,6 +239,23 @@ describe("values that must make sense", () => {
     const input = validInput()
     input["decisionModel"] = { id: "jev", routeThreshold: 1.5 }
     expect(problems(input)).toContain("routeThreshold")
+  })
+
+  // LEARN-1's scale runs 0 to 2, not 0 to 1 like the thresholds on yes or
+  // no answers, because it is measured on three levels. A threshold above
+  // 2 is unreachable, so it would silently turn the flag off rather than
+  // make it stricter, which is the sort of config line a builder would
+  // never think to doubt.
+  test("CFG-1: rejects a frustration threshold above the scale it is measured on", () => {
+    const input = validInput()
+    input["learning"] = { frustrationThreshold: 2.5 }
+    expect(problems(input)).toContain("frustrationThreshold")
+  })
+
+  test("CFG-1: a frustration threshold inside the scale is accepted", () => {
+    const input = validInput()
+    input["learning"] = { frustrationThreshold: 2 }
+    expect(defineConfig(input).learning.frustrationThreshold).toBe(2)
   })
 
   // GATE-2's banding behaviour is built in M3; these check the config only.

@@ -26,6 +26,7 @@ import { fixedClock } from "../../src/testing/clock.ts"
 import { fakeToolContext } from "../../src/testing/tool-context.ts"
 import { GATE_QUESTION } from "../../src/runtime/gate.ts"
 import { WANTS_HUMAN } from "../../src/runtime/handover.ts"
+import { FRUSTRATION } from "../../src/runtime/frustration.ts"
 import { buttonPayload } from "../../src/runtime/confirm.ts"
 
 const SECRET = "test-secret-long-enough-to-look-real"
@@ -190,10 +191,11 @@ describeDatabase("tasks", (sql) => {
       const result = await agent.receiveAndWait(says("hello", "m1"))
 
       expect(result.turn?.routed[0]?.reason).toBe("not_routed")
-      // One request, which is LOOP-8 step 1 asking `wants_human` (HAND-1),
-      // and routing is not one of its questions.
+      // One request, which is LOOP-8 step 1 asking `wants_human` (HAND-1)
+      // and `frustration` (LEARN-1), and routing is not one of its
+      // questions.
       expect(decisions.calls).toHaveLength(1)
-      expect(Object.keys(decisions.calls[0]?.questions ?? {})).toEqual([WANTS_HUMAN])
+      expect(Object.keys(decisions.calls[0]?.questions ?? {})).toEqual([WANTS_HUMAN, FRUSTRATION])
       // Two agent tools, four task tools, remember, forget_fact,
       // escalate and search_knowledge.
       expect(brain.calls[0]?.tools).toHaveLength(10)

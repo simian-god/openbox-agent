@@ -13,6 +13,7 @@ import {
   type EventStore,
 } from "../../src/runtime/events.ts"
 import { fixedClock } from "../../src/testing/clock.ts"
+import { tsFiles, withoutComments } from "../support/source.ts"
 import { FLAG_KINDS, type FlagKind } from "../../src/store/tables.ts"
 
 const SPEC = readFileSync(join(import.meta.dir, "..", "..", "..", "..", "docs", "Spec.md"), "utf8")
@@ -274,6 +275,44 @@ describe("LEARN-1: the flag kinds", () => {
   test("LEARN-1: the code invents no kind the Spec does not list", () => {
     const inSpec = new Set(flagKindsInSpec(SPEC))
     expect(FLAG_KINDS.filter((kind) => !inSpec.has(kind))).toEqual([])
+  })
+
+  // A kind that is declared, allowed by the constraint and raised by
+  // nothing is a flag the Spec promises and the agent never produces. The
+  // list and the Spec agreed long before four of the ten were raised
+  // anywhere, so agreement between those two proves less than it looks.
+  test("LEARN-1: every kind the Spec lists is raised somewhere in the core", () => {
+    const src = join(import.meta.dir, "..", "..", "src")
+    const raised = new Set<string>()
+    for (const file of tsFiles(src)) {
+      const text = withoutComments(readFileSync(join(src, file), "utf8"))
+      for (const match of text.matchAll(/\.flag\(\s*"([a-z_]+)"/g)) {
+        const kind = match[1]
+        if (kind !== undefined) raised.add(kind)
+      }
+    }
+    expect(FLAG_KINDS.filter((kind) => !raised.has(kind))).toEqual([])
+  })
+
+  // CONF-4 refuses for seven different reasons, and LEARN-1 wants a flag
+  // for every one. One of the seven is the loser of two taps arriving
+  // together, which needs an interleaving between a status read and a
+  // conditional update: no test can reach it from outside, and it was
+  // already written as a bare `record` before this row, so it would have
+  // been the one left unflagged.
+  //
+  // So the rule is structural instead. Every rejection goes through one
+  // helper that records and flags together, and this holds the file to
+  // that: one place writes the event, so a reason added later cannot
+  // record without flagging.
+  test("LEARN-1: every CONF-4 rejection is recorded in one place, so none can skip its flag", () => {
+    const src = join(import.meta.dir, "..", "..", "src", "runtime", "confirm.ts")
+    const text = withoutComments(readFileSync(src, "utf8"))
+
+    const writes = [...text.matchAll(/\brecord\(\s*"confirmation_rejected"/g)]
+    expect(writes).toHaveLength(1)
+    // And that one place flags it too.
+    expect(text).toContain('flag("confirmation_rejected"')
   })
 
   test("LEARN-1: the migration accepts exactly those kinds and no others", () => {
