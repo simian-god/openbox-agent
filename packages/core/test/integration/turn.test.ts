@@ -1138,6 +1138,36 @@ describeDatabase("a turn", (sql) => {
       expect(third.turn?.handoverDue).toEqual([])
     })
 
+    // LEARN-1's flag, on its own rather than inside GATE-3's repeat rule.
+    // The M9 check asked for a case per flag kind, and `low_confidence`
+    // was the one kind proven only as a side assertion in a test about
+    // something else: a change to the repeat rule could have taken the
+    // flag's only coverage with it.
+    test("LEARN-1: a routing pick below the threshold raises a low_confidence flag", async () => {
+      const brain = scriptedBrain([{ reply: "one" }])
+      const unsure = scriptedDecisionModel([
+        { tool: choice("look_up_one", { look_up_one: 0.3, look_up_two: 0.3, no_tool: 0.4 }, 0.3) },
+      ])
+      sender = fakeSender()
+      const agent = createAgent({
+        config: config(),
+        deps: { brains: [brain], decisionModel: unsure, db: localSupabase(), sender, clock },
+        prompt: PROMPT,
+        tools: six(),
+      })
+
+      const first = await agent.receiveAndWait(hello())
+      expect(first.turn?.routed[0]?.reason).toBe("below_threshold")
+
+      // One turn, so one flag: the handover needs a second one and this
+      // is about the flag, not the trigger.
+      const flags = await agent.store.flags.list({}, { orderBy: "seq" })
+      expect(flags).toHaveLength(1)
+      expect(flags[0]).toMatchObject({ kind: "low_confidence" })
+      expect(flags[0]?.detail).toMatchObject({ choice: "look_up_one", threshold: 0.6 })
+      expect(flags[0]?.reviewed_at).toBeNull()
+    })
+
     test("GATE-3: two routing picks below the threshold in a row is the other trigger", async () => {
       // Six tools, so routing runs, and a spread with nothing much behind
       // the winner, so the pick is below the 0.6 threshold.

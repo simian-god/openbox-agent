@@ -317,9 +317,9 @@ C1 (the second agent ships with zero core changes) can only be checked by buildi
 | C14, C15 | M4 | Integration tests with a frozen clock |
 | C16, C17 | M7 | Integration tests |
 | C18 | M8 | Knowledge questions on both retrievers |
-| C19 | M9 | Failure sweep |
+| C19 | M9 | Failure sweep, read clause by clause by `bun run m9-check` |
 | C20 | M9, M10, M11 | Flags and digest tests, a review run on real flags |
-| C21 | M9 | Erase, export and retention tests |
+| C21 | Parked | Erase, export and retention tests, with T9.3 (2026-10-28, Known K15). Not part of M9's bar |
 | C22 | M10, M11 | Building the demo agent with the skill |
 | C23 | M11 | Installing the published package |
 | C24 | M11 | Adapter checklist under evals-agent |

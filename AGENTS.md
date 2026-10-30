@@ -76,8 +76,12 @@ Milestone checks that are scripted rather than run by hand:
 - `bun run m8-check` - C18 on both retrievers, clause by clause. One clause
   waits on sqlite-vec support in evals-agent, which the bar itself says it
   does (Known K29).
+- `bun run m9-check` - C19 clause by clause, dependency by dependency, plus
+  the core side of C20. Seven clauses wait, which the bar itself says: three
+  are the rest of C20, in M10 and M11, and four are C21, parked with T9.3.
+  A PASS prints the one limit it does not cover, which is Known K30.
 
-All four read the suite's own results rather than asserting the same things
+All of them read the suite's own results rather than asserting the same things
 a second time, through `scripts/support/results.ts`. They need the local
 database, like the integration tests they run. Without it they report UNRUN
 and fail, rather than passing on tests that never ran.
