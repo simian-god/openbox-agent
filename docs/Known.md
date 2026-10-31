@@ -851,9 +851,14 @@ transcriber it says to ask the same handful of real questions in `openbox chat`
 before and after and compare, which is honest about being a human check. A
 test holds that wording, so the overclaim cannot creep back in.
 
-**What would resolve it.** `review` writing evals-agent cases from real
-conversations (T10.6), after which an agent that has been used has a suite
-that knows its own tools, and `swap` runs that too. A template that generates
-a first case or two at `new` time would close the gap for a brand new agent,
-but it would be a case nobody has reviewed, and a green test nobody wrote on
-purpose is worse than no test.
+**What would resolve it.** Half of it is done. T10.6 built the reading side:
+`openbox review` hands the skill the flagged conversations, and `review`
+writes each failure as a draft case in `evals/cases/`, in the format the
+harness really takes. So an agent that has been used grows a suite that knows
+its own tools, and `swap` runs that too once there are cases in it.
+
+What is still open is the first day. A brand new agent has no flags, so it has
+no cases, and a `swap` on day one still rests on the conformance suite alone.
+A template that generated a case or two at `new` time would close that, but it
+would be a case nobody has reviewed, and a green test nobody wrote on purpose
+is worse than no test.

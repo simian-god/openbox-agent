@@ -103,6 +103,17 @@ decision model key and no database:
   `--write` applies the result to `agent.config.ts`. Nothing is written
   without it.
 
+Reading what went wrong (LEARN-4), which needs the database:
+
+- `bun packages/core/src/cli/index.ts review --dir <agent>` - the flags
+  nobody has looked at yet, grouped by a cause proposed from the trace.
+  `review show <flag-id>` is one flagged conversation in full,
+  `review mark <flag-id> --outcome "..."` records what came of it, and
+  `review label <flag-id> --tool <name>` appends the corrected routing
+  decision to `examples/routing.jsonl` (LEARN-5). `--json` on `list` and
+  `show`, because the reader is usually the skill. The judgment is the
+  skill's; this command is the reading and the marking.
+
 Making someone an operator of an agent (ROLE-2), which needs the database:
 
 - `bun packages/core/src/cli/index.ts operator add <channel> <id> --dir <agent>`

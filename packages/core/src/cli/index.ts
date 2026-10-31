@@ -13,6 +13,7 @@ import { migrate, MigrateError } from "../migrate/index.ts"
 import { runChat } from "./chat.ts"
 import { runTune } from "./tune.ts"
 import { runOperator } from "./operator.ts"
+import { runReview } from "./review.ts"
 
 const USAGE = `openbox - tools for an openbox-agent project
 
@@ -20,6 +21,8 @@ Usage:
   openbox migrate [options]    apply the core migrations, then the agent's
   openbox chat [options]       talk to the agent in this folder
   openbox tune [options]       measure where the routing threshold belongs
+  openbox review [list|show|mark|label]
+                               the flags nobody has looked at yet
   openbox operator add <channel> <id>
                                make someone an operator of this agent
 
@@ -44,6 +47,14 @@ Options for tune:
   --examples <file>      defaults to examples/routing.jsonl
   --write                set routeThreshold in agent.config.ts. Off by
                          default: nothing changes the agent unless you say so
+
+Options for review:
+  --dir <dir>            the agent project. Defaults to this folder
+  --json                 machine readable, for list and show
+  --limit <n>            how many flags to read. Defaults to 50
+  --outcome <text>       what came of a flag. Required by mark
+  --tool <name>          the tool that should have been chosen. For label
+  --examples <file>      defaults to examples/routing.jsonl
 
 Options for operator:
   --dir <dir>            the agent project. Defaults to this folder
@@ -158,6 +169,26 @@ export async function run(argv: string[]): Promise<number> {
         ...(flags.has("examples") ? { examplesFile: flags.get("examples") } : {}),
         ...(asNumber !== undefined ? { tolerance: asNumber } : {}),
         ...(flags.has("write") ? { write: true } : {}),
+      })
+    }
+    case "review": {
+      const limit = flags.get("limit")
+      const asNumber = limit === undefined ? undefined : Number(limit)
+      if (asNumber !== undefined && (!Number.isInteger(asNumber) || asNumber < 1)) {
+        console.error(`--limit must be a whole number of flags, not "${limit}".`)
+        return 1
+      }
+      return runReview({
+        // Everything after `review`, so the subcommand and its flag ids.
+        args: args.slice(1),
+        ...(flags.has("dir") ? { dir: flags.get("dir") } : {}),
+        ...(flags.has("config") ? { config: flags.get("config") } : {}),
+        ...(flags.has("tools") ? { tools: flags.get("tools") } : {}),
+        ...(flags.has("json") ? { json: true } : {}),
+        ...(asNumber !== undefined ? { limit: asNumber } : {}),
+        ...(flags.has("outcome") ? { outcome: flags.get("outcome") } : {}),
+        ...(flags.has("tool") ? { tool: flags.get("tool") } : {}),
+        ...(flags.has("examples") ? { examplesFile: flags.get("examples") } : {}),
       })
     }
     case "operator":

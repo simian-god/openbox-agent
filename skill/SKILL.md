@@ -327,25 +327,100 @@ rather than trusting the reply to tell you.
 
 ## `review`
 
-Reads unreviewed flags and the conversations behind them, groups them by
-likely cause, proposes each fix as a diff, writes each failure as a draft
-evals-agent case, runs the suite before and after, and marks the flags
-reviewed with the outcome.
+Turns what went wrong into a fix and a test case. Seven steps, in this
+order, and step 6 is the one that cannot be skipped.
 
-Nothing is applied unless the new cases pass, nothing old regresses, and
-the builder approves. All three, every time.
+Read `references/eval-case.md` first: it is the case format, and a case the
+harness refuses is a case nobody runs.
 
-Status: the flagged conversation export is not built yet. If it is
-missing, say so and stop rather than hand rolling one.
+### 1. Read the backlog
+
+```
+openbox review --json
+```
+
+Unreviewed flags, oldest first, grouped by a cause proposed from the
+trace: missing knowledge, wrong routing, conditions too strict or too
+loose, a prompt gap, a tool bug, a missing tool, or `unclear`.
+
+The cause is proposed, not decided. `unclear` means the trace could not
+say, and a group can be wrong, so read the conversation before you act on
+one:
+
+```
+openbox review show <flag-id> --json
+```
+
+### 2. Group them yourself
+
+Keep, split or move the proposed groups once you have read the
+conversations. Flags on the same turn are listed together, because one
+fault usually raises several and fixing them one at a time is the same
+work three times.
+
+### 3. Propose each fix as a diff
+
+One diff per group, not per flag. Say which flags it answers. A wrong
+routing group is usually a `dontCallWhen` line, not a prompt change;
+`references/best-practices.md` says what belongs where.
+
+### 4. Write each failure as a case
+
+One draft case per failure, in `evals/cases/<id>.yaml` in the agent
+project, in the format `references/eval-case.md` gives. Draft means the
+builder edits it. Never write a real person's words, name or number into
+one: a case file is a file, and the retention period in config does not
+reach it.
+
+A corrected routing decision is evidence, so record it:
+
+```
+openbox review label <flag-id> --tool <name>
+```
+
+That appends one line to `examples/routing.jsonl`, which is what `tune`
+measures. The same conversation is never labeled twice.
+
+### 5. Run the suite before and after
+
+Before, so a case that was already failing is not read as something this
+fix broke. After, on the same cases.
+
+### 6. Apply only if all three hold
+
+The new cases pass, nothing old regresses, and the builder approves. All
+three, every time, and if you cannot run the suite then you cannot apply
+the fix: say so and stop (LEARN-7).
+
+### 7. Mark the flags reviewed
+
+```
+openbox review mark <flag-id> ... --outcome "what came of it"
+```
+
+In your own words, because a count of reviewed flags with no outcomes is
+no record at all. A flag somebody reviewed first keeps their outcome and
+is named in the reply rather than overwritten.
 
 ## `tune`
 
 Measures where the routing threshold belongs, from `examples/routing.jsonl`
-and from every tool's own examples:
+and from every tool's own `should` and `shouldNot` examples, so a new agent
+can be tuned before it has any traffic:
 
 ```
 openbox tune --dir <agent>
 ```
 
-It reports. It writes the one number into config only with `--write`, and
-only when the builder asks for it.
+It reports. `--tolerance` is the share of examples that may lose their
+tool, 1 in 100 by default, and the number it reports is the lowest
+threshold inside that: every step above it is a turn paying full price for
+a tool list it did not need.
+
+It writes the one number into `agent.config.ts` only with `--write`, and
+only when the builder asks for it (LEARN-7). Report what it said either
+way, including a recommendation that narrows almost nothing, which is
+routing not being worth asking for rather than a tuned number.
+
+Run it after `review` has labeled anything, and after `add-tool`, because
+both change what there is to measure.

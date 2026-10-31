@@ -205,9 +205,9 @@ function section(text: string, heading: string): string {
   return end === -1 ? after : after.slice(0, end)
 }
 
-/** One `### n.` step of the `new` flow, heading included. */
-function step(number: number): string {
-  const flow = section(read(SKILL), "`new`")
+/** One `### n.` step of a command's flow, heading included. */
+function step(number: number, heading = "`new`"): string {
+  const flow = section(read(SKILL), heading)
   const start = flow.indexOf(`### ${number}.`)
   expect(start).toBeGreaterThan(-1)
   const after = flow.slice(start + 4)
@@ -606,5 +606,230 @@ describe("SKILL-6: `chat`", () => {
     const text = plain(section(read(SKILL), "`chat`"))
     expect(text).toContain("openbox operator add")
     expect(text).toContain("never")
+  })
+})
+
+/** The subcommands `openbox review` really has, read off its own guard. */
+const reviewCommands = (): string[] => {
+  const source = read("packages/core/src/cli/review.ts")
+  const found = source.match(/if \(!\[([^\]]+)\]\.includes\(command\)\)/)
+  expect(found).not.toBeNull()
+  return [...(found?.[1] ?? "").matchAll(/"([a-z]+)"/g)].map((match) => match[1] ?? "")
+}
+
+/** LEARN-4's seven numbered steps, as the Spec writes them. */
+const specReviewSteps = [...rule("LEARN-4").matchAll(/^\d+\.\s+(.+)$/gm)].map((match) =>
+  (match[1] ?? "").trim(),
+)
+
+/** LEARN-4 step 2's causes, split out of the Spec's own clause. */
+const specCauses = (() => {
+  const step = specReviewSteps[1] ?? ""
+  return step
+    .slice(step.indexOf(":") + 1)
+    .split(/,| or /)
+    .map((part) => part.trim().replace(/^a /, ""))
+    .filter((part) => part !== "")
+})()
+
+describe("SKILL-7 and LEARN-4: `review`", () => {
+  const section7 = () => plain(section(read(SKILL), "`review`"))
+
+  test("LEARN-4: the Spec lists seven steps, which is what `review` is held to", () => {
+    expect(specReviewSteps).toHaveLength(7)
+  })
+
+  test("LEARN-4: `review` has those seven steps, numbered in the Spec's order", () => {
+    const steps = [...section(read(SKILL), "`review`").matchAll(/^### \d+\.\s+(.+)$/gm)]
+    expect(steps).toHaveLength(7)
+  })
+
+  test("LEARN-4: every cause the Spec groups by is named", () => {
+    const text = section7()
+    expect(specCauses.length).toBeGreaterThanOrEqual(5)
+    const missing = specCauses.filter((cause) => !text.includes(cause))
+    expect(missing).toEqual([])
+  })
+
+  test("LEARN-4: a cause is proposed from the trace, not decided", () => {
+    // The command groups from the flag kind and its detail. A group can be
+    // wrong, and acting on a wrong group is a fix aimed at the wrong thing,
+    // so the instruction has to say read the conversation first.
+    const text = section7()
+    expect(text).toContain("proposed, not decided")
+    expect(text).toContain("unclear")
+    expect(inOrder(text, "read the conversation", "openbox review show")).toBe(true)
+  })
+
+  test("LEARN-4: every subcommand the command has is named here", () => {
+    // Read off `review.ts` itself, so a subcommand added there and not
+    // mentioned here fails this test.
+    const text = section(read(SKILL), "`review`")
+    const commands = reviewCommands()
+    expect(commands).toEqual(["list", "show", "mark", "label"])
+    const missing = commands.filter(
+      (name) => name !== "list" && !text.includes(`openbox review ${name}`),
+    )
+    expect(missing).toEqual([])
+  })
+
+  test("LEARN-4: step 4 writes a draft case in the format the reference gives", () => {
+    const text = plain(step(4, "`review`"))
+    expect(text).toContain("references/eval-case.md")
+    expect(text).toContain("evals/cases")
+    expect(text).toContain("draft")
+  })
+
+  test("LEARN-4: no real person's words go into a case file", () => {
+    // A case file is a file. PRIV-2's retention period deletes messages
+    // from the database and reaches nothing in the repo.
+    const text = plain(step(4, "`review`"))
+    expect(text).toContain("never write a real person's")
+    expect(text).toContain("retention")
+  })
+
+  test("LEARN-4: step 5 runs the suite before as well as after", () => {
+    // Before, or a case that was already red reads as damage this fix did.
+    const text = plain(step(5, "`review`"))
+    expect(text).toContain("before")
+    expect(text).toContain("after")
+  })
+
+  test("LEARN-7: step 6 applies a fix only when all three hold", () => {
+    const text = plain(step(6, "`review`"))
+    for (const part of ["new cases pass", "regress", "approves", "all three"]) {
+      expect(text).toContain(part)
+    }
+    // And the case nobody plans for: no suite to run means no apply.
+    expect(text).toContain("cannot")
+  })
+
+  test("LEARN-4: step 7 marks the flags reviewed with what came of it", () => {
+    const text = plain(step(7, "`review`"))
+    expect(text).toContain("--outcome")
+    expect(text).toContain("openbox review mark")
+  })
+
+  test("LEARN-5: a corrected routing decision is appended to the labeled set", () => {
+    const text = plain(step(4, "`review`"))
+    expect(text).toContain("openbox review label")
+    expect(text).toContain("examples/routing.jsonl")
+  })
+
+  test("SKILL-7: the export is built, so the command no longer says it is not", () => {
+    // T10.2 shipped an honest status line saying the flagged conversation
+    // export did not exist. It does now, and a status line that outlives
+    // its status is worse than none.
+    expect(section7()).not.toContain("not built yet")
+  })
+})
+
+describe("SKILL-7 and LEARN-5: `tune`", () => {
+  const tuneSection = () => plain(section(read(SKILL), "`tune`"))
+
+  test("LEARN-5: it measures from the labeled set and from the tools' own examples", () => {
+    const text = tuneSection()
+    expect(text).toContain("examples/routing.jsonl")
+    expect(text).toContain("should")
+    expect(text).toContain("shouldnot")
+    // Which is what lets a new agent be tuned before it has any traffic.
+    expect(text).toContain("traffic")
+  })
+
+  test("LEARN-7: it reports, and writes config only when asked", () => {
+    const text = tuneSection()
+    expect(text).toContain("--write")
+    expect(text).toContain("report")
+    expect(inOrder(text, "it reports", "--write")).toBe(true)
+  })
+
+  test("ROUTE-4: the number is the lowest threshold inside the tolerance", () => {
+    const text = tuneSection()
+    expect(text).toContain("lowest")
+    expect(text).toContain("tolerance")
+    // And a recommendation that narrows nothing is reported as that.
+    expect(text).toContain("not being worth asking for")
+  })
+})
+
+describe("LEARN-4: the case format reference", () => {
+  const CASE = "skill/references/eval-case.md"
+
+  test("LEARN-4: it is there, and says what it was read from and when", () => {
+    expect(existsSync(join(root, CASE))).toBe(true)
+    const text = read(CASE)
+    // An external contract: the harness validates a case, not us, so a
+    // reader needs to know how stale this is.
+    expect(text).toContain("harness/src/cases.ts")
+    expect(text).toContain("2026-10-31")
+  })
+
+  test("LEARN-4: every field the harness requires is named where it says required", () => {
+    // Read from the harness on 2026-10-31. A case missing one of these is
+    // refused before it runs, which is a draft the builder cannot use.
+    //
+    // Read out of the one sentence that lists them, not the whole file
+    // and not the whole section. With either of those, a field dropped
+    // from the list still passed: the worked example above uses them all,
+    // and the bullets below explain several of them again.
+    const required = section(read(CASE), "Required, or the harness refuses it")
+    const text = required.split(/\n\s*\n/)[1] ?? ""
+    // And the version itself, which the harness checks first and refuses
+    // outright, so it is stated as a value rather than as a field name.
+    expect(read(CASE)).toContain("schema: 1")
+    for (const field of [
+      "schema",
+      "id",
+      "title",
+      "archetype_risk",
+      "severity",
+      "attack_class",
+      "persona",
+      "assertions",
+    ]) {
+      expect(text).toContain(field)
+    }
+  })
+
+  test("LEARN-4: every assertion form and both enums are listed", () => {
+    const text = read(CASE)
+    for (const form of [
+      "must_call",
+      "must_not_call",
+      "must_write",
+      "must_not_write",
+      "must_emit",
+      "must_not_emit",
+      "reply_must_contain",
+      "reply_must_not_contain",
+      "reply_must_not_match",
+      "order",
+      "max_turns",
+    ]) {
+      expect(text).toContain(form)
+    }
+    for (const value of ["critical", "major", "minor"]) expect(text).toContain(value)
+    for (const value of [
+      "ambiguity",
+      "scope_creep",
+      "tool_misuse",
+      "prompt_injection",
+      "jailbreak",
+      "baseline",
+    ]) {
+      expect(text).toContain(value)
+    }
+  })
+
+  test("LEARN-4: it says what not to write a case about", () => {
+    // The core's own guarantees are tested in the core, with the
+    // conditions set up on purpose. A case here is about this agent.
+    const text = plain(read(CASE))
+    expect(text).toContain("what not to write a case about")
+    expect(text).toContain("openbox-agent")
+  })
+
+  test("LEARN-4: it is condensed, because `review` reads it before it writes", () => {
+    expect(words(read(CASE))).toBeLessThan(1200)
   })
 })

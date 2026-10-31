@@ -239,3 +239,84 @@ export function mergeExamples(
   for (const example of fromFile) byLabel.set(labelKey(example), example)
   return [...byLabel.values()]
 }
+
+/** One reviewed routing decision, as LEARN-5 words it. */
+export interface RoutingLabel {
+  /** What the person had just said, oldest first. One entry is the usual case. */
+  batch: string[]
+  /** The conversation before it, when the right tool depends on it. */
+  messages?: { role: string; text: string }[] | undefined
+  /** The tool that should have been chosen, or `no_tool`. */
+  tool: string
+  role?: Role | undefined
+}
+
+/** What goes on the line, in LEARN-5's two shapes. */
+export function routingLine(label: RoutingLabel): string {
+  const single = label.batch.length === 1 && (label.messages ?? []).length === 0
+  const body: Record<string, unknown> = single
+    ? { text: label.batch[0] }
+    : {
+        ...((label.messages ?? []).length > 0 ? { messages: label.messages } : {}),
+        batch: label.batch,
+      }
+
+  body["tool"] = label.tool
+  if (label.role !== undefined && label.role !== "end_user") body["role"] = label.role
+  return JSON.stringify(body)
+}
+
+/** What an append did, so a command can say it rather than guess. */
+export interface AppendResult {
+  /** False when the file already labels that conversation. */
+  appended: boolean
+  line: string
+  /** The line already there, when this was a duplicate. */
+  existing?: string | undefined
+}
+
+/**
+ * LEARN-5: appends one reviewed routing decision to `examples/routing.jsonl`.
+ *
+ * Takes the file's current text and returns the new text, so the caller
+ * owns the read and the write and this stays testable without a disk.
+ *
+ * A conversation already labeled is not labeled twice. Two lines for one
+ * conversation is not an error the parser would catch, and `mergeExamples`
+ * would silently keep the last one, so a reviewer could label the same
+ * miss three times and move the accuracy number without adding evidence.
+ */
+export function appendRoutingExample(
+  text: string,
+  label: RoutingLabel,
+  knownTools: string[],
+): AppendResult {
+  const line = routingLine(label)
+  // Checked against the agent's own tools, and nothing else. Adding
+  // `label.tool` to that list would make every tool a known tool, which
+  // is how a label for a tool nobody has got written in the first draft
+  // of this: it can never be chosen, so it can only ever count as a miss.
+  const written = parseRoutingJsonl(line, "append", knownTools)
+  const added = written.examples[0]
+  if (added === undefined) {
+    throw new Error(
+      `that label cannot be written as a routing example. ${written.problems.join("; ")}`,
+    )
+  }
+
+  const already = parseRoutingJsonl(text, ROUTING_EXAMPLES_FILE, knownTools).examples.find(
+    (example) => conversationKey(example) === conversationKey(added),
+  )
+
+  if (already !== undefined) {
+    return { appended: false, line, existing: `${already.where}: ${already.tool ?? ""}` }
+  }
+
+  return { appended: true, line }
+}
+
+/** The file with one line added, keeping exactly one trailing newline. */
+export function withRoutingLine(text: string, line: string): string {
+  const body = text.replace(/\n+$/, "")
+  return body === "" ? `${line}\n` : `${body}\n${line}\n`
+}

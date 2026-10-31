@@ -412,6 +412,11 @@ export {
   type TerminalChannelOptions,
   type LoadProjectOptions,
   type LoadedProject,
+  runReview,
+  backlogText,
+  conversationText,
+  labelFrom,
+  type ReviewOptions,
 } from "./cli/public.ts"
 
 export {
@@ -429,7 +434,30 @@ export {
   type AtThreshold,
   type Answered,
   type LabeledExample,
+  appendRoutingExample,
+  routingLine,
+  withRoutingLine,
+  type RoutingLabel,
+  type AppendResult,
 } from "./tune/index.ts"
+
+export {
+  unreviewedFlags,
+  flaggedConversation,
+  reviewBacklog,
+  groupByCause,
+  markReviewed,
+  causeOf,
+  toolOf,
+  CAUSES,
+  MESSAGE_WINDOW,
+  type Cause,
+  type ProposedCause,
+  type FlaggedConversation,
+  type CauseGroup,
+  type BacklogOptions,
+  type MarkReviewedOptions,
+} from "./review/index.ts"
 
 export {
   chunkMarkdown,
