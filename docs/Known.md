@@ -862,3 +862,35 @@ no cases, and a `swap` on day one still rests on the conformance suite alone.
 A template that generated a case or two at `new` time would close that, but it
 would be a case nobody has reviewed, and a green test nobody wrote on purpose
 is worse than no test.
+
+## K32. Each installer can only be tested on the platform it is for
+
+**Status:** open, accepted. CI covers it; one machine cannot.
+
+**What happens.** `install/sync.ps1` makes Windows directory junctions, and
+`install/sync.sh` makes POSIX symlinks. Neither works where the other one
+does, so `packages/core/test/unit/install.test.ts` splits in three: the rules
+both scripts share run everywhere, the PowerShell ones run on Windows, and
+four POSIX ones skip unless the machine is macOS or Linux.
+
+The four that skip are the ones that prove the install worked: both skills
+linked and SKILL.md readable through the link, the `skills` folder created
+when a host has none, `--remove`, and `--copy`. On Windows they cannot run at
+all, because Git Bash's `ln -s` copies a directory instead of linking it.
+
+**What it costs.** On this machine a change to `sync.sh` that breaks the
+install itself passes locally and fails in CI. The four tests that would have
+caught it report as skipped, which is quiet.
+
+**What we did.** Three things. The guard is tested here for real: `sync.sh`
+reads back what landed and refuses a copy, and on Windows that is the path
+every install takes, so a broken refusal fails locally. The same guard is
+tested on any platform with a fake `ln` that copies. And during T10.7 the four
+skipped tests were run in an Alpine container and a Debian one, on busybox ash
+and on dash, through a script that mirrors them one for one, with every probe
+on `sync.sh` run in both places.
+
+**What would resolve it.** CI on Linux is the real answer and already runs. A
+container run could be added to `bun run check`, but it would make the whole
+suite need Docker for two of its eighty-seven files, and the integration tests
+already skip rather than demand it.

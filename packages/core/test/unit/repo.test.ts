@@ -68,13 +68,18 @@ test("REL-2: .env.example lists every environment variable the source reads", ()
     "packages/core/test/unit/repo.test.ts",
     "packages/core/test/unit/env.test.ts",
   ])
+  // Names the operating system provides rather than the builder: nobody
+  // puts PATH in a .env, and a rule that asked them to would be ignored
+  // instead of followed. .env.example is for the keys and the settings
+  // somebody has to fill in. Everything outside this list is declared.
+  const fromTheOs = new Set(["PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR", "SHELL"])
   for (const file of sourceDirs.flatMap((d) => sourceFiles(d))) {
     if (quotesFakeNames.has(file)) continue
     const text = readFileSync(join(root, file), "utf8")
     for (const pattern of patterns) {
       for (const match of text.matchAll(pattern)) {
         const name = match[1]!
-        if (!declared.has(name)) missing.push(`${name} (${file})`)
+        if (!declared.has(name) && !fromTheOs.has(name)) missing.push(`${name} (${file})`)
       }
     }
   }

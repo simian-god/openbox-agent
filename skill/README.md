@@ -23,4 +23,6 @@ Built in M10.
   hopefully.
 
 `install/` links this directory into `~/.claude/skills/openboxagent` and
-`~/.codex/skills/openboxagent` (REL-3).
+`~/.codex/skills/openboxagent` (REL-3), built at T10.7. A link, so changing
+a file here changes the installed skill. `sync.ps1` on Windows, `sync.sh`
+on macOS and Linux.

@@ -27,6 +27,20 @@ it. See `docs/Progress.md` for where the build has got to.
 
 Bun. A Supabase project, or Docker for the local stack.
 
+## Install the skill
+
+Links `skill/` into `~/.claude/skills/openboxagent` and
+`~/.codex/skills/openboxagent`, so `/openboxagent` works in Claude Code and
+in Codex. A link, so changing this repo changes the installed skill.
+
+```
+powershell -ExecutionPolicy Bypass -File install\sync.ps1   # Windows
+sh install/sync.sh                                          # macOS, Linux
+```
+
+Add `-Status` or `--status` to see what is installed, and `-Remove` or
+`--remove` to take it out again. `install/README.md` has the rest.
+
 ## Quickstart
 
 Written at M11, once there is something to start. Until then,

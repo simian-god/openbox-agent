@@ -49,6 +49,16 @@ Read only the parts your task needs, not every doc in full.
 - `bun test` - the test suite.
 - `bun run trace` - which Spec IDs have a test and which do not. Add `--covered` to list the proven ones, `--strict` to exit non zero on any gap. CI warns today and goes strict at M11.
 
+Installing the skill, so `/openboxagent` works in Claude Code and in Codex
+(REL-3):
+
+- `powershell -ExecutionPolicy Bypass -File install\sync.ps1` on Windows,
+  `sh install/sync.sh` on macOS and Linux. Both link `skill/` into
+  `~/.claude/skills/openboxagent` and `~/.codex/skills/openboxagent`, so
+  this repo stays the one source of truth and the installed skill cannot
+  drift. Add `-Status` or `--status` to report what is installed, and
+  `-Remove` or `--remove` to take it out. `install/README.md` has the rest.
+
 Database, needing Docker:
 
 - `bun run db:up` - start the local Supabase stack. Postgres on 54322, the API on 54321, Studio on 54323.
