@@ -813,3 +813,47 @@ My recommendation when it comes up is 2, on the grounds that the other two
 unanswered outcomes already do exactly that and this is the same situation
 from the person's side. It is not urgent: nothing a dependency does reaches
 it.
+
+---
+
+## K31. A fresh agent project has no tests of its own, so `swap` leans on a suite that does not know the agent
+
+**Status:** open, accepted. It closes itself as agents get used.
+
+**What happens.** SKILL-5 says `swap` changes a provider in config and runs the
+agent's tests on the new one. A project the skill has just written has no
+tests: PKG-3's layout has a config, a prompt, tools, knowledge, examples,
+migrations, a seed, channels and a `main.ts`, and no test folder. The cases
+that would know this agent's own tools are evals-agent cases, and those are
+written by `review` out of real flagged conversations, which a new agent has
+none of.
+
+So what `swap` can actually run is the conformance suite for a brain, which
+ships in the package for exactly this reason, and `openbox tune` for a
+decision model, which measures the threshold a different model moves. A
+retriever or a transcriber has nothing shipped at all.
+
+**What it costs.** The conformance suite brings its own prompt, its own two
+tools and its own scripted conversation, so a pass says the new brain can
+drive an agent. It does not say this agent still works. A brain that answers
+the suite's thirteen checks can still ignore one of this agent's conditions,
+or stop asking for a detail the business needs. That gap is the size of the
+difference between a small restaurant host and whatever the builder built.
+
+A retriever swap is the thinnest. The index is rebuilt at start (KNOW-1), so
+the swap itself is safe, but whether the right chunk still comes back first
+for the builder's own questions is only answerable by asking them.
+
+**What we did.** Named one check per provider in `swap` rather than implying a
+suite that is not there, said in the command itself what the conformance suite
+does not prove, and told it to say so to the builder. For a retriever or a
+transcriber it says to ask the same handful of real questions in `openbox chat`
+before and after and compare, which is honest about being a human check. A
+test holds that wording, so the overclaim cannot creep back in.
+
+**What would resolve it.** `review` writing evals-agent cases from real
+conversations (T10.6), after which an agent that has been used has a suite
+that knows its own tools, and `swap` runs that too. A template that generates
+a first case or two at `new` time would close the gap for a brand new agent,
+but it would be a case nobody has reviewed, and a green test nobody wrote on
+purpose is worse than no test.

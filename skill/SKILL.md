@@ -173,28 +173,157 @@ compliant with anything.
 
 ## `add-tool`
 
-A short grilling on one tool, then written to the same bar as step 4, then
-the checklist run over that tool alone. Read the existing tools first: the
-commonest fault is a new tool whose conditions overlap one that is already
-there, which is checklist item 5.
+One more tool on an agent that already runs. A short grilling, the same
+bar as step 4, then the checklist.
+
+**Read what is there first.** `agent.config.ts`, `prompt.md` and every
+file in `tools/`. The commonest fault in a new tool is conditions that
+overlap a tool already there, which is checklist item 5, and an overlap
+cannot be seen in the new tool alone.
+
+**Grill on one tool.** Step 1's check still applies: no grilling skill, no
+`add-tool`. One round is usually enough. What the tool does, when it must
+be called, when it must not, what it hands back, who may call it, how bad
+a wrong call is, and what it does when the system behind it is down. If it
+touches an outside system, ask for the API docs and read them. Write
+nothing until that round is answered.
+
+**Write it to the same bar.** A `risk` level, its `roles`, `callWhen` and
+`dontCallWhen`, a `confirmSummary` if it is irreversible, and at least
+5 `should` and 5 `shouldNot` examples. Start from `templates/tools/tool.ts`.
+
+**Nothing to register.** Every `.ts` file in `tools/` is loaded and every
+tool it exports is kept, so the file is the registration. One tool per
+file, as a default export. A name that clashes with an existing tool stops
+the agent at startup rather than quietly winning.
+
+**What a new tool brings with it.**
+
+- A table of its own needs a new file in `db/migrations/`, numbered after
+  the last, switching row level security on in the same file (DATA-5).
+- The first irreversible tool on an agent means `OPENBOX_SECRET` has to be
+  in the environment. Without it the agent refuses to start. Say so.
+- Routing now has one more option, so run `openbox tune` and report what
+  it says. The number is written only with `--write`, and only if the
+  builder asks.
+- Do not describe the tool in `prompt.md`. A per tool rule there is a
+  second answer to a question its conditions already answer, which is
+  checklist item 9.
+
+**Then the checklist**, over the new tool, and item 5 over every tool,
+because an overlap is a fact about a pair. Show the builder the result
+item by item. A fail is reported, not quietly fixed.
+
+The agent's version hash moves, because its tools are part of it. That is
+correct: it is a different agent now.
 
 ## `swap`
 
-Change one provider in `agent.config.ts`, nothing else, then run the
-agent's own tests against it. A swap is a new version of the agent, so the
-version hash moves and that is correct. Report what the tests said rather
-than assuring the builder it worked.
+One provider changes in `agent.config.ts`. Nothing else does.
+
+The fields a swap touches are `brain` with its `fallbacks`,
+`decisionModel` with its `route`, `transcriber` and `retriever`. An id the
+core does not know is refused at startup, so a typo never reaches a
+person.
+
+**Name the key the new provider reads.** Keys come from the environment,
+never from config (CFG-2):
+
+| Provider | Key |
+|---|---|
+| `openrouter`, and Jev through OpenRouter | `OPENROUTER_API_KEY` |
+| `claude-agent-sdk`, `claude-code-cli` | `ANTHROPIC_API_KEY` |
+| `openai-agents`, `codex-cli`, `openai-decisions`, the `openai` embedder | `OPENAI_API_KEY` |
+| Jev on its own route | `TYPESAFE_API_KEY` |
+| `sarvam` | `SARVAM_API_KEY` |
+| the `pgvector` retriever | `DATABASE_URL`, plus `openbox migrate --pgvector` |
+
+Every missing key is reported in one message at startup, so start the
+agent and read that list rather than guessing one at a time.
+
+**Three things a swap can break quietly.**
+
+- A CLI brain in production is refused, as the primary and as a fallback:
+  `claude-code-cli` and `codex-cli` drive a command on the machine.
+- A model the provider reports no cost for, and that config's `pricing`
+  does not list, counts as zero against the daily spend cap, so the cap
+  stops biting. Add the model to `pricing`, or tell the builder plainly
+  that spend is now undercounted.
+- A CLI or SDK brain spawns a process per call, so a step takes seconds
+  rather than under a second. `brainTimeoutMs` is the knob.
+
+**Then run what there is to run, and say which.**
+
+| Swapped | What to run |
+|---|---|
+| `brain` | the conformance suite, `runConformance` from `openbox-agent`: one scripted conversation, thirteen checks that must pass, judged on what the agent did rather than how it worded it |
+| `decisionModel` | `openbox tune --dir .`, because a different model answers differently and the threshold may belong somewhere else |
+| `retriever` or `transcriber` | nothing is shipped for these. Ask the same handful of real questions in `openbox chat` before and after, and compare |
+
+The suite is a call, not a command, so write the five lines rather than
+inventing a test of your own. It brings its own secret and needs no
+`OPENBOX_SECRET`:
+
+```ts
+const config = conformanceConfig({ id: "openrouter", model: "the/new-model" })
+const { brains, decisionModel } = providersFromConfig(config)
+const report = await runConformance({ config, brains, decisionModel, db: supabaseFromEnv() })
+```
+
+`report.passed` decides it, and `report.failed` names what did not.
+
+The conformance suite proves a brain can drive an agent. It **does not
+prove this agent still works**, because it brings its own prompt and its
+own two tools. For that, chat to it, and run the project's evals-agent
+cases if it has any. A fresh project has none, and `review` is what writes
+them.
+
+Report what the tests said. Do not tell the builder it worked.
+
+A swap is a new version of the agent, so its version hash moves and every
+turn records the version it ran under. That is correct, and it is what
+makes a swap visible in the trace later.
 
 ## `chat`
 
-A local terminal session against the agent:
+A local terminal session against the agent, from the project folder:
 
 ```
 openbox chat
 ```
 
-It uses the terminal channel with the burst window at zero, so one message
-is one turn. Inside it, `:help` lists its commands.
+It uses the terminal channel with the burst window forced to zero, so one
+typed line is one turn. The command sets that, not the config.
+
+**What has to be in place.** `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` for the database, `openbox migrate` run once
+against it, the provider keys above, and `OPENBOX_SECRET` if the agent has
+an irreversible tool. Each missing one is named in a message rather than a
+stack trace.
+
+**Inside the session.**
+
+```
+:help      this list
+:version   the version this agent is running
+:trace     what the last turn recorded
+:quit      leave
+```
+
+Anything else is a message. A line starting with `/` is a message too, so
+an operator's commands can be typed through. Buttons print numbered, and
+typing the number taps one, which is how a confirmation is tried without a
+real channel.
+
+`--as <id>` is who is typing, and the same id keeps the same history. An
+operator session needs `openbox operator add terminal <id>` first: a role
+is never granted in chat (ROLE-2).
+
+**What to look for**, because this is the part no test covers. Does it ask
+for a missing detail instead of guessing it. Does an irreversible action
+stop and ask. Does it stop when the turn is done instead of carrying on.
+Does it sound like the business. Read `:trace` to see which tools ran,
+rather than trusting the reply to tell you.
 
 ## `review`
 

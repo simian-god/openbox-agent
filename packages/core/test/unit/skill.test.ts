@@ -18,6 +18,11 @@
 import { describe, expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { chatConfig } from "../../src/cli/chat.ts"
+import type { OpenboxConfig } from "../../src/config/index.ts"
+import { CLI_BRAIN_IDS } from "../../src/config/providers.ts"
+import { DB_ENV_KEYS } from "../../src/providers/db.ts"
+import { ENV_KEYS, PGVECTOR_ENV_KEY } from "../../src/providers/index.ts"
 
 const root = join(import.meta.dir, "..", "..", "..", "..")
 const read = (path: string): string => readFileSync(join(root, path), "utf8")
@@ -48,8 +53,17 @@ const specChecks = [...rule("SKILL-9").matchAll(/^-\s+(.+)$/gm)].map((match) =>
   (match[1] ?? "").trim(),
 )
 
-/** Backticks and case are formatting, not content. */
-const plain = (text: string): string => text.replace(/`/g, "").toLowerCase()
+/**
+ * Backticks, case and where a line happens to wrap are formatting, not
+ * content.
+ *
+ * The wrapping matters more than it looks. These files are formatted and
+ * reflowed by hand, so a phrase a test looks for can move onto two lines
+ * without anything about the instruction changing. A test that broke then
+ * would be noise, and worse, a probe that only fails because of a wrap
+ * reads as a test doing its job when it is not.
+ */
+const plain = (text: string): string => text.replace(/`/g, "").replace(/\s+/g, " ").toLowerCase()
 
 const words = (text: string): number => text.split(/\s+/).filter((word) => word !== "").length
 
@@ -201,6 +215,22 @@ function step(number: number): string {
   return end === -1 ? after : after.slice(0, end)
 }
 
+/**
+ * The bar a tool is written to, in SKILL-3 step 4 and again in SKILL-4.
+ *
+ * One list, because SKILL-4 says "to the same bar": two copies would let
+ * the two commands drift apart and both tests keep passing.
+ */
+const TOOL_BAR = [
+  "risk",
+  "roles",
+  "callwhen",
+  "dontcallwhen",
+  "confirmsummary",
+  "5 should",
+  "5 shouldnot",
+]
+
 /** Whether the document says one thing before another. */
 function inOrder(text: string, ...parts: string[]): boolean {
   let at = -1
@@ -244,7 +274,36 @@ describe("SKILL-1: the skill and its commands", () => {
   })
 
   test("SKILL-1: the skill is short enough to be read on every invocation", () => {
-    expect(words(read(SKILL))).toBeLessThan(2500)
+    // 2500 was the budget while three of the six commands were a
+    // paragraph each. They are flows now, and the cost of being read every
+    // time is paid in what the file leaves out, not in a number: SKILL.md
+    // and the two files SKILL-2 names come to about 4500 words together,
+    // which is a few thousand tokens before a single question is asked.
+    // Raised with a decisions row rather than quietly, and the pressure
+    // moved to the test below, where it can be felt per command.
+    expect(words(read(SKILL))).toBeLessThan(3000)
+  })
+
+  test("SKILL-1: no one command's flow crowds out the others", () => {
+    // The file level budget alone would let one command take it all and
+    // leave the next row to trim somebody else's section. `new` is the
+    // longest on purpose, since it is six steps and writes a whole
+    // project, so the bar is drawn above it rather than at an average.
+    // Split rather than matched. A regex ending `(?=\n## |$)` under /m
+    // stops at the end of the heading's own line, because `$` there means
+    // end of line, so every section measured three words and the budget
+    // measured nothing. The probe that doubled a section found that.
+    const sections = read(SKILL)
+      .split(/^## /m)
+      .filter((part) => /^`[a-z][a-z-]*`/.test(part))
+
+    expect(sections).toHaveLength(6)
+    // Named, so a failure says which command went over rather than only
+    // that one did.
+    const over = sections
+      .filter((text) => words(text) >= 650)
+      .map((text) => `${text.split("\n")[0]} is ${words(text)} words`)
+    expect(over).toEqual([])
   })
 })
 
@@ -300,16 +359,9 @@ describe("SKILL-3: the `new` flow", () => {
 
   test("SKILL-3: step 4 holds every tool to the same bar", () => {
     const text = plain(step(4))
-    for (const part of [
-      "risk",
-      "roles",
-      "callwhen",
-      "dontcallwhen",
-      "confirmsummary",
-      "5 should",
-      "5 shouldnot",
-      "confirm buttons",
-    ]) {
+    // The channel glue's confirm buttons belong to step 4 alone, since
+    // `add-tool` writes no channels.
+    for (const part of [...TOOL_BAR, "confirm buttons"]) {
       expect(text).toContain(part)
     }
   })
@@ -366,5 +418,193 @@ describe("SKILL-11 and SKILL-12: the personal data round", () => {
     expect(text).toContain("never write a number the builder did not give")
     expect(text).toContain("never say")
     expect(text).toContain("compliant")
+  })
+})
+
+/** Where the core reads each provider's key from, out of its own map. */
+const envKeys = [...new Set([...Object.values(ENV_KEYS), PGVECTOR_ENV_KEY])]
+
+/** Chat's own commands, read out of the terminal channel's help text. */
+const chatCommands = (): string[] => {
+  const source = read("packages/core/src/cli/terminal.ts")
+  const start = source.indexOf("const HELP = `")
+  expect(start).toBeGreaterThan(-1)
+  const after = source.slice(start)
+  const help = after.slice(0, after.indexOf("`", 14))
+  return [...help.matchAll(/^ {2}(:\w+)/gm)].map((match) => match[1] ?? "")
+}
+
+describe("SKILL-4: `add-tool`", () => {
+  test("SKILL-4: it grills on one tool, and writes nothing before that", () => {
+    const text = plain(section(read(SKILL), "`add-tool`"))
+    // The round itself, not just the word. Saying "a short grilling" in
+    // the summary line passed this test with the whole round deleted,
+    // which is how the probe found it. The grilling skill check and the
+    // API docs rule both live in the round, so both are named here.
+    expect(text).toContain("step 1's check")
+    expect(text).toContain("no grilling skill, no add-tool")
+    expect(text).toContain("api docs")
+    expect(text).toContain("write nothing until")
+  })
+
+  test("SKILL-4: the tools already there are read first, because an overlap is a fact about a pair", () => {
+    const text = plain(section(read(SKILL), "`add-tool`"))
+    expect(text).toContain("every file in tools/")
+    expect(text).toContain("overlap")
+    // Checklist item 5 is the one this command fails most, and it cannot
+    // be judged on the new tool alone.
+    expect(text).toContain("item 5")
+    // First, not somewhere. An overlap found after the tool is written is
+    // a rewrite, and the words "overlap" and "item 5" appear again in the
+    // checklist paragraph at the end, which is what let the probe through.
+    expect(inOrder(text, "every file in tools/", "grill")).toBe(true)
+  })
+
+  test("SKILL-4: a new tool is held to the same bar as a tool `new` writes", () => {
+    const text = plain(section(read(SKILL), "`add-tool`"))
+    const missing = TOOL_BAR.filter((part) => !text.includes(part))
+    expect(missing).toEqual([])
+  })
+
+  test("SKILL-4: the checklist is run over what was written, and the result shown", () => {
+    const text = plain(section(read(SKILL), "`add-tool`"))
+    expect(inOrder(text, "checklist", "show the builder")).toBe(true)
+    expect(text).toContain("not quietly fixed")
+  })
+
+  test("SKILL-4: nothing registers a tool, because the folder is what is read", () => {
+    // Real behaviour rather than a guess: `loadProject` imports every .ts
+    // file in tools/ and keeps whatever `defineTool` produced, so the file
+    // is the registration and a clashing name stops the start.
+    const text = plain(section(read(SKILL), "`add-tool`"))
+    expect(text).toContain("nothing to register")
+    expect(text).toContain("one tool per file")
+  })
+
+  test("SKILL-4: what a new tool drags in with it is named", () => {
+    const text = plain(section(read(SKILL), "`add-tool`"))
+    // A table of its own, the secret the first irreversible tool needs,
+    // and routing, which now has one more option to choose between.
+    expect(text).toContain("db/migrations")
+    expect(text).toContain("row level security")
+    expect(text).toContain("openbox_secret")
+    expect(text).toContain("openbox tune")
+  })
+
+  test("SKILL-4: the tool is not described in the prompt as well", () => {
+    // Checklist item 9: a per tool rule in the prompt is a second answer
+    // to a question the conditions already answer.
+    const text = plain(section(read(SKILL), "`add-tool`"))
+    expect(text).toContain("prompt.md")
+    expect(text).toContain("item 9")
+  })
+})
+
+describe("SKILL-5: `swap`", () => {
+  test("SKILL-5: one provider changes in config, and nothing else does", () => {
+    const text = plain(section(read(SKILL), "`swap`"))
+    expect(text).toContain("agent.config.ts")
+    for (const field of ["brain", "decisionmodel", "transcriber", "retriever", "fallbacks"]) {
+      expect(text).toContain(field)
+    }
+  })
+
+  test("SKILL-5: every key the core reads a provider from is named", () => {
+    // Read out of the core's own ENV_KEYS rather than copied, so a new
+    // provider with a new key fails here instead of leaving a builder to
+    // find out at startup.
+    const text = section(read(SKILL), "`swap`")
+    expect(envKeys.length).toBeGreaterThanOrEqual(5)
+    const missing = envKeys.filter((key) => !text.includes(key))
+    expect(missing).toEqual([])
+  })
+
+  test("SKILL-5: a CLI brain is refused in production, as a primary and as a fallback", () => {
+    const text = plain(section(read(SKILL), "`swap`"))
+    for (const id of CLI_BRAIN_IDS) expect(text).toContain(id)
+    expect(text).toContain("production")
+    expect(text).toContain("fallback")
+  })
+
+  test("SKILL-5: the test to run is named per provider, and the brain's is the conformance suite", () => {
+    const text = plain(section(read(SKILL), "`swap`"))
+    expect(text).toContain("runconformance")
+    expect(text).toContain("openbox tune")
+    // And the two providers nothing is shipped for say so, rather than
+    // being left out of the list as though a swap there needs no check.
+    expect(text).toContain("nothing is shipped for these")
+  })
+
+  test("SKILL-5: what the conformance suite does not prove is said out loud", () => {
+    // It brings its own prompt and its own two tools, so it answers
+    // whether the brain can drive an agent and not whether this agent
+    // still works. A swap report that left that out would overclaim.
+    const text = plain(section(read(SKILL), "`swap`"))
+    expect(text).toContain("does not prove")
+  })
+
+  test("SKILL-5: the result is reported, not assured", () => {
+    const text = plain(section(read(SKILL), "`swap`"))
+    expect(text).toContain("report what the tests said")
+  })
+
+  test("SKILL-5: a model nothing prices counts as zero against the spend cap", () => {
+    // `costOf` returns 0 for a model the pricing table does not list when
+    // the provider reported no cost of its own. A swap is exactly when
+    // that happens, so the command has to say it.
+    const text = plain(section(read(SKILL), "`swap`"))
+    expect(text).toContain("pricing")
+    expect(text).toContain("zero")
+  })
+})
+
+describe("SKILL-6: `chat`", () => {
+  test("SKILL-6: the burst window is zero, and the command is what sets it", () => {
+    const text = plain(section(read(SKILL), "`chat`"))
+    expect(text).toContain("burst window")
+    expect(text).toContain("zero")
+    // Against the real function, so the instruction cannot say one thing
+    // while `openbox chat` does another. Everything else is left alone.
+    const base = { name: "an-agent", burstWindowMs: 3000 } as unknown as OpenboxConfig
+    expect(chatConfig(base).burstWindowMs).toBe(0)
+    expect(chatConfig(base).name).toBe("an-agent")
+  })
+
+  test("SKILL-6: every command a chat session has is listed, and the list is the same list", () => {
+    // Both lists read off their own file, and compared as lists. Looking
+    // for each name anywhere in the section passed with the list itself
+    // cut, because `:trace` is mentioned again in prose further down.
+    const listed = [...section(read(SKILL), "`chat`").matchAll(/^(:\w+) {2,}\S/gm)].map(
+      (match) => match[1] ?? "",
+    )
+    const commands = chatCommands()
+
+    expect(commands.length).toBeGreaterThanOrEqual(4)
+    expect(listed).toEqual(commands)
+  })
+
+  test("SKILL-6: a line starting with a slash is a message, so operator commands can be typed", () => {
+    const text = plain(section(read(SKILL), "`chat`"))
+    expect(text).toContain("line starting with /")
+  })
+
+  test("SKILL-6: what has to be in place first is named, not left to a stack trace", () => {
+    const text = plain(section(read(SKILL), "`chat`"))
+    expect(text).toContain("openbox migrate")
+    for (const key of Object.values(DB_ENV_KEYS)) {
+      expect(text).toContain(key.toLowerCase())
+    }
+  })
+
+  test("SKILL-6: a button is tapped by number, which is how a confirmation is tried", () => {
+    const text = plain(section(read(SKILL), "`chat`"))
+    expect(text).toContain("number")
+    expect(text).toContain("confirm")
+  })
+
+  test("SKILL-6: an operator session is made by the operator command, never in chat (ROLE-2)", () => {
+    const text = plain(section(read(SKILL), "`chat`"))
+    expect(text).toContain("openbox operator add")
+    expect(text).toContain("never")
   })
 })
